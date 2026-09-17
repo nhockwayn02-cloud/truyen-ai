@@ -779,7 +779,18 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <script>
 (function(){
 "use strict";
-
+window.addEventListener("error", function(e){
+  try{
+    var el = document.getElementById("statusLine");
+    if(el) el.innerHTML = '<span style="color:#e2584d;">⚠ LỖI: ' + (e.message||"?") + ' — dòng ' + (e.lineno||"?") + '</span>';
+  }catch(_){}
+});
+window.addEventListener("unhandledrejection", function(e){
+  try{
+    var el = document.getElementById("statusLine");
+    if(el) el.innerHTML = '<span style="color:#e2584d;">⚠ LỖI ASYNC: ' + ((e.reason && e.reason.message) || e.reason || "?") + '</span>';
+  }catch(_){}
+});
 /* ========== STORAGE KEYS (v7) ========== */
 const STORIES_INDEX_KEY = "aiStoryWorkshop_storiesIndex_v7";
 const STORY_KEY_PREFIX  = "aiStoryWorkshop_story_v7_";
@@ -4389,6 +4400,28 @@ function renderCurrentChapter(){
 }
 
 chapterSearch.addEventListener("input", renderChapterNav);
+
+/* ===== FIX: Tự lưu API config ===== */
+(function(){
+  var btn = document.getElementById("saveKeyBtn");
+  if(btn){
+    btn.addEventListener("click", function(){
+      var st = document.getElementById("apiStatus");
+      try{
+        state.apiEndpoint = (document.getElementById("apiEndpoint").value || "").trim();
+        state.apiKey = (document.getElementById("apiKey").value || "").trim().replace(/^bearer\s+/i, "").replace(/^["']|["']$/g, "");
+        state.model = (document.getElementById("modelSelect").value || "").trim();
+        state.modelNsfw = (document.getElementById("modelNsfwSelect").value || "").trim();
+        state.nsfwMode = document.getElementById("nsfwModeSelect").value;
+        state.nsfwAutoThreshold = parseInt(document.getElementById("nsfwAutoThreshold").value, 10) || 6;
+        persist();
+        if(st){ st.textContent = "✓ Đã lưu key. Bấm Tạo Chương Mới để test."; st.className = "api-status ok"; }
+      }catch(err){
+        if(st){ st.textContent = "✗ Lỗi: " + err.message; st.className = "api-status bad"; }
+      }
+    });
+  }
+})();
 })();
 </script>
 </body>
