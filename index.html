@@ -1385,6 +1385,45 @@ function pickWritingModel(forceNsfw){
   return { model: mainModel, isNsfw: false, isAuto: true };
 }
 
+/* ========== NSFW KEYWORD DETECT (ép chuyển model ngay) ========== */
+const NSFW_KEYWORDS = [
+  // trực tiếp
+  "cảnh nóng","cảnh sex","cảnh 18","cảnh 18+","quan hệ","làm tình","ân ái","giao hợp",
+  "sex","sexx","sexy","nsfw","erotic","erotica","porn",
+  // âu yếm / thân mật
+  "âu yếm","vuốt ve","mơn trớn","ve vuốt","âu yếm","hôn sâu","hôn môi","hôn cổ",
+  "cởi đồ","cởi áo","cởi quần","không mặc","khỏa thân","trần truồng","nude",
+  "sờ soạng","sờ ngực","sờ mông","nắn bóp","liếm","bú","thổi kèn",
+  // bộ phận / hành động
+  "dương vật","âm đạo","âm hộ","ngực","núm vú","mông","háng","cặc","lồn",
+  "thúc","thúc mạnh","xuất tinh","orgasm","cao trào","khoái cảm",
+  "doggy","missionary","cowgirl","oral","blowjob","handjob",
+  // chỉ đạo thường dùng
+  "viết nóng","viết 18","tăng nhiệt","nóng hơn","cảnh ân ái","đêm tân hôn",
+  "lần đầu","mất trinh","đoạt mất","chiếm đoạt cơ thể","ham muốn",
+  "dục vọng","kích thích","nứng","phê","rên rỉ","rên la","rên ưỡn"
+];
+
+function textHasNsfwKeyword(text){
+  if(!text) return false;
+  const t = String(text).toLowerCase().normalize('NFC');
+  return NSFW_KEYWORDS.some(k => t.includes(k.toLowerCase()));
+}
+
+/** Kiểm tra mệnh lệnh + kế hoạch + đoạn gần → có nên ép NSFW không */
+function shouldForceNsfwByKeyword(plan, tail){
+  if(!state.mature) return false;
+  if((state.nsfwMode || "auto") === "never") return false;
+  if(!state.modelNsfw) return false;
+  const sources = [
+    state.directive || "",
+    plan || "",
+    (tail || "").slice(-1500),
+    (state.chapters[state.currentChapterIndex] && state.chapters[state.currentChapterIndex].title) || ""
+  ].join("\n");
+  return textHasNsfwKeyword(sources);
+}
+
 /* ========== HEAT DETECTION ========== */
 async function detectHeatLevel(tail, plan){
   const prompt = [
@@ -3148,16 +3187,25 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
     if(!chapterObj.truncated && wc >= minWords) break;
     attempts++;
 
-    /* Auto NSFW giữa chương */
+    /* Auto NSFW giữa chương: từ khóa + nhiệt độ */
     if(state.nsfwMode === "auto" && state.mature && state.modelNsfw && !usingNsfw){
       try{
-        const heat = await detectHeatLevel(chapterObj.text.slice(-2000), chapterObj.plan);
-        if(heat >= (state.nsfwAutoThreshold || 6)){
+        const tailMid = chapterObj.text.slice(-2000);
+        if(shouldForceNsfwByKeyword(chapterObj.plan, tailMid)){
           targetModel = state.modelNsfw;
           usingNsfw = true;
           chapterObj.modelUsed = targetModel;
           chapterObj.isNsfw = true;
-          setStatus("🔥 Giữa chương nóng (" + heat + "/10) → " + shortModelName(targetModel), true);
+          setStatus("🔥 Giữa chương — từ khóa 18+ → " + shortModelName(targetModel), true);
+        } else {
+          const heat = await detectHeatLevel(tailMid, chapterObj.plan);
+          if(heat >= (state.nsfwAutoThreshold || 6)){
+            targetModel = state.modelNsfw;
+            usingNsfw = true;
+            chapterObj.modelUsed = targetModel;
+            chapterObj.isNsfw = true;
+            setStatus("🔥 Giữa chương nóng (" + heat + "/10) → " + shortModelName(targetModel), true);
+          }
         }
       }catch(e){}
     }
@@ -3293,21 +3341,28 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     let plan = "";
     if(!isRegen) plan = await buildChapterPlan(context, recentFullText, chapterNumber);
 
-    /* Auto NSFW pre-flight */
+    /* Auto NSFW pre-flight: từ khóa trước, rồi mới chấm nhiệt */
     if(state.nsfwMode === "auto" && state.mature && state.modelNsfw && !forceNsfw){
       const tailHeat = isRegen
         ? (state.chapters[regenIndex] ? state.chapters[regenIndex].text.slice(-2000) : "")
         : (priorChapters.length ? priorChapters[priorChapters.length - 1].text.slice(-1800) : "");
-      setStatus("🔍 Đang chấm nhiệt độ cảnh...", true);
-      const heat = await detectHeatLevel(tailHeat, plan);
-      const threshold = state.nsfwAutoThreshold || 6;
-      if(heat >= threshold){
+      if(shouldForceNsfwByKeyword(plan, tailHeat)){
         targetModel = state.modelNsfw;
         usingNsfw = true;
         modeTag = "🔥 [NSFW] ";
-        setStatus("🔥 Nhiệt độ " + heat + "/10 → " + shortModelName(targetModel), true);
+        setStatus("🔥 Phát hiện từ khóa 18+ trong mệnh lệnh/kế hoạch → " + shortModelName(targetModel), true);
       } else {
-        setStatus("🌡 Nhiệt độ " + heat + "/10 → " + shortModelName(targetModel), true);
+        setStatus("🔍 Đang chấm nhiệt độ cảnh...", true);
+        const heat = await detectHeatLevel(tailHeat, plan);
+        const threshold = state.nsfwAutoThreshold || 6;
+        if(heat >= threshold){
+          targetModel = state.modelNsfw;
+          usingNsfw = true;
+          modeTag = "🔥 [NSFW] ";
+          setStatus("🔥 Nhiệt độ " + heat + "/10 → " + shortModelName(targetModel), true);
+        } else {
+          setStatus("🌡 Nhiệt độ " + heat + "/10 → " + shortModelName(targetModel), true);
+        }
       }
     }
 
@@ -3496,10 +3551,17 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
   let usingNsfw = pick.isNsfw;
   if(state.nsfwMode === "auto" && state.mature && state.modelNsfw && !usingNsfw){
     try{
-      const heat = await detectHeatLevel(state.chapters[idx].text.slice(-2000), state.chapters[idx].plan);
-      if(heat >= (state.nsfwAutoThreshold || 6)){
+      const tailC = state.chapters[idx].text.slice(-2000);
+      const planC = state.chapters[idx].plan || "";
+      if(shouldForceNsfwByKeyword(planC, tailC)){
         targetModel = state.modelNsfw;
         usingNsfw = true;
+      } else {
+        const heat = await detectHeatLevel(tailC, planC);
+        if(heat >= (state.nsfwAutoThreshold || 6)){
+          targetModel = state.modelNsfw;
+          usingNsfw = true;
+        }
       }
     }catch(e){}
   }
@@ -4152,7 +4214,7 @@ $ID("helpBtn").addEventListener("click", ()=>{
     "🎬 SCENE TRACKER: Tự động phát hiện cảnh 18+ sau mỗi chương. Ghi log ai, làm gì, intensity, structure. Chống lặp cấu trúc.\n\n" +
     "" +
     "📚 VOCABULARY: Từ muốn dùng / tránh + mức độ explicit 5 bậc (nhẹ → cực mạnh).\n\n" +
-    "🤖 AUTO NSFW: Chấm 0-10 trước mỗi chương, ≥ ngưỡng → chuyển NSFW model. Re-check giữa chương.\n\n" +
+    "🤖 AUTO NSFW: Nhận từ khóa trong mệnh lệnh (cảnh nóng, sex, âu yếm…) → ép NSFW ngay. Không có từ khóa thì chấm 0-10, ≥ ngưỡng mới chuyển. Re-check giữa chương.\n\n" +
     "🎨 MIÊU TẢ: 4 mức (nhẹ/cân bằng/phong phú/sâu đậm). Bật để AI tả ngoại hình + không khí kỹ hơn.\n\n" +
     "⏱️ PACING GUARD: Cảnh báo nếu quá nhiều/ít cảnh 18+, cấu trúc lặp.\n\n" +
     "💾 STORAGE GUARD: Cảnh báo khi gần đầy. Nút 'Nén chương cũ' giảm dung lượng.\n\n" +
