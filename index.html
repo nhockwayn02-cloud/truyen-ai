@@ -2100,8 +2100,30 @@ function buildContextBlock(){
   const outline = currentOutline();
   if(outline) lines.push("OUTLINE GIAI ĐOẠN (" + outline.from + "–" + outline.to + "):\n" + outline.content);
   if(state.storyClock) lines.push("THỜI ĐIỂM: " + state.storyClock);
-  const relChars = relevantCharacters(14);
+  if(state.chapters.length){
+    const recent = state.chapters.slice(-5);
+    const startNum = state.chapters.length - recent.length + 1;
+    const sumLines = recent.map((c,i)=>{
+      const n = startNum + i;
+      return "- Ch" + n + " (" + (c.title||"") + "): " + (c.summary || "(chưa tóm tắt)");
+    }).join("\n");
+    lines.push("TÓM TẮT 5 CHƯƠNG GẦN:\n" + sumLines);
+  }
+  if(state.lastStatusChapter && state.lastStatusChapter < state.chapters.length){
+    lines.push("⚠ CURRENT STATUS mới tới ch" + state.lastStatusChapter + " — thiếu " + (state.chapters.length - state.lastStatusChapter) + " chương gần.");
+  }
+  const relChars = relevantCharacters(22);
   if(relChars.length) lines.push("NHÂN VẬT LIÊN QUAN:\n" + characterSummaryForPrompt(relChars));
+  if(state.mainCharProfile && state.mainCharProfile.name){
+    const mc = state.mainCharProfile;
+    const mcParts = ["NV CHÍNH: " + mc.name];
+    if(mc.personality) mcParts.push("tính:"+mc.personality);
+    if(mc.goals) mcParts.push("mục tiêu:"+mc.goals);
+    if(mc.currentLocation) mcParts.push("ở:"+mc.currentLocation);
+    if(mc.mentalState) mcParts.push("tâm lý:"+mc.mentalState);
+    if(mc.physicalState) mcParts.push("thể trạng:"+mc.physicalState);
+    lines.push(mcParts.join(" | "));
+  }
   const activeLocs = state.locations.filter(l=>l.status === 'active').slice(-8);
   if(activeLocs.length) lines.push("ĐỊA ĐIỂM:\n" + activeLocs.map(l=>"- "+l.name+": "+l.description).join("\n"));
   const activeItems = state.items.filter(it=>it.status === 'active').slice(-10);
@@ -2851,18 +2873,25 @@ $ID("threadAddBtn").addEventListener("click", ()=>{
 
 /* ========== CHARACTER UPDATE ========== */
 function relevantCharacters(limit){
-  limit = limit || 14;
-  const recentText = normalizeName(state.chapters.slice(-3).map(c=>c.text).join(" "));
+  limit = limit || 22;
+  const recentText = normalizeName(state.chapters.slice(-4).map(c=> (c.text||"") + " " + (c.summary||"")).join(" "));
   const scored = state.characters.map(c=>{
     let score = 0;
-    if(c.locked) score += 5;
-    if(c.dead) score -= 20;
-    if(c.tier === 'major') score += 4;
-    if(c.tier === 'important') score += 3;
-    if(c.tier === 'supporting') score += 1;
+    if(c.locked) score += 8;
+    if(c.dead) score -= 15;
+    if(c.tier === 'major') score += 7;
+    if(c.tier === 'important') score += 5;
+    if(c.tier === 'supporting') score += 2;
+    if(c.tier === 'minor') score += 0.5;
     const nName = normalizeName(c.name);
-    if(nName && recentText.includes(nName)) score += 6;
-    if(c.lastAppearance!=null) score += Math.max(0, 3 - (state.chapters.length - c.lastAppearance)*0.3);
+    if(nName && recentText.includes(nName)) score += 10;
+    if(c.lastAppearance!=null){
+      const gap = state.chapters.length - c.lastAppearance;
+      if(gap <= 1) score += 5;
+      else if(gap <= 3) score += 3;
+      else score += Math.max(0, 2 - gap*0.15);
+    }
+    if(c.attractionToMC || c.tensionWithMC) score += 1.5;
     return { c, score };
   });
   scored.sort((a,b)=> b.score - a.score);
@@ -2932,25 +2961,60 @@ function mergeCharacterUpdate(update, chapterNumber){
   return { name: c.name, isNewChar };
 }
 async function updateCharactersIncremental(text, chapterNumber, silent){
-  if(!text) return;
-  const existingSummary = characterSummaryForPrompt(state.characters.slice(0,40)) || "(chưa có)";
+  if(!text) return { ok:false, reason:"empty" };
+  const mcName = (state.mainCharProfile && state.mainCharProfile.name) ? state.mainCharProfile.name : "";
+  const pool = [];
+  const seen = new Set();
+  relevantCharacters(30).forEach(c=>{ if(c.name && !seen.has(normalizeName(c.name))){ seen.add(normalizeName(c.name)); pool.push(c); } });
+  state.characters.forEach(c=>{
+    if(pool.length >= 45) return;
+    if(c.name && !seen.has(normalizeName(c.name))){ seen.add(normalizeName(c.name)); pool.push(c); }
+  });
+  const existingSummary = characterSummaryForPrompt(pool) || "(chưa có)";
+  const from = Math.max(0, chapterNumber - 3);
+  const recentSum = state.chapters.slice(from, chapterNumber - 1).map((c,i)=> "Ch" + (from + i + 1) + ": " + (c.summary || c.title || "")).join("\n");
+  let body = text;
+  if(body.length > 14000) body = body.slice(0, 6000) + "\n\n[...]\n\n" + body.slice(-7000);
   const prompt = [
-    "Nhân vật hiện có:", existingSummary, "",
-    "Nội dung CHƯƠNG " + chapterNumber + ":", text, "",
-    CHAR_JSON_FORMAT_HINT
-  ].join("\n");
+    "BẮT BUỘC: Cập nhật nhân vật SAU CHƯƠNG " + chapterNumber + ". Không bỏ sót NV mới hoặc thay đổi rõ.",
+    mcName ? ("NV chính: " + mcName) : "",
+    "Nhân vật đang theo dõi:", existingSummary, "",
+    recentSum ? ("Tóm tắt chương gần:\n" + recentSum) : "",
+    "",
+    "Nội dung CHƯƠNG " + chapterNumber + ":", body, "",
+    CHAR_JSON_FORMAT_HINT,
+    "Lưu ý: NV thoáng qua vẫn ghi background/minor. Cập nhật vị trí, quan hệ, trạng thái nếu có."
+  ].filter(Boolean).join("\n");
   try{
-    const { text: raw } = await callAI(prompt, {maxTokens:2500, temperature:0.3});
-    const arr = safeJsonParse(raw);
-    if(!Array.isArray(arr)) return;
-    arr.forEach(u=> mergeCharacterUpdate(u, chapterNumber));
+    const { text: raw } = await callAI(prompt, {maxTokens:3200, temperature:0.25});
+    let arr = safeJsonParse(raw);
+    if(!Array.isArray(arr)){
+      try{
+        const retry = await callAI("Chỉ trả JSON array NV thay đổi. " + CHAR_JSON_FORMAT_HINT + "\n\n" + body.slice(0, 8000), {maxTokens:2500, temperature:0.2});
+        arr = safeJsonParse(retry.text);
+      }catch(e2){}
+    }
+    if(!Array.isArray(arr)){
+      if(!silent) setStatus("⚠ Không parse được cập nhật NV (ch" + chapterNumber + ").", false);
+      return { ok:false, reason:"parse" };
+    }
+    let nNew = 0, nUpd = 0;
+    arr.forEach(u=>{
+      const r = mergeCharacterUpdate(u, chapterNumber);
+      if(r && r.isNewChar) nNew++; else if(r) nUpd++;
+    });
     persist(); renderCharacters();
-  }catch(err){ if(!silent) setStatus("Lỗi NV: " + err.message, false); }
+    if(!silent) setStatus("NV ch" + chapterNumber + ": +" + nNew + " mới, " + nUpd + " cập nhật.", false);
+    return { ok:true, nNew, nUpd };
+  }catch(err){
+    if(!silent) setStatus("Lỗi NV: " + err.message, false);
+    return { ok:false, reason: err.message };
+  }
 }
 $ID("npcUpdateBtn").addEventListener("click", async ()=>{
   if(!state.chapters.length){ setStatus("Chưa có truyện.", false); return; }
   setStatus("Đang quét toàn bộ...", true);
-  const prompt = ["Đọc TOÀN BỘ truyện và liệt kê MỌI nhân vật.", CHAR_JSON_FORMAT_HINT, "", "TRUYỆN:", fullStoryText()].join("\n");
+  const prompt = ["Đọc TOÀN BỘ truyện và liệt kê MỌI nhân vật (không bỏ sót).", CHAR_JSON_FORMAT_HINT, "", "TRUYỆN:", fullStoryTextCompressed()].join("\n");
   try{
     const { text: raw } = await callAI(prompt, {maxTokens:4000, temperature:0.3});
     const arr = safeJsonParse(raw);
@@ -3022,30 +3086,80 @@ async function updateThreadsIncremental(text, chapterNumber, silent){
 
 /* ========== CURRENT STATUS ========== */
 async function updateCurrentStatusIncremental(text, chapterNumber, silent){
+  /* Ghép tóm tắt 3 chương gần để khỏi mất mạch */
+  const prevSummaries = state.chapters
+    .slice(Math.max(0, chapterNumber - 4), chapterNumber)
+    .map((c, idx) => {
+      const num = Math.max(0, chapterNumber - 4) + idx + 1;
+      return "Ch" + num + " (" + (c.title||"") + "): " + (c.summary || "(chưa tóm tắt — dựa vào status cũ)");
+    }).join("\n");
+  let body = text || "";
+  if(body.length > 12000) body = body.slice(0, 5000) + "\n\n[...]::\n\n" + body.slice(-6000);
   const prompt = [
-    "CURRENT STATUS TRƯỚC (giữ nguyên thông tin không thay đổi):",
-    state.currentStatus || "(chưa có)", "",
-    "CHƯƠNG " + chapterNumber + ":", text, "",
-    "Hợp nhất thành Current Status Update MỚI. TIẾNG VIỆT:",
+    "BẮT BUỘC: Viết lại CURRENT STATUS đầy đủ SAU CHƯƠNG " + chapterNumber + ".",
+    "Không được bỏ qua chương này. Dòng đầu phải là: Current Status Update - Sau Chương " + chapterNumber,
+    "",
+    "STATUS CŨ (giữ thông tin dài hạn còn đúng):",
+    state.currentStatus || "(chưa có)",
+    "",
+    "TÓM TẮT CÁC CHƯƠNG GẦN:",
+    prevSummaries || "(không)",
+    "",
+    "TOÀN VĂN / ĐOẠN CHƯƠNG " + chapterNumber + ":",
+    body,
+    "",
+    "Hợp nhất thành Current Status MỚI (TIẾNG VIỆT), cấu trúc:",
     "Current Status Update - Sau Chương " + chapterNumber,
-    "- Thời điểm:\n- Sự kiện chính:\n- Địa điểm:\n- Thay đổi tâm lý & hành động NV chính:\n- Phát triển quan hệ:\n- Tiến triển sức mạnh:\n- Tình trạng tổng thể:\n- Điểm nhấn/xung đột mới:\n- Mục tiêu chương tới:\nThông tin dài hạn:\n- Bí mật/lời hứa chưa giải quyết:\n- Quy tắc/thỏa thuận:\n- Điểm yếu:\n- Mối quan hệ/drama:"
+    "- Thời điểm:",
+    "- Sự kiện chính (chương " + chapterNumber + "):",
+    "- Địa điểm hiện tại:",
+    "- NV chính — tâm lý / hành động / mục tiêu:",
+    "- Quan hệ quan trọng (thay đổi mới nhất):",
+    "- Sức mạnh / vật phẩm / thông tin mới:",
+    "- Xung đột đang mở:",
+    "- Mục tiêu chương tới:",
+    "Thông tin dài hạn:",
+    "- Bí mật / lời hứa chưa giải:",
+    "- Quy tắc / thỏa thuận:",
+    "- Điểm yếu / rủi ro:",
+    "- Drama / quan hệ nền:"
   ].join("\n");
   try{
-    const { text: st } = await callAI(prompt, {maxTokens:2500, temperature:0.3});
-    state.currentStatus = st;
+    const { text: st } = await callAI(prompt, {maxTokens:2800, temperature:0.25});
+    let cleaned = (st || "").trim();
+    if(cleaned && !/sau chương\s*\d+/i.test(cleaned.slice(0, 80))){
+      cleaned = "Current Status Update - Sau Chương " + chapterNumber + "\n" + cleaned;
+    }
+    state.currentStatus = cleaned;
+    state.lastStatusChapter = chapterNumber;
     persist();
-    statusBox.textContent = st;
-  }catch(err){ if(!silent) setStatus("Lỗi status: " + err.message, false); }
+    if(statusBox) statusBox.textContent = cleaned;
+    if(!silent) setStatus("Đã cập nhật Current Status → ch" + chapterNumber + ".", false);
+    return { ok:true };
+  }catch(err){
+    if(!silent) setStatus("Lỗi status: " + err.message, false);
+    return { ok:false, reason: err.message };
+  }
 }
 $ID("statusFullRescanBtn").addEventListener("click", async ()=>{
   if(!state.chapters.length){ setStatus("Chưa có truyện.", false); return; }
-  setStatus("Đang tổng hợp Current Status...", true);
-  const prompt = ["Đọc TOÀN BỘ truyện và tạo Current Status Update mới nhất. TIẾNG VIỆT.", "", "TRUYỆN:", fullStoryText()].join("\n");
+  setStatus("Đang tổng hợp Current Status toàn truyện...", true);
   try{
-    const { text } = await callAI(prompt, {maxTokens:3000, temperature:0.3});
-    state.currentStatus = text;
-    persist(); statusBox.textContent = text;
-    setStatus("Đã đồng bộ.", false);
+    if(state.chapters.length <= 8){
+      const prompt = ["Đọc TOÀN BỘ truyện và tạo Current Status Update mới nhất (sau chương " + state.chapters.length + "). TIẾNG VIỆT. Dòng đầu: Current Status Update - Sau Chương " + state.chapters.length, "", "TRUYỆN:", fullStoryText()].join("\n");
+      const { text } = await callAI(prompt, {maxTokens:3200, temperature:0.25});
+      state.currentStatus = text;
+    } else {
+      state.currentStatus = "";
+      for(let i = 0; i < state.chapters.length; i++){
+        setStatus("Status: chương " + (i+1) + "/" + state.chapters.length + "...", true);
+        await updateCurrentStatusIncremental(state.chapters[i].text, i+1, true);
+      }
+    }
+    state.lastStatusChapter = state.chapters.length;
+    persist();
+    statusBox.textContent = state.currentStatus || "";
+    setStatus("Đã đồng bộ Current Status tới ch" + state.chapters.length + ".", false);
   }catch(err){ setStatus("Lỗi: " + err.message, false); }
 });
 $ID("statusEditToggle").addEventListener("click", ()=>{
@@ -3100,8 +3214,8 @@ function fullStoryText(){
 }
 function fullStoryTextCompressed(){
   /* Nếu > 30 chương, chỉ lấy 10 chương gần + summary chương cũ */
-  if(state.chapters.length <= 20) return fullStoryText();
-  const keep = 8;
+  if(state.chapters.length <= 12) return fullStoryText();
+  const keep = 6;
   const old = state.chapters.slice(0, -keep);
   const recent = state.chapters.slice(-keep);
   const oldPart = old.map((c,i)=> "Chương " + (i+1) + " (" + c.title + "): " + (c.summary || "(chưa tóm tắt)")).join("\n");
@@ -3500,10 +3614,17 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
         }catch(e){}
       }
     }, "summary");
-    enqueueTask(()=> updateCharactersIncremental(text, cn, true), "char");
+    enqueueTask(async ()=>{
+      const r = await updateCharactersIncremental(text, cn, true);
+      if(r && !r.ok) setStatus("⚠ Cập nhật NV ch" + cn + " thất bại — bấm Quét toàn truyện khi rảnh.", false);
+    }, "char");
     enqueueTask(()=> updateLocationsItemsIncremental(text, cn, true), "locitem");
     enqueueTask(()=> updateThreadsIncremental(text, cn, true), "thread");
-    enqueueTask(()=> updateCurrentStatusIncremental(text, cn, true), "status");
+    enqueueTask(async ()=>{
+      const r = await updateCurrentStatusIncremental(text, cn, true);
+      if(r && !r.ok) setStatus("⚠ Current Status ch" + cn + " lỗi — bấm Quét toàn bộ Status.", false);
+      else if(cn % 5 === 0) setStatus("✓ Bộ nhớ đã cập nhật tới ch" + cn + ". Nên rescan NV định kỳ.", false);
+    }, "status");
     enqueueTask(async ()=>{
       /* Scene detection nếu mature */
       if(state.mature && state.autoSceneEnabled){
