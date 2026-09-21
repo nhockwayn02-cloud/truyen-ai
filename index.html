@@ -374,9 +374,9 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
         <div class="field"><label>Mức độ explicit</label>
           <select id="explicitLevelSelect">
             <option value="subtle">Nhẹ nhàng (fade-to-black)</option>
-            <option value="sensual" selected>Gợi cảm (cảm xúc, ít mô tả cơ thể)</option>
+            <option value="sensual">Gợi cảm (cảm xúc, ít mô tả cơ thể)</option>
             <option value="explicit">Rõ ràng (mô tả cơ thể, hành động)</option>
-            <option value="strong">Mạnh (táo bạo, chi tiết cao)</option>
+            <option value="strong" selected>Mạnh (táo bạo, chi tiết cao)</option>
             <option value="wild">Cực mạnh (không né tránh gì)</option>
           </select>
         </div>
@@ -792,22 +792,22 @@ const DESCRIPTION_PROMPTS = {
 
 const EXPLICIT_PROMPTS = {
   subtle: "CẢNH 18+: Nhẹ nhàng — fade-to-black sau khi hôn, gợi ý chứ không tả. Cảm xúc chiếm ưu thế.",
-  sensual: "CẢNH 18+: Gợi cảm — tả cảm xúc, hơi thở, ánh mắt, da chạm da, nhưng KHÔNG tả bộ phận sinh dục hay hành động cụ thể. Văn chương, giàu sức gợi.",
-  explicit: "CẢNH 18+: Rõ ràng — mô tả cơ thể, hành động cụ thể, nhưng vẫn giữ tính văn chương. Show cảm xúc qua hành động, không liệt kê.",
-  strong: "CẢNH 18+: Mạnh — táo bạo, chi tiết cao, mô tả rõ ràng thân thể và hành động. Vẫn đảm bảo văn chương, KHÔNG dùng từ y khoa khô khan.",
-  wild: "CẢNH 18+: Cực mạnh — không né tránh bất cứ điều gì, táo bạo tối đa, mô tả đầy đủ. Nhưng vẫn giữ phong cách văn chương, nhịp điệu, không sa vào liệt kê."
+  sensual: "CẢNH 18+: Gợi cảm — tả cảm xúc, hơi thở, ánh mắt, da chạm da; hạn chế tả bộ phận sinh dục chi tiết. Vẫn giàu sức gợi.",
+  explicit: "CẢNH 18+: Rõ ràng — mô tả cơ thể và hành động cụ thể (hôn, sờ, cởi, tư thế). Có thể dùng từ trực tiếp khi cần. Show cảm giác qua da thịt và phản ứng.",
+  strong: "CẢNH 18+: MẠNH — táo bạo, chi tiết cao. TẢ THẲNG bộ phận (cặc, lồn, ngực, mông, nước nhờn), động tác (đút, đẩy, mút, liếm, siết), nhịp và âm thanh. Ưu tiên cảm giác thể xác rõ ràng; ít ẩn dụ.",
+  wild: "CẢNH 18+: CỰC MẠNH (kiểu erotica trực tiếp) — KHÔNG fade-to-black, KHÔNG né bằng ẩn dụ hoa mỹ. BẮT BUỘC: (1) gọi tên bộ phận thẳng tiếng Việt (cặc, lồn, đầu vú, tinh dịch, nước lồn…); (2) tả từng động tác giao hợp/âu yếm cụ thể và liên tục; (3) nhịp đút, độ sâu, tiếng da đập, dịch thể, co thắt, rên; (4) phản ứng từng nhân vật (hông, đùi, tay bám, mắt, miệng). Được dùng từ tục. Văn vẫn có nhịp, không liệt kê khô như hướng dẫn."
 };
 
 const EROTIC_STYLE_PROMPT = [
   "PHONG CÁCH CẢNH 18+ (BẮT BUỘC khi viết cảnh nóng):",
-  "- Viết mạnh, chi tiết, táo bạo nhưng vẫn văn chương: hơi thở, da thịt, nhiệt độ, nhịp tim, ánh mắt, khoảng lặng, phản ứng cơ thể.",
-  "- Nội tâm và dục vọng phải gắn với tính cách nhân vật, không nhảy cóc.",
-  "- Show, don't tell: đừng viết 'cô ấy kích thích', hãy tả cơ thể phản ứng cụ thể.",
-  "- Nhịp câu thay đổi: chỗ dồn dập, chỗ chậm, chỗ im lặng.",
-  "- HẠN CHẾ BẠO LỰC THỪA. Ưu tiên căng thẳng tình dục / cảm xúc.",
-  "- Giữ ranh giới nhân vật đã thiết lập (consent, taboo, kinh nghiệm).",
-  "- Không dùng từ ngữ lâm sàng khô khan, không liệt kê động tác như hướng dẫn.",
-  "- 100% tiếng Việt có dấu, tự nhiên như người viết thật."
+  "- Viết TRỰC TIẾP, chi tiết thể xác: da, mồ hôi, nhiệt, độ ướt, độ căng, nhịp thở, tiếng rên, tiếng da đập.",
+  "- Ưu tiên từ thẳng khi cảnh đang nóng: cặc, lồn, đút, đẩy, mút, liếm, xuất — không thay bằng ẩn dụ dài dòng.",
+  "- Mỗi đoạn giao hợp phải có: tư thế, chuyển động (sâu/nông/nhanh/chậm), cảm giác trong lồn/cặc, phản ứng miệng và tay.",
+  "- Show: đừng chỉ viết 'cô ấy kích thích' — tả nước nhờn, đầu vú cứng, hông nâng, đùi run, co thắt.",
+  "- Nhịp câu: chỗ dồn dập ngắn, chỗ chậm dài; không cắt cảnh giữa chừng sang ẩn dụ linh khí/trừu tượng trừ khi mệnh lệnh yêu cầu.",
+  "- Giữ tính cách + consent/ranh giới nhân vật đã có.",
+  "- Không liệt kê như hướng dẫn máy móc; vẫn là văn kể chuyện, nhưng TRẦN và RÕ.",
+  "- 100% tiếng Việt có dấu."
 ].join("\n");
 
 const DEFAULT_ADVANCED_RULES = [
@@ -906,7 +906,7 @@ const state = {
   model: "deepseek/deepseek-v4-flash-0731", modelNsfw: "x-ai/grok-4.3",
   nsfwMode: "auto", nsfwAutoThreshold: 6,
   descriptionLevel: "balanced",
-  explicitLevel: "sensual",
+  explicitLevel: "strong",
   advancedRules: DEFAULT_ADVANCED_RULES, autoIntervalSec: 180,
   includeKeyOnExport: false, spellCheckEnabled: true,
   autoContinueEnabled: true, autoSummaryEnabled: true, autoSceneEnabled: true,
