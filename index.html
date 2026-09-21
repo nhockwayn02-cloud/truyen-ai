@@ -155,6 +155,13 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 .warn-item.sev-medium{border-color:var(--amber);}
 .warn-item.sev-low{border-color:var(--blue);}
 .status-box{background:#0c0d12;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:var(--ink-dim);line-height:1.6;max-height:220px;overflow-y:auto;white-space:pre-wrap;}
+#snapshotBox{max-height:420px;overflow-y:auto;}
+.snap-group-title{font-size:11px;font-weight:700;color:var(--gold);margin:10px 0 5px;text-transform:uppercase;letter-spacing:.03em;}
+.snap-group-title:first-child{margin-top:2px;}
+.snap-card{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:11.5px;margin-bottom:5px;}
+.snap-card b{color:var(--ink);}
+.snap-meta{font-size:10.5px;color:var(--ink-dim);margin-top:2px;}
+.snap-stale-badge{font-size:10px;color:var(--amber);border:1px dashed var(--gold-dim);border-radius:6px;padding:6px 8px;margin-bottom:8px;}
 .editor-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}
 .editor-toolbar .btn{width:auto;padding:7px 11px;font-size:12px;}
 .toolbar-left{display:flex;gap:8px;align-items:center;flex:1;min-width:240px;flex-wrap:wrap;}
@@ -547,6 +554,15 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
       </div>
     </div>
 
+    <div class="section tone-purple" data-section>
+      <div class="section-head" data-toggle><span>1.4. Lịch Sử Theo Chương</span><span class="chev">▾</span></div>
+      <div class="section-body">
+        <div class="hint">Sau khi một chương viết xong, AI tự cập nhật NV / địa điểm / vật phẩm / status — và một bản "ảnh chụp" (snapshot) trạng thái tại thời điểm đó được lưu lại. Chọn chương bên dưới để xem lại đúng trạng thái lúc ấy.</div>
+        <select id="snapshotChapterSelect"><option value="">-- Chọn chương để xem lịch sử --</option></select>
+        <div id="snapshotBox"><div class="empty-note">Chọn một chương ở trên để xem trạng thái tại thời điểm đó.</div></div>
+      </div>
+    </div>
+
     <div class="section tone-teal" data-section>
       <div class="section-head" data-toggle><span>1.5. Threads</span><span class="chev">▾</span></div>
       <div class="section-body">
@@ -850,9 +866,38 @@ function normalizeName(s){ return (s||"").toLowerCase().normalize('NFD').replace
 function countWords(text){ return (text||"").trim().split(/\s+/).filter(Boolean).length; }
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function stripCodeFences(s){ return (s||"").replace(/```json/gi,"```").replace(/```/g,"").trim(); }
+/* Cũ: lấy "từ dấu ngoặc đầu tiên tới hết chuỗi" rồi JSON.parse — nếu AI thòng
+   thêm 1 câu ghi chú sau khối JSON (rất hay gặp) là parse hỏng toàn bộ, và
+   các hàm gọi hàm này chỉ âm thầm return chứ không báo lỗi => "tự nhiên
+   không cập nhật". Giờ tìm ĐÚNG cặp ngoặc khớp nhau (đếm độ sâu, bỏ qua
+   ngoặc nằm trong chuỗi "...") rồi mới parse phần đó, nên chữ thừa phía sau
+   không còn phá được nữa. */
+function extractBalancedJson(s){
+  for(let i=0;i<s.length;i++){
+    const ch = s[i];
+    if(ch !== '[' && ch !== '{') continue;
+    const open = ch, close = ch === '[' ? ']' : '}';
+    let depth = 0, inStr = false, esc = false;
+    for(let j=i;j<s.length;j++){
+      const c = s[j];
+      if(inStr){
+        if(esc) esc = false;
+        else if(c === '\\') esc = true;
+        else if(c === '"') inStr = false;
+        continue;
+      }
+      if(c === '"') { inStr = true; continue; }
+      if(c === open) depth++;
+      else if(c === close){ depth--; if(depth === 0) return s.slice(i, j+1); }
+    }
+  }
+  return null;
+}
 function safeJsonParse(raw){
+  const cleaned = stripCodeFences(raw);
+  const balanced = extractBalancedJson(cleaned);
+  if(balanced){ try{ return JSON.parse(balanced); }catch(e){} }
   try{
-    const cleaned = stripCodeFences(raw);
     const idxArr = cleaned.indexOf('[');
     const idxObj = cleaned.indexOf('{');
     let start = -1;
@@ -2494,6 +2539,12 @@ $ID("deleteChapterBtn").addEventListener("click", async ()=>{
     // Consent log
     state.consentLog = (state.consentLog || []).filter(c => c.chapter !== removedNum)
       .map(c => c.chapter > removedNum ? Object.assign({}, c, { chapter: c.chapter - 1 }) : c);
+    // Lịch sử theo chương (snapshot) — đánh lại số chương y hệt logic ở trên
+    remapSnapshotChapterNumbers(n=>{
+      if(n === removedNum) return Math.max(0, removedNum - 1) || null;
+      if(n > removedNum) return n - 1;
+      return n;
+    });
   }
 
   if(state.currentChapterIndex >= state.chapters.length){
@@ -2922,6 +2973,129 @@ $ID("threadAddBtn").addEventListener("click", ()=>{
   persist(); renderThreads(); $ID("threadDescInput").value = "";
 });
 
+/* ========== CHAPTER STATE SNAPSHOT (lịch sử theo chương) ========== */
+/* Sau khi bất kỳ mục nào (NV, địa điểm, vật phẩm, threads, status...) được AI
+   cập nhật cho một chương, ta chụp lại toàn bộ trạng thái liên quan tại thời
+   điểm đó và lưu vào chapter.stateSnapshot. Vì 4 hàm update có thể chạy song
+   song/không theo thứ tự cố định, hàm này luôn chụp *toàn bộ* state hiện tại
+   (không chỉ phần vừa đổi) — nên bất kể hàm nào chạy xong sau cùng, snapshot
+   cuối cùng vẫn đầy đủ và chính xác. */
+/* Khi xóa/gộp/chèn chương, các số chương (firstAppearance, lastAppearance,
+   deathChapter, history[].chapter...) sống trong LIVE state đã được code cũ
+   tự đánh số lại. Nhưng dữ liệu "đông cứng" bên trong stateSnapshot của các
+   chương khác cũng chứa các số chương y hệt, nên cũng phải đánh lại — nếu
+   không, sau khi xóa/gộp/chèn chương, khung "Lịch Sử Theo Chương" sẽ hiện
+   sai (NV xuất hiện/biến mất nhầm chương). mapFn(n) trả về số chương mới,
+   hoặc null để loại bỏ mốc đó. */
+function remapSnapshotChapterNumbers(mapFn){
+  state.chapters.forEach(ch=>{
+    const snap = ch.stateSnapshot;
+    if(!snap) return;
+    const remapFields = (arr, fields)=>{
+      (arr||[]).forEach(o=>{
+        fields.forEach(f=>{ if(o[f] != null) o[f] = mapFn(o[f]); });
+      });
+    };
+    remapFields(snap.characters, ["firstAppearance","lastAppearance","deathChapter"]);
+    (snap.characters||[]).forEach(c=>{
+      if(Array.isArray(c.history)){
+        c.history = c.history
+          .map(h=> Object.assign({}, h, { chapter: mapFn(h.chapter) }))
+          .filter(h=> h.chapter != null);
+      }
+    });
+    remapFields(snap.locations, ["firstAppearance","lastAppearance"]);
+    remapFields(snap.items, ["firstAppearance","lastAppearance"]);
+  });
+}
+/* Đánh dấu / gỡ cờ "mục X chưa cập nhật được" cho 1 chương, để người dùng
+   THẤY được thay vì bị âm thầm bỏ qua như trước. */
+function markAutoUpdateIssue(chapterNumber, label, failed){
+  const ch = state.chapters[chapterNumber - 1];
+  if(!ch) return;
+  const issues = new Set(ch.autoUpdateIssues || []);
+  if(failed) issues.add(label); else issues.delete(label);
+  ch.autoUpdateIssues = Array.from(issues);
+  persist();
+  renderChapterNav();
+}
+function captureChapterSnapshot(chapterNumber){
+  try{
+    const idx = chapterNumber - 1;
+    const ch = state.chapters[idx];
+    if(!ch) return;
+    ch.stateSnapshot = {
+      capturedAt: Date.now(),
+      currentStatus: state.currentStatus || "",
+      storyClock: state.storyClock || "",
+      mainCharProfile: state.mainCharProfile ? JSON.parse(JSON.stringify(state.mainCharProfile)) : null,
+      characters: JSON.parse(JSON.stringify(state.characters || [])),
+      locations: JSON.parse(JSON.stringify(state.locations || [])),
+      items: JSON.parse(JSON.stringify(state.items || [])),
+      threads: JSON.parse(JSON.stringify(state.threads || []))
+    };
+    persist();
+    renderSnapshotChapterSelect();
+    const sel = $ID("snapshotChapterSelect");
+    if(sel && sel.value === String(idx)) renderSnapshotView(idx);
+  }catch(e){}
+}
+function renderSnapshotChapterSelect(){
+  const sel = $ID("snapshotChapterSelect");
+  if(!sel) return;
+  const prevVal = sel.value;
+  if(!state.chapters.length){ sel.innerHTML = '<option value="">-- Chưa có chương --</option>'; return; }
+  sel.innerHTML = '<option value="">-- Chọn chương để xem lịch sử --</option>' + state.chapters.map((c,i)=>
+    '<option value="'+i+'">Chương '+(i+1)+': '+escapeHtml((c.title||"").slice(0,40))+(c.stateSnapshot ? '' : ' (chưa có snapshot)')+'</option>'
+  ).join("");
+  if(prevVal && state.chapters[parseInt(prevVal,10)]) sel.value = prevVal;
+}
+function renderSnapshotView(idx){
+  const box = $ID("snapshotBox");
+  if(!box) return;
+  const ch = state.chapters[idx];
+  if(!ch){ box.innerHTML = '<div class="empty-note">Chọn một chương ở trên để xem trạng thái tại thời điểm đó.</div>'; return; }
+  const snap = ch.stateSnapshot;
+  const issueBanner = (ch.autoUpdateIssues && ch.autoUpdateIssues.length)
+    ? '<div class="snap-stale-badge">⚠ Chương này còn mục cập nhật lỗi: '+escapeHtml(ch.autoUpdateIssues.join(", "))+'. Bấm "🔄 Rescan từ chương này" (mục 6) để chạy lại.</div>'
+    : '';
+  if(!snap){
+    box.innerHTML = issueBanner + '<div class="snap-stale-badge">⚠ Chương này chưa có snapshot lịch sử (được viết trước khi có tính năng này, hoặc chưa chạy xong cập nhật nền). Dùng nút "🔄 Rescan từ chương này" hoặc "Quét toàn truyện" ở các mục NV/Địa điểm/Status để tạo lại lịch sử cho các chương cũ.</div>';
+    return;
+  }
+  const chars = (snap.characters||[]).filter(c=> (c.lastAppearance||0) <= (idx+1) && (c.firstAppearance==null || c.firstAppearance <= (idx+1)));
+  const charsHtml = chars.length ? chars.map(c=>
+    '<div class="snap-card"><b>'+escapeHtml(c.name||"?")+'</b> '
+    + '<span class="tier-badge tier-'+c.tier+'">'+c.tier+'</span> '
+    + (c.dead ? '<span class="dead-badge">💀</span>' : '')
+    + (c.currentLocation ? '<div class="snap-meta">📍 '+escapeHtml(c.currentLocation)+'</div>' : '')
+    + (c.mentalState ? '<div class="snap-meta">🧠 '+escapeHtml(c.mentalState)+'</div>' : '')
+    + (c.physicalState ? '<div class="snap-meta">💪 '+escapeHtml(c.physicalState)+'</div>' : '')
+    + '</div>'
+  ).join("") : '<div class="empty-note">Chưa có NV nào tại thời điểm này.</div>';
+  const locsHtml = (snap.locations||[]).length ? snap.locations.map(l=>
+    '<div class="snap-card"><b>'+escapeHtml(l.name)+'</b> <span class="snap-meta">'+escapeHtml(l.status||"")+'</span>'
+    + (l.description ? '<div class="snap-meta">'+escapeHtml(l.description)+'</div>' : '') + '</div>'
+  ).join("") : '<div class="empty-note">Chưa có.</div>';
+  const itemsHtml = (snap.items||[]).length ? snap.items.map(it=>
+    '<div class="snap-card"><b>'+escapeHtml(it.name)+'</b> <span class="snap-meta">'+escapeHtml(it.status||"")+(it.owner?(' · '+escapeHtml(it.owner)):'')+'</span></div>'
+  ).join("") : '<div class="empty-note">Chưa có.</div>';
+  box.innerHTML = issueBanner +
+    '<div class="snap-group-title">🕐 Thời điểm</div><div class="snap-card">'+escapeHtml(snap.storyClock || "(chưa đặt)")+'</div>'
+    + '<div class="snap-group-title">📋 Current Status</div><div class="status-box" style="max-height:160px;">'+escapeHtml(snap.currentStatus || "(chưa có)")+'</div>'
+    + '<div class="snap-group-title">👤 Nhân vật</div>' + charsHtml
+    + '<div class="snap-group-title">📍 Địa điểm</div>' + locsHtml
+    + '<div class="snap-group-title">🎒 Vật phẩm</div>' + itemsHtml;
+}
+(function(){
+  const sel = $ID("snapshotChapterSelect");
+  if(sel) sel.addEventListener("change", ()=>{
+    const v = sel.value;
+    if(v === "") { renderSnapshotView(-1); return; }
+    renderSnapshotView(parseInt(v,10));
+  });
+})();
+
 /* ========== CHARACTER UPDATE ========== */
 function relevantCharacters(limit){
   limit = limit || 22;
@@ -3061,6 +3235,7 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
       if(r && r.isNewChar) nNew++; else if(r) nUpd++;
     });
     persist(); renderCharacters();
+    captureChapterSnapshot(chapterNumber);
     if(!silent) setStatus("NV ch" + chapterNumber + ": +" + nNew + " mới, " + nUpd + " cập nhật.", false);
     return { ok:true, nNew, nUpd };
   }catch(err){
@@ -3082,64 +3257,88 @@ $ID("npcUpdateBtn").addEventListener("click", async ()=>{
   }catch(err){ setStatus("Lỗi: " + err.message, false); }
 });
 
-/* ========== LOCATION + ITEM UPDATE ========== */
-const LOCITEM_JSON_HINT = 'Trả về DUY NHẤT object JSON: {"locations":[{"name":"","description":"","status":"active|destroyed|abandoned|locked"}],"items":[{"name":"","description":"","owner":"","status":"active|lost|destroyed|stored"}]}. Chỉ liệt kê MỚI/THAY ĐỔI. Tất cả TIẾNG VIỆT.';
-async function updateLocationsItemsIncremental(text, chapterNumber, silent){
-  if(!text) return;
+/* ========== LOCATION + ITEM + THREADS UPDATE (gộp 1 lệnh gọi) ========== */
+/* Trước đây đây là 2 hàm riêng (updateLocationsItemsIncremental +
+   updateThreadsIncremental), mỗi hàm tự gửi lại TOÀN VĂN chương cho AI —
+   tức nội dung chương bị gửi lặp lại 2 lần chỉ để tách 2 việc gần giống
+   nhau. Gộp làm 1 lệnh gọi giúp giảm ~1 lượt gửi lại toàn chương (tốn input
+   token nhất), giảm số lệnh gọi API, và giảm số chỗ có thể "âm thầm không
+   cập nhật" nếu JSON lỗi. Có thử lại 1 lần nếu không parse được. */
+const WORLD_JSON_FORMAT_HINT = 'Trả về DUY NHẤT một object JSON (không thêm chữ nào khác, không markdown):\n'
+  + '{"locations":[{"name":"","description":"","status":"active|destroyed|abandoned|locked"}],'
+  + '"items":[{"name":"","description":"","owner":"","status":"active|lost|destroyed|stored"}],'
+  + '"threads":[{"type":"open_thread|foreshadowing|consequence","desc":"","status":"seeded|developing|paid_off|abandoned","matchExistingDesc":""}]}\n'
+  + 'Chỉ liệt kê địa điểm/vật phẩm MỚI hoặc CÓ THAY ĐỔI, và thread mới/đổi trạng thái. Nếu không có gì đổi ở 1 mục, để mảng rỗng []. Tất cả TIẾNG VIỆT.';
+function applyWorldUpdate(obj, chapterNumber){
+  let touched = false;
+  (obj.locations||[]).forEach(u=>{
+    if(!u.name) return; touched = true;
+    let l = findLocationByName(u.name);
+    if(!l){ l = newLocation({ name: u.name, firstAppearance: chapterNumber }); state.locations.push(l); }
+    if(u.description) l.description = u.description;
+    if(u.status) l.status = u.status;
+    l.lastAppearance = chapterNumber;
+  });
+  (obj.items||[]).forEach(u=>{
+    if(!u.name) return; touched = true;
+    let it = findItemByName(u.name);
+    if(!it){ it = newItem({ name: u.name, firstAppearance: chapterNumber }); state.items.push(it); }
+    if(u.description) it.description = u.description;
+    if(u.owner) it.owner = u.owner;
+    if(u.status) it.status = u.status;
+    it.lastAppearance = chapterNumber;
+  });
+  (obj.threads||[]).forEach(t=>{
+    if(!t.desc) return; touched = true;
+    let match = null;
+    if(t.matchExistingDesc){
+      const key = t.matchExistingDesc.toLowerCase().slice(0,20);
+      match = state.threads.find(x=> x.desc.toLowerCase().includes(key));
+    }
+    if(match){ match.status = t.status || match.status; }
+    else state.threads.push({ id: genId(), type: t.type||"open_thread", status: t.status||"seeded", desc: t.desc, chapterIntroduced: chapterNumber });
+  });
+  return touched;
+}
+async function updateWorldIncremental(text, chapterNumber, silent){
+  if(!text) return { ok:false, reason:"empty" };
   const existingLocs = state.locations.map(l=>l.name + " (" + l.status + ")").join(", ") || "(chưa có)";
   const existingItems = state.items.map(it=>it.name + " (" + it.status + (it.owner? ", của "+it.owner:"") + ")").join(", ") || "(chưa có)";
+  const existingThreads = state.threads.map(t=>t.type+": "+t.desc+" ("+t.status+")").join("\n") || "(chưa có)";
+  let body = text;
+  if(body.length > 14000) body = body.slice(0, 6000) + "\n\n[...]\n\n" + body.slice(-7000);
   const prompt = [
-    "Địa điểm hiện có:", existingLocs, "Vật phẩm hiện có:", existingItems, "",
-    "Chương " + chapterNumber + ":", text, "", LOCITEM_JSON_HINT
+    "Địa điểm hiện có:", existingLocs, "",
+    "Vật phẩm hiện có:", existingItems, "",
+    "Threads hiện có:", existingThreads, "",
+    "Chương " + chapterNumber + ":", body, "", WORLD_JSON_FORMAT_HINT
   ].join("\n");
+  const attempt = async (p, maxTokens)=>{
+    const { text: raw } = await callAI(p, {maxTokens, temperature:0.3});
+    return safeJsonParse(raw);
+  };
   try{
-    const { text: raw } = await callAI(prompt, {maxTokens:1500, temperature:0.3});
-    const obj = safeJsonParse(raw);
-    if(!obj || typeof obj !== "object") return;
-    (obj.locations||[]).forEach(u=>{
-      if(!u.name) return;
-      let l = findLocationByName(u.name);
-      if(!l){ l = newLocation({ name: u.name, firstAppearance: chapterNumber }); state.locations.push(l); }
-      if(u.description) l.description = u.description;
-      if(u.status) l.status = u.status;
-      l.lastAppearance = chapterNumber;
-    });
-    (obj.items||[]).forEach(u=>{
-      if(!u.name) return;
-      let it = findItemByName(u.name);
-      if(!it){ it = newItem({ name: u.name, firstAppearance: chapterNumber }); state.items.push(it); }
-      if(u.description) it.description = u.description;
-      if(u.owner) it.owner = u.owner;
-      if(u.status) it.status = u.status;
-      it.lastAppearance = chapterNumber;
-    });
-    persist(); renderLocations(); renderItems();
-  }catch(err){ if(!silent) setStatus("Lỗi loc/item: " + err.message, false); }
+    let obj = await attempt(prompt, 2000);
+    if(!obj || typeof obj !== "object"){
+      /* Thử lại 1 lần với lệnh ngắn gọn, nghiêm khắc hơn — thay vì âm thầm bỏ qua như trước */
+      try{ obj = await attempt("CHỈ trả JSON object đúng định dạng, không thêm chữ nào khác.\n" + WORLD_JSON_FORMAT_HINT + "\n\nChương " + chapterNumber + ":\n" + body.slice(0, 8000), 1800); }catch(e2){}
+    }
+    if(!obj || typeof obj !== "object"){
+      if(!silent) setStatus("⚠ Không đọc được cập nhật địa điểm/vật phẩm/thread ch" + chapterNumber + " (lỗi định dạng AI trả về).", false);
+      return { ok:false, reason:"parse" };
+    }
+    applyWorldUpdate(obj, chapterNumber);
+    persist(); renderLocations(); renderItems(); renderThreads();
+    captureChapterSnapshot(chapterNumber);
+    return { ok:true };
+  }catch(err){
+    if(!silent) setStatus("Lỗi địa điểm/vật phẩm/thread ch" + chapterNumber + ": " + err.message, false);
+    return { ok:false, reason: err.message };
+  }
 }
-
-/* ========== THREADS UPDATE ========== */
-const THREAD_JSON_FORMAT_HINT = 'Trả về DUY NHẤT một mảng JSON: {"type":"open_thread|foreshadowing|consequence","desc":"","status":"seeded|developing|paid_off|abandoned","matchExistingDesc":""}. TIẾNG VIỆT.';
-async function updateThreadsIncremental(text, chapterNumber, silent){
-  if(!text) return;
-  const existingList = state.threads.map(t=>t.type+": "+t.desc+" ("+t.status+")").join("\n") || "(chưa có)";
-  const prompt = ["Threads hiện tại:", existingList, "", "Chương " + chapterNumber + ":", text, "", THREAD_JSON_FORMAT_HINT].join("\n");
-  try{
-    const { text: raw } = await callAI(prompt, {maxTokens:1200, temperature:0.3});
-    const arr = safeJsonParse(raw);
-    if(!Array.isArray(arr)) return;
-    arr.forEach(t=>{
-      if(!t.desc) return;
-      let match = null;
-      if(t.matchExistingDesc){
-        const key = t.matchExistingDesc.toLowerCase().slice(0,20);
-        match = state.threads.find(x=> x.desc.toLowerCase().includes(key));
-      }
-      if(match){ match.status = t.status || match.status; }
-      else state.threads.push({ id: genId(), type: t.type||"open_thread", status: t.status||"seeded", desc: t.desc, chapterIntroduced: chapterNumber });
-    });
-    persist(); renderThreads();
-  }catch(err){}
-}
+/* Giữ lại 2 tên hàm cũ (đã gộp bên trong) để không phải sửa chỗ nào khác lỡ còn tham chiếu */
+async function updateLocationsItemsIncremental(text, chapterNumber, silent){ return updateWorldIncremental(text, chapterNumber, silent); }
+async function updateThreadsIncremental(text, chapterNumber, silent){ return { ok:true, skipped:true }; /* đã gộp vào updateWorldIncremental */ }
 
 /* ========== CURRENT STATUS ========== */
 async function updateCurrentStatusIncremental(text, chapterNumber, silent){
@@ -3191,6 +3390,7 @@ async function updateCurrentStatusIncremental(text, chapterNumber, silent){
     state.lastStatusChapter = chapterNumber;
     persist();
     if(statusBox) statusBox.textContent = cleaned;
+    captureChapterSnapshot(chapterNumber);
     if(!silent) setStatus("Đã cập nhật Current Status → ch" + chapterNumber + ".", false);
     return { ok:true };
   }catch(err){
@@ -3673,13 +3873,17 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     enqueueTask(async ()=>{
       const r = await updateCharactersIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Cập nhật NV ch" + cn + " thất bại — bấm Quét toàn truyện khi rảnh.", false);
+      markAutoUpdateIssue(cn, "NV", !r || !r.ok);
     }, "char");
-    enqueueTask(()=> updateLocationsItemsIncremental(text, cn, true), "locitem");
-    enqueueTask(()=> updateThreadsIncremental(text, cn, true), "thread");
+    enqueueTask(async ()=>{
+      const r = await updateWorldIncremental(text, cn, true);
+      markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok);
+    }, "world");
     enqueueTask(async ()=>{
       const r = await updateCurrentStatusIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Current Status ch" + cn + " lỗi — bấm Quét toàn bộ Status.", false);
       else if(cn % 5 === 0) setStatus("✓ Bộ nhớ đã cập nhật tới ch" + cn + ". Nên rescan NV định kỳ.", false);
+      markAutoUpdateIssue(cn, "Status", !r || !r.ok);
     }, "status");
     enqueueTask(async ()=>{
       /* Scene detection nếu mature */
@@ -3790,10 +3994,9 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     persist(); renderChapterNav(); renderCurrentChapter();
     setStatus("Đã viết tiếp.", false);
     const cn = idx + 1;
-    enqueueTask(()=> updateCharactersIncremental(contText, cn, true), "char");
-    enqueueTask(()=> updateLocationsItemsIncremental(contText, cn, true), "locitem");
-    enqueueTask(()=> updateThreadsIncremental(contText, cn, true), "thread");
-    enqueueTask(()=> updateCurrentStatusIncremental(contText, cn, true), "status");
+    enqueueTask(async ()=>{ const r = await updateCharactersIncremental(contText, cn, true); markAutoUpdateIssue(cn, "NV", !r || !r.ok); }, "char");
+    enqueueTask(async ()=>{ const r = await updateWorldIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok); }, "world");
+    enqueueTask(async ()=>{ const r = await updateCurrentStatusIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Status", !r || !r.ok); }, "status");
     enqueueTask(async ()=>{
       if(state.mature && state.autoSceneEnabled){
         try{ await scanScenesForChapter(cn); }catch(e){}
@@ -3902,10 +4105,12 @@ async function rescanFrom(startChapterNum){
       try{
         const sum = await generateChapterSummary(c.text, cn, true);
         if(sum) c.summary = sum;
-        await updateCharactersIncremental(c.text, cn, true);
-        await updateLocationsItemsIncremental(c.text, cn, true);
-        await updateThreadsIncremental(c.text, cn, true);
-        await updateCurrentStatusIncremental(c.text, cn, true);
+        const rc = await updateCharactersIncremental(c.text, cn, true);
+        const rw = await updateWorldIncremental(c.text, cn, true);
+        const rs = await updateCurrentStatusIncremental(c.text, cn, true);
+        markAutoUpdateIssue(cn, "NV", !rc || !rc.ok);
+        markAutoUpdateIssue(cn, "Thế giới", !rw || !rw.ok);
+        markAutoUpdateIssue(cn, "Status", !rs || !rs.ok);
         if(state.mature && state.autoSceneEnabled){
           try{ await scanScenesForChapter(cn); }catch(e){}
         }
@@ -3951,6 +4156,7 @@ $ID("splitChapterBtn").addEventListener("click", async ()=>{
   };
   c.text = part1; c.wordCount = countWords(part1);
   c.title = c.title + " (phần 1)";
+  c.stateSnapshot = null; // nội dung đổi + số chương sau đó bị lệch, cần rescan để tạo lại lịch sử
   state.chapters.splice(idx + 1, 0, newChapter);
   persist(); renderChapterNav(); renderCurrentChapter();
   setStatus("Đã tách chương.", false);
@@ -3968,6 +4174,7 @@ $ID("mergeChapterBtn").addEventListener("click", async ()=>{
   a.title = a.title + " + " + b.title;
   a.summary = "";
   a.continuityWarnings = [];
+  a.stateSnapshot = null; // nội dung đã đổi (gộp thêm ch sau) nên snapshot cũ không còn đúng, cần rescan lại
   state.chapters.splice(idx + 1, 1);
   wipeChapterMemoryAfterMerge(idx + 2);
   persist(); renderChapterNav(); renderCurrentChapter();
@@ -3993,6 +4200,11 @@ function wipeChapterMemoryAfterMerge(mergedNum){
     else if(s.chapter > mergedNum) s.chapter--;
     return s;
   });
+  remapSnapshotChapterNumbers(n=>{
+    if(n === mergedNum) return Math.max(1, mergedNum - 1);
+    if(n > mergedNum) return n - 1;
+    return n;
+  });
 }
 
 $ID("insertChapterBtn").addEventListener("click", async ()=>{
@@ -4013,6 +4225,7 @@ $ID("insertChapterBtn").addEventListener("click", async ()=>{
   });
   state.threads.forEach(t=>{ if(t.chapterIntroduced > idx + 1) t.chapterIntroduced++; });
   state.scenes.forEach(s=>{ if(s.chapter > idx + 1) s.chapter++; });
+  remapSnapshotChapterNumbers(n=> n > idx + 1 ? n + 1 : n);
   state.currentChapterIndex = idx + 1;
   persist(); renderChapterNav(); renderCurrentChapter();
   setStatus("Đã chèn chương trống.", false);
@@ -4486,6 +4699,7 @@ function renderAll(){
   renderConsentLog();
   renderChapterNav();
   renderCurrentChapter();
+  renderSnapshotChapterSelect();
   statusBox.textContent = state.currentStatus || "AI sẽ tự tạo Current Status Update sau mỗi chương...";
   statusBox.style.display = "block";
   statusEdit.style.display = "none";
@@ -4583,6 +4797,7 @@ function renderChapterNav(){
   chapterStrip.innerHTML = "";
   renderDeleteChapterSelect();
   renderQuickJump();
+  renderSnapshotChapterSelect();
   const indices = state.chapters.map((_,i)=>i).reverse();
   indices.forEach(i=>{
     const c = state.chapters[i];
@@ -4603,7 +4818,8 @@ function renderChapterNav(){
       + (c.isNsfw ? '<div class="cnsfw">🔥</div>' : '')
       + (c.polished ? '<div style="color:var(--green);font-size:10px;">✓</div>' : '')
       + (c.truncated ? '<div class="cflag">⚠ cắt</div>' : '')
-      + ((c.continuityWarnings&&c.continuityWarnings.length) ? '<div class="cflag">🔍 '+c.continuityWarnings.length+'</div>' : '');
+      + ((c.continuityWarnings&&c.continuityWarnings.length) ? '<div class="cflag">🔍 '+c.continuityWarnings.length+'</div>' : '')
+      + ((c.autoUpdateIssues&&c.autoUpdateIssues.length) ? '<div class="cflag" title="Chưa cập nhật được: '+escapeHtml(c.autoUpdateIssues.join(", "))+' — bấm Rescan để đồng bộ lại">⚠ '+escapeHtml(c.autoUpdateIssues.join("/"))+'</div>' : '');
     chip.addEventListener("click", ()=>{
       state.currentChapterIndex = i;
       renderChapterNav(); renderCurrentChapter();
