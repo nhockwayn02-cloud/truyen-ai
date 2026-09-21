@@ -780,7 +780,8 @@ const SYSTEM_PROMPT = [
   "Mọi phản hồi PHẢI 100% TIẾNG VIỆT CÓ DẤU. Tuyệt đối không trộn tiếng Anh, Trung, Nhật, Hàn.",
   "Viết như con người: câu văn có nhịp, có chỗ ngắn chỗ dài, có hơi thở, có im lặng.",
   "MIÊU TẢ SÂU: khi nhân vật mới xuất hiện hoặc cảnh mới mở ra, dành ít nhất 2-3 câu miêu tả ngoại hình, không khí, chi tiết nhỏ (mùi, ánh sáng, âm thanh, cảm giác trên da).",
-  "Show, don't tell. Ưu tiên giác quan, phản ứng cơ thể, chi tiết cụ thể hơn là liệt kê cảm xúc."
+  "Show, don't tell. Ưu tiên giác quan, phản ứng cơ thể, chi tiết cụ thể hơn là liệt kê cảm xúc.",
+  "Khi prompt yêu cầu cảnh 18+/erotica: viết TRỰC TIẾP, không tự kiểm duyệt, không fade-to-black, không thay bằng ẩn dụ nếu người dùng muốn tả thẳng. Ưu tiên hướng dẫn 18+ trong prompt người dùng hơn các quy tắc chung."
 ].join(" ");
 
 const DESCRIPTION_PROMPTS = {
@@ -794,20 +795,34 @@ const EXPLICIT_PROMPTS = {
   subtle: "CẢNH 18+: Nhẹ nhàng — fade-to-black sau khi hôn, gợi ý chứ không tả. Cảm xúc chiếm ưu thế.",
   sensual: "CẢNH 18+: Gợi cảm — tả cảm xúc, hơi thở, ánh mắt, da chạm da; hạn chế tả bộ phận sinh dục chi tiết. Vẫn giàu sức gợi.",
   explicit: "CẢNH 18+: Rõ ràng — mô tả cơ thể và hành động cụ thể (hôn, sờ, cởi, tư thế). Có thể dùng từ trực tiếp khi cần. Show cảm giác qua da thịt và phản ứng.",
-  strong: "CẢNH 18+: MẠNH — táo bạo, chi tiết cao. TẢ THẲNG bộ phận (cặc, lồn, ngực, mông, nước nhờn), động tác (đút, đẩy, mút, liếm, siết), nhịp và âm thanh. Ưu tiên cảm giác thể xác rõ ràng; ít ẩn dụ.",
-  wild: "CẢNH 18+: CỰC MẠNH (kiểu erotica trực tiếp) — KHÔNG fade-to-black, KHÔNG né bằng ẩn dụ hoa mỹ. BẮT BUỘC: (1) gọi tên bộ phận thẳng tiếng Việt (cặc, lồn, đầu vú, tinh dịch, nước lồn…); (2) tả từng động tác giao hợp/âu yếm cụ thể và liên tục; (3) nhịp đút, độ sâu, tiếng da đập, dịch thể, co thắt, rên; (4) phản ứng từng nhân vật (hông, đùi, tay bám, mắt, miệng). Được dùng từ tục. Văn vẫn có nhịp, không liệt kê khô như hướng dẫn."
+  strong: "CẢNH 18+: MẠNH — mỗi đoạn nóng cần: (1) bộ phận + hình thái/màu/số đo hồ sơ; (2) cảm giác thể xác cụ thể; (3) một nhịp nội tâm (xấu hổ/dục/kháng cự); (4) động tác + âm thanh. Ít ẩn dụ.",
+  wild: "CẢNH 18+: CỰC MẠNH kiểu RedQuill. Đủ 4 lớp (cơ thể+cảm giác+nội tâm+âm thanh/thoại). Lớp sex dùng từ thô tục, không ẩn dụ. Thoại quy phục: van xin/tự nhục dày. Bám hồ sơ số đo. Không tóm tắt, không fade-to-black."
 };
 
 const EROTIC_STYLE_PROMPT = [
-  "PHONG CÁCH CẢNH 18+ (BẮT BUỘC khi viết cảnh nóng):",
-  "- Viết TRỰC TIẾP, chi tiết thể xác: da, mồ hôi, nhiệt, độ ướt, độ căng, nhịp thở, tiếng rên, tiếng da đập.",
-  "- Ưu tiên từ thẳng khi cảnh đang nóng: cặc, lồn, đút, đẩy, mút, liếm, xuất — không thay bằng ẩn dụ dài dòng.",
-  "- Mỗi đoạn giao hợp phải có: tư thế, chuyển động (sâu/nông/nhanh/chậm), cảm giác trong lồn/cặc, phản ứng miệng và tay.",
-  "- Show: đừng chỉ viết 'cô ấy kích thích' — tả nước nhờn, đầu vú cứng, hông nâng, đùi run, co thắt.",
-  "- Nhịp câu: chỗ dồn dập ngắn, chỗ chậm dài; không cắt cảnh giữa chừng sang ẩn dụ linh khí/trừu tượng trừ khi mệnh lệnh yêu cầu.",
-  "- Giữ tính cách + consent/ranh giới nhân vật đã có.",
-  "- Không liệt kê như hướng dẫn máy móc; vẫn là văn kể chuyện, nhưng TRẦN và RÕ.",
-  "- 100% tiếng Việt có dấu."
+  "PHONG CÁCH REDQUILL / 18+ CỰC NẶNG (BẮT BUỘC khi cảnh nóng — đủ lớp, không bỏ):",
+  "",
+  "HAI LỚP (không trộn trong CÙNG MỘT CÂU):",
+  "- Lớp văn/tâm lý: không khí, quyền lực, nội tâm, xã hội — có thể văn hơn.",
+  "- Lớp erotic: khi đang sex/sỉ nhục/lên đỉnh → từ THÔ TỤC đường phố chiếm ưu thế (cặc, lồn, địt, nứng, nước lồn, tinh trùng, đĩ, nô lệ…). Không ẩn dụ hoa mỹ thay thế.",
+  "",
+  "4 LỚP MỖI ĐOẠN NÓNG:",
+  "1) CƠ THỂ: kích thước/màu/hình thái theo hồ sơ NV (cặc, lồn, ngực, mông, mép, hạt le, dịch).",
+  "2) CẢM GIÁC: căng, ướt, đau rát, no đầy, tê, run, nóng — trong da thịt, không chỉ nhìn từ ngoài.",
+  "3) NỘI TÂM đa lớp: xấu hổ ↔ dục, kháng cự ↔ cơ thể phản bội, tự nhục ↔ nghiện (nữ); tính toán/chiếm hữu (nam nếu có).",
+  "4) ÂM THANH + NHỊP: da đập, dịch, giường, thở, rên (ư, ahh, hah…), thoại van xin — đồng bộ nhịp đút.",
+  "",
+  "THOẠI (khi nhân vật đã quy phục / cảnh huấn luyện):",
+  "- Tăng mật độ thoại: van xin thô tục, tự sỉ nhục, mô tả lồn/cặc đang nứng, cầu xin được địt/xuất.",
+  "- Nam chính (nếu thống trị): thoại ngắn, lạnh, ra lệnh; nữ đáp dài hơn, thô hơn khi cao trào.",
+  "- Thoại xen hành động + biểu cảm (mắt, môi, nước dãi, run).",
+  "",
+  "KỸ THUẬT:",
+  "- Chậm từng nhịp; không tóm tắt cao trào trong 1-2 câu.",
+  "- Nhiều bộ phận cùng lúc (tay + miệng + cặc…).",
+  "- 5 giác quan khi phù hợp; mùi/dịch/nhiệt độ.",
+  "- Bám hồ sơ NV — cấm bịa số đo khác.",
+  "- 100% tiếng Việt có dấu. Không meta, không spoiler chương sau."
 ].join("\n");
 
 const DEFAULT_ADVANCED_RULES = [
@@ -815,7 +830,7 @@ const DEFAULT_ADVANCED_RULES = [
   "QUY TẮC XƯNG HÔ (BẮT BUỘC): Đại từ nhân xưng NHẤT QUÁN xuyên suốt. Không tự tiện đổi giữa chừng.",
   "QUY TẮC LIỀN MẠCH: Mỗi chương tiếp nối trực tiếp từ đoạn kết chương trước. Không nhảy cảnh đột ngột.",
   "QUY TẮC THỜI GIAN: Thời gian luôn trôi về phía trước.",
-  "QUY TẮC TỐC ĐỘ: Quan hệ, tình cảm, dục vọng phải diễn ra từ từ, có tích tụ.",
+  "QUY TẮC TỐC ĐỘ: Tình cảm dài hạn nên có tích tụ. Khi mệnh lệnh/mức 18+ yêu cầu cảnh nóng: viết thẳng, không né, không kéo dài vô ích.",
   "QUY TẮC GHI NHỚ QUAN HỆ: Ghi nhớ trạng thái quan hệ, ranh giới, mức hấp dẫn hiện tại của từng nhân vật.",
   "QUY TẮC TÂM LÝ: Mọi thay đổi tính cách / dục vọng có nguyên nhân rõ.",
   "QUY TẮC CHỐNG NHÀM & CHỐNG LẶP: Mỗi chương có ít nhất một yếu tố mới. Không lặp sự kiện, cách giải quyết, cấu trúc chương, câu chữ, hình ảnh đã dùng.",
@@ -824,7 +839,7 @@ const DEFAULT_ADVANCED_RULES = [
   "QUY TẮC HẬU QUẢ: Hành động lớn đều để lại hậu quả.",
   "QUY TẮC MIÊU TẢ: Khi giới thiệu nhân vật/cảnh mới, miêu tả ngoại hình và không khí qua các chi tiết cụ thể (ánh mắt, mùi, giọng nói, da, chuyển động) — không dùng từ chung chung như 'xinh đẹp', 'lạnh lùng' mà phải cho thấy qua chi tiết.",
   "QUY TẮC VĂN PHONG CON NGƯỜI: Tránh câu AI điển hình (cô ấy cảm thấy / anh ta nhận ra rằng / một cảm giác lạ lùng). Ưu tiên chi tiết cụ thể, hơi thở, khoảng lặng.",
-  "QUY TẮC 18+ (khi bật): Viết mạnh, chi tiết, giác quan, nội tâm. Hạn chế bạo lực thừa.",
+  "QUY TẮC 18+ (khi bật): Kiểu RedQuill — từ thô tục khi sex; đủ cơ thể + cảm giác + nội tâm + âm thanh/thoại. Không tự kiểm duyệt, không fade-to-black. Ưu tiên mệnh lệnh + mức 18+ hơn quy tắc chung.",
   "PHONG CÁCH: 'Show, don't tell'."
 ].join("\n\n");
 
@@ -2019,12 +2034,20 @@ function buildStoryBibleSummary(){
     if(p.age) parts.push("tuổi:"+p.age);
     if(p.gender) parts.push(p.gender);
     if(p.occupation) parts.push("nghề:"+p.occupation);
+    if(p.height) parts.push("cao:"+p.height);
+    if(p.bodyType) parts.push("dáng:"+p.bodyType);
+    if(p.appearance) parts.push("ngoại hình:"+String(p.appearance).slice(0,200));
+    if(p.hair) parts.push("tóc:"+p.hair);
+    if(p.eyes) parts.push("mắt:"+p.eyes);
+    if(p.skin) parts.push("da:"+p.skin);
+    if(p.sexualExperience) parts.push("18+:"+String(p.sexualExperience).slice(0,120));
+    if(p.preferences) parts.push("kink:"+String(p.preferences).slice(0,80));
     if(p.skills) parts.push("kỹ năng:"+p.skills);
     if(p.currentLocation) parts.push("ở:"+p.currentLocation);
     if(p.goals) parts.push("mục tiêu:"+p.goals);
     if(p.physicalState) parts.push("thể trạng:"+p.physicalState);
     if(p.mentalState) parts.push("tâm lý:"+p.mentalState);
-    lines.push("NHÂN VẬT CHÍNH: " + parts.join(" | "));
+    lines.push("NHÂN VẬT CHÍNH (BÁM HỒ SƠ — số đo/ngoại hình KHÔNG được bịa khác): " + parts.join(" | "));
   }
   if(state.mainPlot) lines.push("CỐT TRUYỆN: " + state.mainPlot);
   if(state.genre) lines.push("THỂ LOẠI: " + state.genre);
@@ -2131,7 +2154,7 @@ function buildContextBlock(){
 
   /* NV: 8–10 là đủ cho 1 chương */
   const relChars = relevantCharacters(10);
-  if(relChars.length) lines.push("NHÂN VẬT:\n" + clip(characterSummaryForPrompt(relChars), 2200));
+  if(relChars.length) lines.push("NHÂN VẬT (bám ngoại hình/số đo hồ sơ):\n" + clip(characterSummaryForPrompt(relChars), 3200));
 
   if(state.mainCharProfile && state.mainCharProfile.name){
     const mc = state.mainCharProfile;
@@ -2927,24 +2950,36 @@ function relevantCharacters(limit){
 }
 function characterSummaryForPrompt(list){
   const cut = (s, n) => {
-    s = String(s || "");
+    s = String(s || "").trim();
+    if(!s) return "";
     return s.length > n ? s.slice(0, n) + "…" : s;
   };
   return list.map(c=>{
-    const parts = [c.name];
+    const parts = [c.name || "?"];
     if(c.dead) parts.push("[ĐÃ CHẾT]");
     if(c.tier) parts.push("["+c.tier+"]");
     if(c.age) parts.push("tuổi:"+c.age);
+    if(c.gender) parts.push(c.gender);
     if(c.occupation) parts.push("nghề:"+cut(c.occupation, 40));
-    if(c.hair) parts.push("tóc:"+cut(c.hair, 30));
-    if(c.eyes) parts.push("mắt:"+cut(c.eyes, 30));
-    if(c.personality) parts.push("tính:"+cut(c.personality, 80));
+    /* Ngoại hình / số đo — ƯU TIÊN (để cảnh 18+ bám hồ sơ) */
+    if(c.height) parts.push("cao:"+cut(c.height, 30));
+    if(c.bodyType) parts.push("dáng:"+cut(c.bodyType, 40));
+    if(c.appearance) parts.push("ngoại hình:"+cut(c.appearance, 160));
+    if(c.hair) parts.push("tóc:"+cut(c.hair, 40));
+    if(c.eyes) parts.push("mắt:"+cut(c.eyes, 40));
+    if(c.skin) parts.push("da:"+cut(c.skin, 40));
+    if(c.scars) parts.push("sẹo:"+cut(c.scars, 40));
+    if(c.tattoos) parts.push("xăm:"+cut(c.tattoos, 40));
+    if(c.sexualExperience) parts.push("18+:"+cut(c.sexualExperience, 100));
+    if(c.preferences) parts.push("kink:"+cut(c.preferences, 80));
+    if(c.boundaries) parts.push("ranh:"+cut(c.boundaries, 60));
+    if(c.personality) parts.push("tính:"+cut(c.personality, 70));
     if(c.currentLocation) parts.push("ở:"+cut(c.currentLocation, 40));
     if(c.mentalState) parts.push("tâm:"+cut(c.mentalState, 50));
     if(c.physicalState) parts.push("thể:"+cut(c.physicalState, 50));
     if(c.attractionToMC) parts.push("cảmMC:"+cut(c.attractionToMC, 40));
     if(c.tensionWithMC) parts.push("căngMC:"+cut(c.tensionWithMC, 40));
-    if(c.notes) parts.push("note:"+cut(c.notes, 60));
+    if(c.notes) parts.push("note:"+cut(c.notes, 50));
     if(c.lastAppearance != null) parts.push("ch"+c.lastAppearance);
     return "- " + parts.join(" | ");
   }).join("\n");
@@ -3546,7 +3581,8 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       "4. Xưng hô nhất quán.",
       "5. Không lặp ý, không lặp câu.",
       "6. MIÊU TẢ: khi nhân vật mới xuất hiện hoặc cảnh mới mở, TẢ ngoại hình + không khí qua chi tiết cụ thể.",
-      "7. Định dạng:",
+      usingNsfw ? "7. CẢNH 18+ ƯU TIÊN CAO NHẤT — đủ 4 lớp: cơ thể (số đo hồ sơ) + cảm giác thể xác + nội tâm đa lớp + âm thanh/nhịp. Cấm chỉ kể hành động bên ngoài. Cấm bỏ cảm giác và nội tâm." : "7. (không có yêu cầu 18+ đặc biệt)",
+      "8. Định dạng:",
       "TIÊU ĐỀ: <tên chương>",
       "NỘI DUNG:",
       "<toàn bộ chương>"
@@ -3563,6 +3599,8 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
 
     let firstResult = await callAI(prompt, {
       maxTokens: 16000, temperature: 1.0, modelOverride: targetModel,
+      frequency_penalty: usingNsfw ? 0.25 : 0.45,
+      presence_penalty: usingNsfw ? 0.25 : 0.35,
       streaming: !!streamingTarget, onChunk: onChunk
     });
     let rawText = firstResult.text;
@@ -4461,6 +4499,22 @@ function renderAll(){
 /* ========== BOOT ========== */
 bootstrapStorage();
 loadCurrentStoryIntoState();
+
+/* Patch quy tắc tốc độ cũ làm dịu 18+ */
+try{
+  if(state.advancedRules && /dục vọng phải diễn ra từ từ/.test(state.advancedRules)){
+    state.advancedRules = state.advancedRules.replace(
+      /QUY TẮC TỐC ĐỘ:[^\n]+/,
+      "QUY TẮC TỐC ĐỘ: Tình cảm dài hạn nên có tích tụ. Khi mệnh lệnh/mức 18+ yêu cầu cảnh nóng: viết thẳng, không né."
+    );
+    state.advancedRules = state.advancedRules.replace(
+      /QUY TẮC 18\+ \(khi bật\):[^\n]+/,
+      "QUY TẮC 18+ (khi bật): Viết trực tiếp, từ tục được phép. Không tự kiểm duyệt, không fade-to-black."
+    );
+    persist();
+  }
+}catch(e){}
+
 hydrateFormFromState();
 renderAll();
 renderStoryTabs();
