@@ -2061,9 +2061,9 @@ function buildVocabularyBlock(){
 }
 
 function buildSceneHistoryBlock(maxScenes){
-  maxScenes = maxScenes || 10;
+  maxScenes = maxScenes || 5;
   if(!state.includeScenesInPrompt) return "";
-  const scenes = (state.scenes || []).slice(-maxScenes);
+  const scenes = (state.scenes || []).slice(-(Math.min(maxScenes || 6, 6)));
   if(!scenes.length) return "";
   const lines = scenes.map(s=>{
     const p = (s.participants||[]).join("&");
@@ -2089,63 +2089,91 @@ function chaptersSummaryText(n){
 }
 
 function buildContextBlock(){
+  /* Ngân sách ngữ cảnh — ưu tiên: status gần + NV chính + đoạn nối */
   const lines = [];
-  lines.push(buildStoryBibleSummary());
+  const clip = (s, n) => {
+    s = String(s || "");
+    if(s.length <= n) return s;
+    return s.slice(0, Math.floor(n*0.4)) + "\n[...]\n" + s.slice(-Math.floor(n*0.5));
+  };
+
+  /* Story bible — ngắn */
+  const bible = buildStoryBibleSummary();
+  if(bible) lines.push(clip(bible, 1800));
+
   const style = buildStyleBlock();
-  if(style) lines.push("STYLE BIBLE:\n" + style);
+  if(style) lines.push("STYLE:\n" + clip(style, 900));
+
   const vocab = buildVocabularyBlock();
-  if(vocab) lines.push(vocab);
+  if(vocab) lines.push(clip(vocab, 600));
+
   const arc = currentArc();
-  if(arc) lines.push("ARC HIỆN TẠI: " + arc.name + " (" + (arc.startChapter||"?") + "-" + (arc.endChapterPlanned||"?") + ") — " + (arc.goal||""));
+  if(arc) lines.push("ARC: " + arc.name + " — " + clip(arc.goal || "", 200));
+
   const outline = currentOutline();
-  if(outline) lines.push("OUTLINE GIAI ĐOẠN (" + outline.from + "–" + outline.to + "):\n" + outline.content);
+  if(outline) lines.push("OUTLINE (" + outline.from + "–" + outline.to + "):\n" + clip(outline.content, 800));
+
   if(state.storyClock) lines.push("THỜI ĐIỂM: " + state.storyClock);
+
+  /* Chỉ 3 summary gần — đủ chống lặp, không phình prompt */
   if(state.chapters.length){
-    const recent = state.chapters.slice(-5);
+    const recent = state.chapters.slice(-3);
     const startNum = state.chapters.length - recent.length + 1;
     const sumLines = recent.map((c,i)=>{
       const n = startNum + i;
-      return "- Ch" + n + " (" + (c.title||"") + "): " + (c.summary || "(chưa tóm tắt)");
+      return "- Ch" + n + " (" + (c.title||"") + "): " + clip(c.summary || "(chưa tóm tắt)", 280);
     }).join("\n");
-    lines.push("TÓM TẮT 5 CHƯƠNG GẦN:\n" + sumLines);
+    lines.push("TÓM TẮT 3 CHƯƠNG GẦN:\n" + sumLines);
   }
   if(state.lastStatusChapter && state.lastStatusChapter < state.chapters.length){
-    lines.push("⚠ CURRENT STATUS mới tới ch" + state.lastStatusChapter + " — thiếu " + (state.chapters.length - state.lastStatusChapter) + " chương gần.");
+    lines.push("⚠ Status mới tới ch" + state.lastStatusChapter + " — thiếu " + (state.chapters.length - state.lastStatusChapter) + " ch.");
   }
-  const relChars = relevantCharacters(22);
-  if(relChars.length) lines.push("NHÂN VẬT LIÊN QUAN:\n" + characterSummaryForPrompt(relChars));
+
+  /* NV: 8–10 là đủ cho 1 chương */
+  const relChars = relevantCharacters(10);
+  if(relChars.length) lines.push("NHÂN VẬT:\n" + clip(characterSummaryForPrompt(relChars), 2200));
+
   if(state.mainCharProfile && state.mainCharProfile.name){
     const mc = state.mainCharProfile;
     const mcParts = ["NV CHÍNH: " + mc.name];
-    if(mc.personality) mcParts.push("tính:"+mc.personality);
-    if(mc.goals) mcParts.push("mục tiêu:"+mc.goals);
+    if(mc.personality) mcParts.push("tính:"+clip(mc.personality, 120));
+    if(mc.goals) mcParts.push("mục tiêu:"+clip(mc.goals, 120));
     if(mc.currentLocation) mcParts.push("ở:"+mc.currentLocation);
-    if(mc.mentalState) mcParts.push("tâm lý:"+mc.mentalState);
-    if(mc.physicalState) mcParts.push("thể trạng:"+mc.physicalState);
+    if(mc.mentalState) mcParts.push("tâm lý:"+clip(mc.mentalState, 100));
+    if(mc.physicalState) mcParts.push("thể trạng:"+clip(mc.physicalState, 100));
     lines.push(mcParts.join(" | "));
   }
-  const activeLocs = state.locations.filter(l=>l.status === 'active').slice(-8);
-  if(activeLocs.length) lines.push("ĐỊA ĐIỂM:\n" + activeLocs.map(l=>"- "+l.name+": "+l.description).join("\n"));
-  const activeItems = state.items.filter(it=>it.status === 'active').slice(-10);
-  if(activeItems.length) lines.push("VẬT PHẨM:\n" + activeItems.map(it=>"- "+it.name+(it.owner?" (của "+it.owner+")":"")+": "+it.description).join("\n"));
-  const openThreads = state.threads.filter(t=>t.status!=='paid_off' && t.status!=='abandoned');
-  if(openThreads.length) lines.push("THREADS CHƯA GIẢI QUYẾT:\n" + openThreads.map(t=>"- ["+t.type+"] "+t.desc).join("\n"));
-  const sceneBlock = buildSceneHistoryBlock();
-  if(sceneBlock) lines.push(sceneBlock);
+
+  const activeLocs = state.locations.filter(l=>l.status === 'active').slice(-4);
+  if(activeLocs.length) lines.push("ĐỊA ĐIỂM:\n" + activeLocs.map(l=>"- "+l.name+": "+clip(l.description, 100)).join("\n"));
+
+  const activeItems = state.items.filter(it=>it.status === 'active').slice(-5);
+  if(activeItems.length) lines.push("VẬT PHẨM:\n" + activeItems.map(it=>"- "+it.name+(it.owner?" (của "+it.owner+")":"")+": "+clip(it.description, 80)).join("\n"));
+
+  const openThreads = state.threads.filter(t=>t.status!=='paid_off' && t.status!=='abandoned').slice(0, 6);
+  if(openThreads.length) lines.push("THREADS:\n" + openThreads.map(t=>"- ["+t.type+"] "+clip(t.desc, 120)).join("\n"));
+
+  const sceneBlock = buildSceneHistoryBlock(4);
+  if(sceneBlock) lines.push(clip(sceneBlock, 700));
+
   const consentBlock = buildConsentBlock();
-  if(consentBlock) lines.push(consentBlock);
-  if(state.currentStatus) lines.push("CURRENT STATUS:\n" + state.currentStatus);
-  if(state.directive) lines.push("MỆNH LỆNH: " + state.directive);
-  if(state.advancedRules) lines.push("QUY TẮC BẮT BUỘC:\n" + state.advancedRules);
+  if(consentBlock) lines.push(clip(consentBlock, 400));
+
+  if(state.currentStatus){
+    lines.push("CURRENT STATUS:\n" + clip(state.currentStatus, 2200));
+  }
+  if(state.directive) lines.push("MỆNH LỆNH: " + clip(state.directive, 500));
+  if(state.advancedRules) lines.push("QUY TẮC:\n" + clip(state.advancedRules, 1200));
+
   const diffMap = { de:"Dễ thở.", vua:"Cân bằng.", kho:"Khó.", tan_khoc:"Tàn khốc." };
   lines.push("ĐỘ KHÓ: " + (diffMap[state.difficulty] || diffMap.vua));
   if(state.mature) lines.push("VĂN PHONG: cho phép bạo lực, ngôn ngữ mạnh, 18+.");
-  /* Miêu tả level */
   const descLevel = state.descriptionLevel || "balanced";
   lines.push("MỨC MIÊU TẢ: " + (DESCRIPTION_PROMPTS[descLevel] || DESCRIPTION_PROMPTS.balanced));
   if(state.mature) lines.push("MỨC 18+: " + (EXPLICIT_PROMPTS[state.explicitLevel] || EXPLICIT_PROMPTS.sensual));
   return lines.filter(Boolean).join("\n\n");
 }
+
 
 /* ========== CHAPTER VERSIONS ========== */
 function pushChapterVersion(idx, note){
@@ -2898,36 +2926,30 @@ function relevantCharacters(limit){
   return scored.slice(0, limit).map(s=>s.c);
 }
 function characterSummaryForPrompt(list){
+  const cut = (s, n) => {
+    s = String(s || "");
+    return s.length > n ? s.slice(0, n) + "…" : s;
+  };
   return list.map(c=>{
     const parts = [c.name];
     if(c.dead) parts.push("[ĐÃ CHẾT]");
     if(c.tier) parts.push("["+c.tier+"]");
     if(c.age) parts.push("tuổi:"+c.age);
-    if(c.occupation) parts.push("nghề:"+c.occupation);
-    if(c.hair) parts.push("tóc:"+c.hair);
-    if(c.eyes) parts.push("mắt:"+c.eyes);
-    if(c.skin) parts.push("da:"+c.skin);
-    if(c.voice) parts.push("giọng:"+c.voice);
-    if(c.scent) parts.push("mùi:"+c.scent);
-    if(c.personality) parts.push("tính cách:"+c.personality);
-    if(c.speech) parts.push("nói:"+c.speech);
-    if(c.currentLocation) parts.push("ở:"+c.currentLocation);
-    if(c.goals) parts.push("mục tiêu:"+c.goals);
-    if(c.secret) parts.push("bí mật:"+c.secret);
-    if(c.sexualExperience) parts.push("kinh nghiệm 18+:"+c.sexualExperience);
-    if(c.boundaries) parts.push("ranh giới:"+c.boundaries);
-    if(c.taboos) parts.push("taboo:"+c.taboos);
-    if(c.attractionToMC) parts.push("hấp dẫn MC:"+c.attractionToMC);
-    if(c.tensionWithMC) parts.push("căng thẳng MC:"+c.tensionWithMC);
-    const relMain = (c.relationships||[]).find(r=>normalizeName(r.withName).includes("chinh"));
-    if(relMain){
-      parts.push("q.hệ MC: tin="+(relMain.trust||"?")+", tình="+(relMain.affection||"?")+", hấp dẫn="+(relMain.attraction||"?")+", stage="+(relMain.stage||"?")+", tension="+(relMain.tension||"?"));
-      if(relMain.boundaries) parts.push("ranh giới với MC:"+relMain.boundaries);
-    }
+    if(c.occupation) parts.push("nghề:"+cut(c.occupation, 40));
+    if(c.hair) parts.push("tóc:"+cut(c.hair, 30));
+    if(c.eyes) parts.push("mắt:"+cut(c.eyes, 30));
+    if(c.personality) parts.push("tính:"+cut(c.personality, 80));
+    if(c.currentLocation) parts.push("ở:"+cut(c.currentLocation, 40));
+    if(c.mentalState) parts.push("tâm:"+cut(c.mentalState, 50));
+    if(c.physicalState) parts.push("thể:"+cut(c.physicalState, 50));
+    if(c.attractionToMC) parts.push("cảmMC:"+cut(c.attractionToMC, 40));
+    if(c.tensionWithMC) parts.push("căngMC:"+cut(c.tensionWithMC, 40));
+    if(c.notes) parts.push("note:"+cut(c.notes, 60));
+    if(c.lastAppearance != null) parts.push("ch"+c.lastAppearance);
     return "- " + parts.join(" | ");
   }).join("\n");
 }
-const CHAR_JSON_FORMAT_HINT = 'Trả về DUY NHẤT một mảng JSON, mỗi phần tử: {"name":"","isNew":true/false,"tier":"background|minor|supporting|important|major","age":"","gender":"","appearance":"","height":"","bodyType":"","hair":"","eyes":"","skin":"","voice":"","scent":"","style":"","scars":"","tattoos":"","personality":"","speech":"","occupation":"","position":"","faction":"","goals":"","secret":"","weakness":"","fear":"","strength":"","currentLocation":"","schedule":"","physicalState":"","mentalState":"","knowledge":"","sexualExperience":"","boundaries":"","taboos":"","preferences":"","attractionToMC":"","tensionWithMC":"","consentNotes":"","chapterEvent":"","isDead":false,"relationshipWithMain":{"trust":"","respect":"","affection":"","attraction":"","suspicion":"","stage":"","tension":"","boundaries":""}}. Tất cả TIẾNG VIỆT. Chỉ liệt kê MỚI hoặc THAY ĐỔI.';
+
 function mergeCharacterUpdate(update, chapterNumber){
   if(!update) return;
   const cleanName = String(update.name || "").trim();
@@ -3325,8 +3347,8 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
     }
 
     setStatus("Auto-continue #" + attempts + " (đang " + wc + "/" + minWords + " từ)...", true);
-    const tail = chapterObj.text.slice(-3200);
-    const headHint = chapterObj.text.slice(0, 400);
+    const tail = chapterObj.text.slice(-2200);
+    const headHint = chapterObj.text.slice(0, 250);
     const prompt = [
       "BẮT BUỘC NGÔN NGỮ: 100% TIẾNG VIỆT CÓ DẤU. Giọng tự nhiên.",
       "",
@@ -3421,35 +3443,31 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     const priorChapters = isRegen ? state.chapters.slice(0, regenIndex) : state.chapters;
     const chapterNumber = isRegen ? regenIndex + 1 : state.chapters.length + 1;
 
-    const lastChapterEnding = priorChapters.length ? priorChapters[priorChapters.length - 1].text.slice(-1800) : "";
+    const lastChapterEnding = priorChapters.length ? priorChapters[priorChapters.length - 1].text.slice(-1000) : "";
 
-    /* Nếu > 10 chương trước → dùng nén */
+    function clipChapterText(t, maxChars){
+      t = t || "";
+      if(t.length <= maxChars) return t;
+      return t.slice(0, Math.floor(maxChars*0.3)) + "\n\n[...]\n\n" + t.slice(-Math.floor(maxChars*0.6));
+    }
+    /* Chỉ: summary ch.trước + đoạn cuối ch.gần (không full 2–3 chương) */
     let recentFullText = "";
     if(priorChapters.length){
-      if(priorChapters.length <= 10){
-        recentFullText = priorChapters.slice(-3).map((c,i)=>{
-          const num = priorChapters.length - Math.min(3, priorChapters.length) + i + 1;
-          return "--- Chương " + num + ": " + c.title + " ---\n" + c.text;
-        }).join("\n\n");
-      } else {
-        /* Chỉ lấy 2 chương full + summary 5 chương trước đó */
-        const recent = priorChapters.slice(-2);
-        const older = priorChapters.slice(-7, -2);
-        recentFullText = older.map((c,i)=>{
-          const num = priorChapters.length - 7 + i + 1;
-          return "--- Tóm tắt Chương " + num + ": " + c.title + " ---\n" + (c.summary || "(chưa có)");
-        }).join("\n\n");
-        recentFullText += "\n\n" + recent.map((c,i)=>{
-          const num = priorChapters.length - 2 + i + 1;
-          return "--- Toàn văn Chương " + num + ": " + c.title + " ---\n" + c.text;
-        }).join("\n\n");
+      const last = priorChapters[priorChapters.length - 1];
+      const lastNum = priorChapters.length;
+      recentFullText = "--- Chương " + lastNum + " (đoạn gần, đã rút) ---\n" + clipChapterText(last.text, 3500);
+      if(priorChapters.length >= 2){
+        const prev = priorChapters[priorChapters.length - 2];
+        recentFullText = "--- Ch" + (lastNum-1) + " " + (prev.title||"") + " ---\n"
+          + (prev.summary || clipChapterText(prev.text, 800))
+          + "\n\n" + recentFullText;
       }
     }
-
     let olderSummaries = "";
-    if(priorChapters.length > 5){
-      const older = priorChapters.slice(0, -5);
-      olderSummaries = older.map((c,i)=> "Chương " + (i+1) + " (" + c.title + "): " + (c.summary || "(chưa tóm tắt)")).join("\n");
+    if(priorChapters.length > 2){
+      const older = priorChapters.slice(0, -2);
+      const start = Math.max(0, older.length - 8);
+      olderSummaries = older.slice(start).map((c,i)=> "Ch" + (start + i + 1) + ": " + (c.summary || "(chưa tóm tắt)").slice(0, 200)).join("\n");
     }
 
     let plan = "";
