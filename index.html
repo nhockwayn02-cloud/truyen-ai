@@ -4920,23 +4920,41 @@ async function startBackgroundWrite(){
   $ID("bgWriteBtn").disabled = true;
 
   try{
-    const res = await fetch(BG_FUNCTIONS_BASE + "/create-job", {
+    // Gọi THẲNG Background Function (không qua create-job)
+    // Netlify nhận function tên *-background → trả 202 và chạy tiếp tối đa 15 phút
+    const res = await fetch(BG_FUNCTIONS_BASE + "/write-chapter-background", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    const data = await res.json();
-    if(!res.ok || !data.jobId){
-      throw new Error(data.error || "Không tạo được job");
+
+    let data = {};
+    try { data = await res.json(); } catch(e) {}
+
+    // Có thể nhận 200 (xong nhanh) hoặc 202 (đang chạy nền) hoặc timeout
+    if(data.jobId){
+      localStorage.setItem(BG_JOB_KEY, data.jobId);
+      setBgStatus("✓ Job đang chạy (" + data.jobId.slice(-8) + "). Bạn CÓ THỂ TẮT MÁY. Khi mở lại sẽ tự đồng bộ.", true);
+      setStatus("☁ Đã gửi viết chương nền. Có thể tắt máy.", false);
+      pollBackgroundJob(data.jobId);
+    } else if(res.ok || res.status === 202){
+      // Không có jobId trong response (hiếm) – vẫn thử poll nếu đã lưu trước đó
+      setBgStatus("☁ Job đã gửi. Đang chờ server xử lý...", true);
+      setStatus("☁ Đã gửi viết chương nền.", false);
+    } else {
+      throw new Error(data.error || ("HTTP " + res.status));
     }
-    localStorage.setItem(BG_JOB_KEY, data.jobId);
-    setBgStatus("✓ Job đã gửi (" + data.jobId.slice(-8) + "). Bạn CÓ THỂ TẮT MÁY. Khi mở lại sẽ tự đồng bộ.", true);
-    setStatus("☁ Đã gửi viết chương nền. Có thể tắt máy.", false);
-    // Bắt đầu poll nhẹ
-    pollBackgroundJob(data.jobId);
   }catch(err){
-    setBgStatus("Lỗi: " + err.message, true);
-    setStatus("Lỗi gửi job: " + err.message, false);
+    // Nếu request bị timeout vì function chạy lâu – có thể job vẫn đang chạy
+    // Người dùng nên mở lại trang sau vài phút để đồng bộ
+    const msg = err.message || String(err);
+    if(msg.indexOf("abort") >= 0 || msg.indexOf("timeout") >= 0 || msg.indexOf("Failed to fetch") >= 0){
+      setBgStatus("☁ Request dài – job có thể vẫn đang chạy trên server. Mở lại trang sau 5–10 phút để kiểm tra.", true);
+      setStatus("☁ Đã gửi. Nếu tắt máy, hãy mở lại sau vài phút để đồng bộ.", false);
+    } else {
+      setBgStatus("Lỗi: " + msg, true);
+      setStatus("Lỗi gửi job: " + msg, false);
+    }
   }finally{
     $ID("bgWriteBtn").disabled = false;
   }
