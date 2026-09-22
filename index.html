@@ -3641,6 +3641,119 @@ function setGenerating(on){
   ["writeChapterBtn","regenBtn","continueChapterBtn","regenNsfwBtn","versionsBtn"].forEach(id=>{
     if($ID(id)) $ID(id).disabled = on;
   });
+  if(on) acquireWakeLock(); else releaseWakeLock();
+}
+
+/* ========== WAKE LOCK + DRAFT AUTOSAVE (chống ngắt khi khoá màn hình / chuyển app trên iOS) ========== */
+/* iOS Safari tự khoá màn hình sau vài phút không chạm, và khi chuyển sang
+   app khác thì tab Safari bị "đóng băng" JS gần như ngay lập tức — đây là
+   giới hạn hệ điều hành, web app không có cách nào bắt buộc chạy nền 100%.
+   2 việc có thể làm để giảm thiệt hại:
+   1) Wake Lock: xin trình duyệt ĐỪNG tự khoá màn hình trong lúc đang viết
+      (chỉ chống được TRƯỜNG HỢP tự khoá màn hình, không chống được việc
+      người dùng chủ động bấm Home / chuyển app).
+   2) Lưu tạm phần văn bản đang stream ra localStorage mỗi ~1.5s. Nếu bị
+      ngắt giữa chừng (mất mạng, tab bị hệ điều hành giết), lần mở lại app
+      sẽ phát hiện bản nháp dở dang và cho khôi phục thay vì mất trắng. */
+let wakeLockRef = null;
+let wakeLockUnsupportedWarned = false;
+async function acquireWakeLock(){
+  try{
+    if('wakeLock' in navigator){
+      wakeLockRef = await navigator.wakeLock.request('screen');
+    } else if(!wakeLockUnsupportedWarned){
+      wakeLockUnsupportedWarned = true;
+      setStatus("⚠ Máy/trình duyệt không hỗ trợ giữ màn hình sáng — vào Cài đặt > Màn hình > Tự khoá, chọn \"Không bao giờ\" khi viết chương dài để tránh bị ngắt giữa chừng.", true);
+    }
+  }catch(e){ /* không hỗ trợ / bị từ chối — im lặng bỏ qua, không chặn viết */ }
+}
+function releaseWakeLock(){
+  try{ if(wakeLockRef){ wakeLockRef.release(); wakeLockRef = null; } }catch(e){}
+}
+document.addEventListener("visibilitychange", ()=>{
+  /* Wake Lock tự bị trình duyệt thu hồi khi tab ẩn đi, nên khi quay lại
+     (mở khoá màn hình / quay lại tab) mà vẫn đang generate thì xin lại. */
+  if(document.visibilityState === "visible" && typeof generating !== "undefined" && generating){
+    acquireWakeLock();
+  }
+});
+
+const DRAFT_KEY_PREFIX = "aiStoryWorkshop_draft_";
+let lastDraftSaveAt = 0;
+function saveDraftProgress(displayText, meta){
+  try{
+    if(!state.storyId) return;
+    const now = Date.now();
+    if(now - lastDraftSaveAt < 1500) return; /* debounce, tránh ghi localStorage liên tục */
+    if(!displayText || displayText.length < 200) return; /* quá ngắn thì chưa cần lưu */
+    lastDraftSaveAt = now;
+    localStorage.setItem(DRAFT_KEY_PREFIX + state.storyId, JSON.stringify({
+      text: displayText, savedAt: now, chapterCountAtSave: state.chapters.length,
+      mode: (meta && meta.mode) || "new", idx: meta ? meta.idx : null
+    }));
+  }catch(e){}
+}
+function clearDraftProgress(){
+  try{ if(state.storyId) localStorage.removeItem(DRAFT_KEY_PREFIX + state.storyId); }catch(e){}
+}
+function checkForRecoverableDraft(){
+  try{
+    if(!state.storyId) return;
+    const raw = localStorage.getItem(DRAFT_KEY_PREFIX + state.storyId);
+    if(!raw) return;
+    const d = JSON.parse(raw);
+    if(!d || !d.text || d.text.length < 200){ clearDraftProgress(); return; }
+    if(d.mode === "continue"){
+      /* Nháp "Viết Tiếp": nếu chương đích đã có ĐỦ (hoặc nhiều hơn) chữ so
+         với lúc lưu nháp, nghĩa là lần sau đó người dùng đã viết tiếp thành
+         công bình thường rồi — nháp cũ hết ý nghĩa. */
+      const target = state.chapters[d.idx];
+      if(!target || target.text.length >= d.text.length){ clearDraftProgress(); return; }
+      showDraftRecoveryBanner(d);
+      return;
+    }
+    /* Nếu số chương hiện tại đã vượt qua lúc lưu nháp, nghĩa là chương đó
+       đã hoàn tất bình thường rồi — nháp cũ không còn ý nghĩa. */
+    if(d.chapterCountAtSave != null && state.chapters.length > d.chapterCountAtSave){ clearDraftProgress(); return; }
+    showDraftRecoveryBanner(d);
+  }catch(e){}
+}
+async function showDraftRecoveryBanner(d){
+  if(d.mode === "continue"){
+    const target = state.chapters[d.idx];
+    if(!target){ clearDraftProgress(); return; }
+    const ok = await showConfirm(
+      "Phát hiện lượt \"Viết Tiếp\" chương " + (d.idx+1) + " bị ngắt giữa chừng lúc " +
+      new Date(d.savedAt).toLocaleString("vi-VN") + " (có thể do khoá màn hình / chuyển app).\n\n" +
+      "Khôi phục phần đã viết được vào chương " + (d.idx+1) + "? (Sau đó có thể bấm \"➕ Viết Tiếp\" lần nữa nếu chưa đủ ý.)",
+      { okText: "Khôi phục", cancelText: "Bỏ qua" }
+    );
+    if(ok){
+      target.text = d.text.trim();
+      target.wordCount = countWords(target.text);
+      target.truncated = true;
+      persist(); renderAll();
+      setStatus("Đã khôi phục phần viết tiếp dở dang vào chương " + (d.idx+1) + ".", false);
+    }
+    clearDraftProgress();
+    return;
+  }
+  const ok = await showConfirm(
+    "Phát hiện bản nháp dở dang từ lần trước (~" + countWords(d.text) + " từ, lưu lúc " +
+    new Date(d.savedAt).toLocaleString("vi-VN") + ").\n\nCó thể do màn hình khoá / chuyển app khi đang viết khiến chương bị ngắt giữa chừng.\n\nKhôi phục vào 1 chương mới để dùng \"Viết Tiếp\" hoàn thiện nốt?",
+    { okText: "Khôi phục", cancelText: "Bỏ qua" }
+  );
+  if(ok){
+    state.chapters.push({
+      title: "Bản nháp khôi phục", text: d.text.trim(), wordCount: countWords(d.text),
+      truncated: true, plan: "", continuityWarnings: [], modelUsed: null, isNsfw: false,
+      polished: false, summary: "", versions: [], compressed: false
+    });
+    state.currentChapterIndex = state.chapters.length - 1;
+    persist(); renderAll();
+    setStatus("Đã khôi phục bản nháp — bấm \"➕ Viết Tiếp\" để AI hoàn thiện nốt phần còn thiếu.", false);
+  }
+  clearDraftProgress();
 }
 
 /* ========== GENERATE CHAPTER (chính) ========== */
@@ -3794,7 +3907,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     const onChunk = streamingTarget ? (delta, full) => {
       const bodyMatch = full.match(/NỘI DUNG:\s*([\s\S]*)/i);
       const displayText = bodyMatch ? bodyMatch[1] : "";
-      if(displayText) chapterTextEl.textContent = displayText;
+      if(displayText){ chapterTextEl.textContent = displayText; saveDraftProgress(displayText); }
     } : null;
 
     let firstResult = await callAI(prompt, {
@@ -3858,6 +3971,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       state.chaptersSinceBackup++;
     }
     persist(); renderChapterNav(); renderCurrentChapter(); refreshBackupBanner(); refreshStatBar();
+    clearDraftProgress();
     setStatus(modeTag + (chapterObj.truncated ? "⚠ vẫn có thể bị cắt. " : "✓ Xong · ") + chapterObj.wordCount + " từ · " + new Date().toLocaleTimeString("vi-VN"), false);
 
     /* Post-processing */
@@ -3952,6 +4066,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
   try{
     const chapter = state.chapters[idx];
     pushChapterVersion(idx, "Trước khi viết tiếp");
+    const baseText = chapter.text;
     const tail = chapter.text.slice(-3200);
     const headHint = chapter.text.slice(0, 400);
     const vocabBlock = buildVocabularyBlock();
@@ -3972,12 +4087,22 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
       "", buildContextBlock()
     ].filter(Boolean).join("\n");
 
+    const canStream = state.streamingEnabled;
+    if(canStream) chapterTextEl.classList.add("streaming");
+    const onChunk = canStream ? (delta, full) => {
+      const combined = baseText.replace(/\s+$/,"") + "\n\n" + full;
+      chapterTextEl.textContent = combined;
+      saveDraftProgress(combined, { mode: "continue", idx: idx });
+    } : null;
+
     let contText = "", contFinish = null;
     const r = await callAI(prompt, {
       maxTokens:12000, temperature:0.95, modelOverride: targetModel,
-      frequency_penalty: 0.55, presence_penalty: 0.4
+      frequency_penalty: 0.55, presence_penalty: 0.4,
+      streaming: canStream, onChunk: onChunk
     });
     contText = r.text; contFinish = r.finishReason;
+    chapterTextEl.classList.remove("streaming");
 
     if(detectNonVietnamese(contText)){
       try{ const r2 = await callAI(prompt + "\n\nBẮT BUỘC 100% TIẾNG VIỆT.", {maxTokens:12000, temperature:1.0, modelOverride: targetModel}); contText = r2.text; contFinish = r2.finishReason; }catch(e){}
@@ -3991,6 +4116,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     chapter.wordCount = countWords(chapter.text);
     chapter.truncated = contFinish === "length";
     if(usingNsfw){ chapter.modelUsed = targetModel; chapter.isNsfw = true; }
+    clearDraftProgress();
     persist(); renderChapterNav(); renderCurrentChapter();
     setStatus("Đã viết tiếp.", false);
     const cn = idx + 1;
@@ -4003,6 +4129,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
       }
     }, "scene");
   }catch(err){
+    chapterTextEl.classList.remove("streaming");
     if(err.userAbort) setStatus("Đã dừng.", false);
     else setStatus("Lỗi: " + err.message, false);
   }finally{ setGenerating(false); }
@@ -4732,6 +4859,7 @@ try{
 hydrateFormFromState();
 renderAll();
 renderStoryTabs();
+checkForRecoverableDraft();
 if(state.apiEndpoint && state.apiKey){
   apiStatus.textContent = "Đã nạp cấu hình API đã lưu.";
 }
