@@ -1,5 +1,20 @@
 const { getStore } = require("@netlify/blobs");
 
+function getJobStore() {
+  // Cách chuẩn trên Netlify (tự lấy credentials)
+  try {
+    return getStore("story-jobs");
+  } catch (e) {
+    // Fallback khi môi trường chưa inject đủ biến
+    const siteID = process.env.SITE_ID || process.env.NETLIFY_SITE_ID || process.env.BLOBS_SITE_ID;
+    const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.BLOBS_TOKEN || process.env.NETLIFY_API_TOKEN;
+    if (siteID && token) {
+      return getStore({ name: "story-jobs", siteID, token });
+    }
+    throw new Error("Netlify Blobs chưa được cấu hình. Hãy đảm bảo site đã deploy trên Netlify và Blobs được bật.");
+  }
+}
+
 exports.handler = async (event) => {
   // CORS preflight
   if (event.httpMethod === "OPTIONS") {
@@ -25,7 +40,7 @@ exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || "{}");
     const {
-      storyState,          // toàn bộ state hiện tại (không chứa apiKey)
+      storyState,
       apiKey,
       apiEndpoint = "https://openrouter.ai/api/v1/chat/completions",
       model = "deepseek/deepseek-v3.2",
@@ -41,25 +56,21 @@ exports.handler = async (event) => {
       };
     }
 
-    // Tạo jobId
     const jobId = "job_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
 
-    const store = getStore("story-jobs");
+    const store = getJobStore();
 
     const job = {
       jobId,
-      status: "pending",          // pending | running | completed | failed
+      status: "pending",
       createdAt: Date.now(),
       updatedAt: Date.now(),
       apiEndpoint,
       model,
       modelNsfw,
       forceNsfw: !!forceNsfw,
-      // Lưu key tạm thời (sẽ xóa sau khi xong)
       apiKey: apiKey.trim(),
-      // Snapshot state
       storyState,
-      // Kết quả
       resultChapter: null,
       error: null,
       progress: "Đang chờ bắt đầu..."
@@ -67,19 +78,19 @@ exports.handler = async (event) => {
 
     await store.setJSON(jobId, job);
 
-    // Kích hoạt background function bằng cách gọi nội bộ
-    // Netlify sẽ tự chạy background nếu tên function kết thúc bằng -background
-    // Ở đây ta dùng cách invoke qua fetch nội bộ (đơn giản và ổn định)
-    const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || "http://localhost:8888";
-    
-    // Gọi background function (fire-and-forget)
-    fetch(`${siteUrl}/.netlify/functions/write-chapter-background`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId })
-    }).catch(err => {
-      console.error("Không thể kích hoạt background:", err.message);
-    });
+    // Kích hoạt background function
+    const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || "";
+    if (siteUrl) {
+      fetch(siteUrl + "/.netlify/functions/write-chapter-background", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId })
+      }).catch(err => {
+        console.error("Không thể kích hoạt background:", err.message);
+      });
+    } else {
+      console.warn("Không có URL site, background có thể không được kích hoạt tự động.");
+    }
 
     return {
       statusCode: 200,

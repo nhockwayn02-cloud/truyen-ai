@@ -1,5 +1,18 @@
 const { getStore } = require("@netlify/blobs");
 
+function getJobStore() {
+  try {
+    return getStore("story-jobs");
+  } catch (e) {
+    const siteID = process.env.SITE_ID || process.env.NETLIFY_SITE_ID || process.env.BLOBS_SITE_ID;
+    const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.BLOBS_TOKEN || process.env.NETLIFY_API_TOKEN;
+    if (siteID && token) {
+      return getStore({ name: "story-jobs", siteID, token });
+    }
+    throw new Error("Netlify Blobs chưa được cấu hình. Hãy đảm bảo site đã deploy trên Netlify và Blobs được bật.");
+  }
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return {
@@ -23,7 +36,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const store = getStore("story-jobs");
+    const store = getJobStore();
     const job = await store.get(jobId, { type: "json" });
 
     if (!job) {
@@ -34,7 +47,6 @@ exports.handler = async (event) => {
       };
     }
 
-    // Không trả apiKey về client
     const safe = {
       jobId: job.jobId,
       status: job.status,
@@ -47,7 +59,7 @@ exports.handler = async (event) => {
       newChapterCount: job.storyState?.chapters?.length || 0
     };
 
-    // Khi completed → trả luôn toàn bộ storyState đã cập nhật (Character, Status, Scene...)
+    // Khi completed → trả luôn toàn bộ storyState đã cập nhật
     if (job.status === "completed" && job.storyState) {
       safe.storyState = job.storyState;
     }

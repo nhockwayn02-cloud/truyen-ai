@@ -1,5 +1,18 @@
 const { getStore } = require("@netlify/blobs");
 
+function getJobStore() {
+  try {
+    return getStore("story-jobs");
+  } catch (e) {
+    const siteID = process.env.SITE_ID || process.env.NETLIFY_SITE_ID || process.env.BLOBS_SITE_ID;
+    const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.BLOBS_TOKEN || process.env.NETLIFY_API_TOKEN;
+    if (siteID && token) {
+      return getStore({ name: "story-jobs", siteID, token });
+    }
+    throw new Error("Netlify Blobs chưa được cấu hình. Hãy đảm bảo site đã deploy trên Netlify và Blobs được bật.");
+  }
+}
+
 /**
  * Background Function – viết 1 chương + tự cập nhật đầy đủ:
  * Character, Current Status, Locations/Items/Threads, Scenes, Summary
@@ -623,7 +636,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: "Missing jobId" };
   }
 
-  const store = getStore("story-jobs");
+  const store = getJobStore();
   let job;
 
   try {
