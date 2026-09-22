@@ -4971,9 +4971,40 @@ function pollBackgroundJob(jobId){
 }
 
 async function mergeBackgroundChapter(statusData){
-  if(!statusData || !statusData.resultChapter) return;
+  if(!statusData) return;
+
+  // Ưu tiên dùng toàn bộ storyState đã được server cập nhật đầy đủ
+  if(statusData.storyState && Array.isArray(statusData.storyState.chapters)){
+    const incoming = statusData.storyState;
+
+    // Giữ lại các setting global (API key, model...) của local
+    const keep = {};
+    GLOBAL_KEYS.forEach(k => keep[k] = state[k]);
+
+    // Ghi đè các phần story bằng bản server đã cập nhật
+    Object.assign(state, keep, {
+      chapters: incoming.chapters || state.chapters,
+      characters: incoming.characters || state.characters,
+      locations: incoming.locations || state.locations,
+      items: incoming.items || state.items,
+      threads: incoming.threads || state.threads,
+      scenes: incoming.scenes || state.scenes,
+      currentStatus: incoming.currentStatus || state.currentStatus,
+      currentChapterIndex: (incoming.chapters ? incoming.chapters.length - 1 : state.currentChapterIndex),
+      chaptersSinceBackup: (incoming.chaptersSinceBackup != null ? incoming.chaptersSinceBackup : state.chaptersSinceBackup),
+      lastStatusChapter: incoming.lastStatusChapter || state.lastStatusChapter
+    });
+
+    persist();
+    renderAll();
+    const lastCh = state.chapters[state.chapters.length - 1];
+    setStatus("☁ Đã đồng bộ đầy đủ từ server: " + (lastCh ? lastCh.title : "") + " (" + (lastCh ? lastCh.wordCount : 0) + " từ) + Character/Status/Scene", false);
+    return;
+  }
+
+  // Fallback cũ (chỉ có resultChapter)
+  if(!statusData.resultChapter) return;
   const ch = statusData.resultChapter;
-  // Tránh trùng nếu đã có sẵn
   const already = state.chapters.some(c => c.createdBy === "background" && c.title === ch.title && c.wordCount === ch.wordCount);
   if(already) return;
 
@@ -4983,9 +5014,6 @@ async function mergeBackgroundChapter(statusData){
   persist();
   renderAll();
   setStatus("☁ Đã nhận chương mới từ server: " + (ch.title || "") + " (" + (ch.wordCount||0) + " từ)", false);
-
-  // Chạy post-process local (character, status...) nếu muốn
-  // Ở phiên bản 1 mình chỉ merge text + summary, bạn có thể bấm Rescan sau.
 }
 
 function checkPendingBackgroundJob(){
