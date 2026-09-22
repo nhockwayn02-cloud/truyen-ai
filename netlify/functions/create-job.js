@@ -1,22 +1,28 @@
-const { getStore } = require("@netlify/blobs");
+const { getStore, connectLambda } = require("@netlify/blobs");
 
-function getJobStore() {
-  // Cách chuẩn trên Netlify (tự lấy credentials)
+function getJobStore(event) {
+  // Bắt buộc với Netlify Functions (Lambda runtime)
+  if (event) {
+    try { connectLambda(event); } catch (e) {}
+  }
+
   try {
     return getStore("story-jobs");
-  } catch (e) {
-    // Fallback khi môi trường chưa inject đủ biến
+  } catch (e1) {
     const siteID = process.env.SITE_ID || process.env.NETLIFY_SITE_ID || process.env.BLOBS_SITE_ID;
     const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.BLOBS_TOKEN || process.env.NETLIFY_API_TOKEN;
     if (siteID && token) {
       return getStore({ name: "story-jobs", siteID, token });
     }
-    throw new Error("Netlify Blobs chưa được cấu hình. Hãy đảm bảo site đã deploy trên Netlify và Blobs được bật.");
+    throw new Error(
+      "Netlify Blobs chưa cấu hình. " +
+      "Vào Netlify → Site settings → Environment variables, thêm NETLIFY_SITE_ID và NETLIFY_API_TOKEN. " +
+      "Hoặc đảm bảo site đã deploy thành công trên Netlify."
+    );
   }
 }
 
 exports.handler = async (event) => {
-  // CORS preflight
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 204,
@@ -57,8 +63,7 @@ exports.handler = async (event) => {
     }
 
     const jobId = "job_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
-
-    const store = getJobStore();
+    const store = getJobStore(event);
 
     const job = {
       jobId,
@@ -78,18 +83,14 @@ exports.handler = async (event) => {
 
     await store.setJSON(jobId, job);
 
-    // Kích hoạt background function
+    // Kích hoạt background
     const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || "";
     if (siteUrl) {
       fetch(siteUrl + "/.netlify/functions/write-chapter-background", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId })
-      }).catch(err => {
-        console.error("Không thể kích hoạt background:", err.message);
-      });
-    } else {
-      console.warn("Không có URL site, background có thể không được kích hoạt tự động.");
+      }).catch(err => console.error("Background trigger error:", err.message));
     }
 
     return {

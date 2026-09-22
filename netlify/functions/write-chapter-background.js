@@ -1,15 +1,21 @@
-const { getStore } = require("@netlify/blobs");
+const { getStore, connectLambda } = require("@netlify/blobs");
 
-function getJobStore() {
+function getJobStore(event) {
+  if (event) {
+    try { connectLambda(event); } catch (e) {}
+  }
   try {
     return getStore("story-jobs");
-  } catch (e) {
+  } catch (e1) {
     const siteID = process.env.SITE_ID || process.env.NETLIFY_SITE_ID || process.env.BLOBS_SITE_ID;
     const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.BLOBS_TOKEN || process.env.NETLIFY_API_TOKEN;
     if (siteID && token) {
       return getStore({ name: "story-jobs", siteID, token });
     }
-    throw new Error("Netlify Blobs chưa được cấu hình. Hãy đảm bảo site đã deploy trên Netlify và Blobs được bật.");
+    throw new Error(
+      "Netlify Blobs chưa cấu hình. " +
+      "Vào Netlify → Site settings → Environment variables, thêm NETLIFY_SITE_ID và NETLIFY_API_TOKEN."
+    );
   }
 }
 
@@ -636,7 +642,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: "Missing jobId" };
   }
 
-  const store = getJobStore();
+  const store = getJobStore(event);
   let job;
 
   try {
