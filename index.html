@@ -294,11 +294,11 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
       </div>
       <div style="margin-top:8px;">
         <label for="modelSelect">🤖 Model chính (cảnh thường)</label>
-        <input type="text" id="modelSelect" value="deepseek/deepseek-v4-flash-0731">
+        <input type="text" id="modelSelect" value="deepseek/deepseek-v3.2">
       </div>
       <div style="margin-top:8px;">
         <label for="modelNsfwSelect">🔥 Model NSFW (cảnh nóng)</label>
-        <input type="text" id="modelNsfwSelect" class="nsfw-input" value="x-ai/grok-4.3">
+        <input type="text" id="modelNsfwSelect" class="nsfw-input" value="aion-labs/aion-2.0">
       </div>
       <div style="margin-top:8px;">
         <label for="nsfwModeSelect">Khi nào dùng NSFW</label>
@@ -650,6 +650,8 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
         <button class="btn btn-blue" id="writeChapterBtn">✨ Tạo Chương Mới</button>
         <button class="btn btn-ghost" id="continueChapterBtn">➕ Viết Tiếp</button>
         <button class="btn btn-stop" id="stopBtn" style="display:none;">⏹ Dừng</button>
+        <button class="btn btn-teal" id="bgWriteBtn" title="Gửi job lên server, bạn có thể tắt máy">☁ Viết chương nền (tắt máy được)</button>
+        <div id="bgJobStatus" style="font-size:12px;color:var(--ink-dim);margin-top:6px;display:none;"></div>
         <div class="field"><label>Chế độ viết lại</label>
           <select id="regenModeSelect">
             <option value="full">Viết lại toàn bộ</option>
@@ -764,7 +766,6 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
       <div class="status-line" id="statusLine"></div>
     </div>
   </div>
-</div>
 
 <div class="floating-rewrite" id="floatingRewrite">✨ Viết lại đoạn này</div>
 <script>
@@ -927,6 +928,7 @@ function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 const MODEL_PRICING = {
   "deepseek/deepseek-chat": { in: 0.14, out: 0.28 },
   "deepseek/deepseek-v4-flash-0731": { in: 0.10, out: 0.20 },
+  "deepseek/deepseek-v3.2": { in: 0.14, out: 0.28 },
   "deepseek/deepseek-r1": { in: 0.55, out: 2.19 },
   "openai/gpt-4o-mini": { in: 0.15, out: 0.60 },
   "openai/gpt-4o": { in: 2.50, out: 10.00 },
@@ -934,6 +936,7 @@ const MODEL_PRICING = {
   "google/gemini-flash-1.5": { in: 0.075, out: 0.30 },
   "qwen/qwen-2.5-72b-instruct": { in: 0.35, out: 0.40 },
   "x-ai/grok-4.3": { in: 3.00, out: 15.00 },
+  "aion-labs/aion-2.0": { in: 0.80, out: 1.60 },
   "_default": { in: 0.50, out: 1.50 }
 };
 function priceForModel(m){
@@ -963,7 +966,7 @@ function removeStoryFromDisk(id){ try{ localStorage.removeItem(STORY_KEY_PREFIX 
 const state = {
   schemaVersion: 8,
   apiEndpoint: "https://openrouter.ai/api/v1/chat/completions", apiKey: "",
-  model: "deepseek/deepseek-v4-flash-0731", modelNsfw: "x-ai/grok-4.3",
+  model: "deepseek/deepseek-v3.2", modelNsfw: "aion-labs/aion-2.0",
   nsfwMode: "auto", nsfwAutoThreshold: 6,
   descriptionLevel: "balanced",
   explicitLevel: "strong",
@@ -1274,6 +1277,13 @@ let generating = false;
 let globalAbort = null;
 let lastPromptSent = "";
 let lastResponseRaw = "";
+/* Cờ "người dùng bấm Dừng" — trước đây callAI kiểm tra opts.userAbort để
+   biết có nên coi 1 lần abort() là "người dùng chủ động dừng" (thì dừng
+   hẳn) hay chỉ là hết-giờ-timeout (thì thử lại). Nhưng opts.userAbort chưa
+   từng được set ở đâu cả trong toàn bộ code => bấm "⏹ Dừng" chỉ hủy được
+   request hiện tại, rồi app lại ÂM THẦM TỰ THỬ LẠI (coi như timeout) thay
+   vì dừng hẳn như người dùng mong đợi. Dùng cờ toàn cục này để sửa đúng. */
+let userStopRequested = false;
 
 document.querySelectorAll("[data-toggle]").forEach(head=>{
   head.addEventListener("click", ()=> head.closest("[data-section]").classList.toggle("open"));
@@ -1568,7 +1578,7 @@ async function callAI(prompt, opts){
       const isFile = location.protocol === "file:";
       const isLocalhost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
       if(networkErr.name === "AbortError"){
-        if(opts.userAbort){ const e = new Error("Đã hủy."); e.userAbort = true; throw e; }
+        if(userStopRequested){ const e = new Error("Đã hủy."); e.userAbort = true; throw e; }
         lastErr = new Error("Hết thời gian chờ.");
       }
       else if(isFile) lastErr = new Error("file:// — CORS.");
@@ -1648,6 +1658,7 @@ async function callAI(prompt, opts){
 }
 
 function stopGeneration(){
+  userStopRequested = true;
   if(globalAbort){
     try{ globalAbort.abort(); }catch(e){}
     setStatus("Đã dừng.", false);
@@ -2449,7 +2460,7 @@ $ID("saveKeyBtn").addEventListener("click", async ()=>{
     }
     // Lightweight probe: request 1 token
     const body = {
-      model: state.model || "deepseek/deepseek-v4-flash-0731",
+      model: state.model || "deepseek/deepseek-v3.2",
       messages: [{ role: "user", content: "ping" }],
       max_tokens: 1,
       temperature: 0
@@ -3010,12 +3021,13 @@ function remapSnapshotChapterNumbers(mapFn){
 }
 /* Đánh dấu / gỡ cờ "mục X chưa cập nhật được" cho 1 chương, để người dùng
    THẤY được thay vì bị âm thầm bỏ qua như trước. */
-function markAutoUpdateIssue(chapterNumber, label, failed){
+function markAutoUpdateIssue(chapterNumber, label, failed, skipRender){
   const ch = state.chapters[chapterNumber - 1];
   if(!ch) return;
   const issues = new Set(ch.autoUpdateIssues || []);
   if(failed) issues.add(label); else issues.delete(label);
   ch.autoUpdateIssues = Array.from(issues);
+  if(skipRender) return; /* gọi hàng loạt (rescan nhiều chương) — người gọi tự persist()+renderChapterNav() 1 lần ở cuối, tránh render lại toàn bộ thanh chương sau MỖI chương */
   persist();
   renderChapterNav();
 }
@@ -3205,7 +3217,11 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
   const from = Math.max(0, chapterNumber - 3);
   const recentSum = state.chapters.slice(from, chapterNumber - 1).map((c,i)=> "Ch" + (from + i + 1) + ": " + (c.summary || c.title || "")).join("\n");
   let body = text;
-  if(body.length > 14000) body = body.slice(0, 6000) + "\n\n[...]\n\n" + body.slice(-7000);
+  /* Chương mặc định tối thiểu 5000 từ (~28-30k ký tự) — ngưỡng cắt cũ (14k)
+     làm mất gần nửa nội dung Ở GIỮA chương, khiến NV/sự kiện ở đoạn giữa
+     không bao giờ được AI thấy để cập nhật. Nâng ngưỡng, chỉ cắt khi
+     chương thực sự rất dài (do auto-continue nhiều lượt cộng lại). */
+  if(body.length > 32000) body = body.slice(0, 13000) + "\n\n[...]\n\n" + body.slice(-15000);
   const prompt = [
     "BẮT BUỘC: Cập nhật nhân vật SAU CHƯƠNG " + chapterNumber + ". Không bỏ sót NV mới hoặc thay đổi rõ.",
     mcName ? ("NV chính: " + mcName) : "",
@@ -3245,16 +3261,30 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
 }
 $ID("npcUpdateBtn").addEventListener("click", async ()=>{
   if(!state.chapters.length){ setStatus("Chưa có truyện.", false); return; }
-  setStatus("Đang quét toàn bộ...", true);
-  const prompt = ["Đọc TOÀN BỘ truyện và liệt kê MỌI nhân vật (không bỏ sót).", CHAR_JSON_FORMAT_HINT, "", "TRUYỆN:", fullStoryTextCompressed()].join("\n");
+  if(generating){ setStatus("Đang bận, đợi xong rồi bấm lại.", true); return; }
+  /* Trước đây nút này nhét NGUYÊN CẢ TRUYỆN (hoặc 6 chương full gần nhất)
+     vào MỘT lệnh gọi duy nhất — với truyện dài, input quá lớn khiến model
+     xử lý rất lâu, thậm chí có thể vượt giới hạn ngữ cảnh và bỏ sót NV.
+     Giờ quét TỪNG CHƯƠNG một, dùng lại đúng logic updateCharactersIncremental
+     (đã có nâng ngưỡng cắt + retry) — chậm hơn về tổng thời gian chờ nhưng
+     đáng tin cậy hơn nhiều và có báo tiến độ rõ ràng. */
+  setGenerating(true);
+  const total = state.chapters.length;
+  let okCount = 0, failCount = 0, stopped = false;
   try{
-    const { text: raw } = await callAI(prompt, {maxTokens:4000, temperature:0.3});
-    const arr = safeJsonParse(raw);
-    if(!Array.isArray(arr)){ setStatus("Không phân tích được.", false); return; }
-    arr.forEach(u=> mergeCharacterUpdate(u, state.chapters.length));
-    persist(); renderCharacters();
-    setStatus("Đã đồng bộ.", false);
+    for(let i=0;i<total;i++){
+      const cn = i+1;
+      setStatus("Đang quét NV chương " + cn + "/" + total + "...", true);
+      const r = await updateCharactersIncremental(state.chapters[i].text, cn, true);
+      if(r && r.ok) okCount++; else failCount++;
+      markAutoUpdateIssue(cn, "NV", !r || !r.ok, true);
+      if(userStopRequested){ stopped = true; break; }
+    }
+    persist(); renderCharacters(); renderChapterNav();
+    if(stopped) setStatus("Đã dừng — quét được " + okCount + "/" + total + " chương.", false);
+    else setStatus("Đã quét xong " + total + " chương (" + okCount + " OK" + (failCount ? ", " + failCount + " lỗi — xem cờ ⚠ trên thẻ chương" : "") + ").", false);
   }catch(err){ setStatus("Lỗi: " + err.message, false); }
+  finally{ setGenerating(false); }
 });
 
 /* ========== LOCATION + ITEM + THREADS UPDATE (gộp 1 lệnh gọi) ========== */
@@ -3306,7 +3336,8 @@ async function updateWorldIncremental(text, chapterNumber, silent){
   const existingItems = state.items.map(it=>it.name + " (" + it.status + (it.owner? ", của "+it.owner:"") + ")").join(", ") || "(chưa có)";
   const existingThreads = state.threads.map(t=>t.type+": "+t.desc+" ("+t.status+")").join("\n") || "(chưa có)";
   let body = text;
-  if(body.length > 14000) body = body.slice(0, 6000) + "\n\n[...]\n\n" + body.slice(-7000);
+  /* Xem giải thích ở updateCharactersIncremental — nâng ngưỡng cắt tương tự. */
+  if(body.length > 32000) body = body.slice(0, 13000) + "\n\n[...]\n\n" + body.slice(-15000);
   const prompt = [
     "Địa điểm hiện có:", existingLocs, "",
     "Vật phẩm hiện có:", existingItems, "",
@@ -3350,7 +3381,8 @@ async function updateCurrentStatusIncremental(text, chapterNumber, silent){
       return "Ch" + num + " (" + (c.title||"") + "): " + (c.summary || "(chưa tóm tắt — dựa vào status cũ)");
     }).join("\n");
   let body = text || "";
-  if(body.length > 12000) body = body.slice(0, 5000) + "\n\n[...]::\n\n" + body.slice(-6000);
+  /* Xem giải thích ở updateCharactersIncremental — nâng ngưỡng cắt tương tự. */
+  if(body.length > 32000) body = body.slice(0, 13000) + "\n\n[...]::\n\n" + body.slice(-15000);
   const prompt = [
     "BẮT BUỘC: Viết lại CURRENT STATUS đầy đủ SAU CHƯƠNG " + chapterNumber + ".",
     "Không được bỏ qua chương này. Dòng đầu phải là: Current Status Update - Sau Chương " + chapterNumber,
@@ -3400,24 +3432,27 @@ async function updateCurrentStatusIncremental(text, chapterNumber, silent){
 }
 $ID("statusFullRescanBtn").addEventListener("click", async ()=>{
   if(!state.chapters.length){ setStatus("Chưa có truyện.", false); return; }
+  if(generating){ setStatus("Đang bận, đợi xong rồi bấm lại.", true); return; }
+  setGenerating(true);
   setStatus("Đang tổng hợp Current Status toàn truyện...", true);
   try{
-    if(state.chapters.length <= 8){
-      const prompt = ["Đọc TOÀN BỘ truyện và tạo Current Status Update mới nhất (sau chương " + state.chapters.length + "). TIẾNG VIỆT. Dòng đầu: Current Status Update - Sau Chương " + state.chapters.length, "", "TRUYỆN:", fullStoryText()].join("\n");
-      const { text } = await callAI(prompt, {maxTokens:3200, temperature:0.25});
-      state.currentStatus = text;
-    } else {
-      state.currentStatus = "";
-      for(let i = 0; i < state.chapters.length; i++){
-        setStatus("Status: chương " + (i+1) + "/" + state.chapters.length + "...", true);
-        await updateCurrentStatusIncremental(state.chapters[i].text, i+1, true);
-      }
+    /* Trước đây với truyện ≤8 chương, code nhét NGUYÊN VĂN 8 chương vào 1
+       lệnh gọi — nhưng với chương mặc định 5000+ từ, 8 chương đã là
+       ~40.000 từ (~230k ký tự), vẫn quá lớn/chậm y như lỗi "Quét toàn
+       truyện" đã vá. Giờ luôn quét TỪNG CHƯƠNG một cho chắc, bất kể
+       truyện dài hay ngắn. */
+    state.currentStatus = "";
+    for(let i = 0; i < state.chapters.length; i++){
+      setStatus("Status: chương " + (i+1) + "/" + state.chapters.length + "...", true);
+      const r = await updateCurrentStatusIncremental(state.chapters[i].text, i+1, true);
+      markAutoUpdateIssue(i+1, "Status", !r || !r.ok);
     }
     state.lastStatusChapter = state.chapters.length;
     persist();
     statusBox.textContent = state.currentStatus || "";
     setStatus("Đã đồng bộ Current Status tới ch" + state.chapters.length + ".", false);
   }catch(err){ setStatus("Lỗi: " + err.message, false); }
+  finally{ setGenerating(false); }
 });
 $ID("statusEditToggle").addEventListener("click", ()=>{
   const editing = statusEdit.style.display !== "none";
@@ -3457,7 +3492,11 @@ async function runContinuityCheck(text, chapterNumber, contextSummary, silent){
 $ID("integrityScanBtn").addEventListener("click", async ()=>{
   if(!state.chapters.length){ setStatus("Chưa có chương.", false); return; }
   setStatus("Đang chạy Integrity Scan...", true);
-  const prompt = ["Story Bible:", buildStoryBibleSummary(), "", "Nhân vật:", characterSummaryForPrompt(state.characters), "", "TOÀN BỘ TRUYỆN:", fullStoryText(), "", CONTINUITY_JSON_HINT].join("\n");
+  /* Trước đây dùng fullStoryText() = TOÀN VĂN không nén — với truyện dài
+     là input khổng lồ, dễ treo lâu hoặc vượt giới hạn ngữ cảnh model.
+     Đổi sang bản đã nén (chỉ giữ toàn văn 6 chương gần nhất + tóm tắt
+     chương cũ) như các chỗ khác đã dùng. */
+  const prompt = ["Story Bible:", buildStoryBibleSummary(), "", "Nhân vật:", characterSummaryForPrompt(state.characters), "", "TRUYỆN (chương cũ đã tóm tắt để đỡ quá tải):", fullStoryTextCompressed(), "", CONTINUITY_JSON_HINT].join("\n");
   try{
     const { text: raw } = await callAI(prompt, {maxTokens:2500, temperature:0.2});
     const arr = safeJsonParse(raw);
@@ -3637,6 +3676,7 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
 
 function setGenerating(on){
   generating = on;
+  if(on) userStopRequested = false; /* bắt đầu lượt mới thì xoá cờ "đã dừng" của lượt trước */
   stopBtn.style.display = on ? "flex" : "none";
   ["writeChapterBtn","regenBtn","continueChapterBtn","regenNsfwBtn","versionsBtn"].forEach(id=>{
     if($ID(id)) $ID(id).disabled = on;
@@ -4235,14 +4275,19 @@ async function rescanFrom(startChapterNum){
         const rc = await updateCharactersIncremental(c.text, cn, true);
         const rw = await updateWorldIncremental(c.text, cn, true);
         const rs = await updateCurrentStatusIncremental(c.text, cn, true);
-        markAutoUpdateIssue(cn, "NV", !rc || !rc.ok);
-        markAutoUpdateIssue(cn, "Thế giới", !rw || !rw.ok);
-        markAutoUpdateIssue(cn, "Status", !rs || !rs.ok);
+        markAutoUpdateIssue(cn, "NV", !rc || !rc.ok, true);
+        markAutoUpdateIssue(cn, "Thế giới", !rw || !rw.ok, true);
+        markAutoUpdateIssue(cn, "Status", !rs || !rs.ok, true);
         if(state.mature && state.autoSceneEnabled){
           try{ await scanScenesForChapter(cn); }catch(e){}
         }
         persist();
       }catch(e){ console.warn("Rescan ch " + cn + " lỗi:", e); }
+      if(userStopRequested){
+        renderAll();
+        setStatus("Đã dừng — rescan được tới chương " + cn + "/" + state.chapters.length + ".", false);
+        return;
+      }
     }
     renderAll();
     setStatus("Đã rescan từ chương " + startChapterNum + ".", false);
@@ -4761,8 +4806,8 @@ document.addEventListener("keydown", (e)=>{
 function hydrateFormFromState(){
   apiEndpointInput.value = state.apiEndpoint || "https://openrouter.ai/api/v1/chat/completions";
   apiKeyInput.value = state.apiKey || "";
-  modelSelect.value = state.model || "deepseek/deepseek-v4-flash-0731";
-  modelNsfwSelect.value = state.modelNsfw || "x-ai/grok-4.3";
+  modelSelect.value = state.model || "deepseek/deepseek-v3.2";
+  modelNsfwSelect.value = state.modelNsfw || "aion-labs/aion-2.0";
   nsfwModeSelect.value = state.nsfwMode || "auto";
   nsfwAutoThresholdInput.value = state.nsfwAutoThreshold || 6;
   toggleAutoOpts();
@@ -4837,9 +4882,134 @@ function renderAll(){
 }
 
 
+/* ========== BACKGROUND JOB (Netlify) ========== */
+const BG_JOB_KEY = "aiStoryWorkshop_bgJobId_v8";
+const BG_FUNCTIONS_BASE = "/.netlify/functions"; // khi deploy Netlify sẽ đúng path
+
+function getBgStatusEl(){ return $ID("bgJobStatus"); }
+
+function setBgStatus(msg, show){
+  const el = getBgStatusEl();
+  if(!el) return;
+  el.style.display = show ? "block" : "none";
+  el.textContent = msg || "";
+}
+
+async function startBackgroundWrite(){
+  if(generating){ setStatus("Đang bận viết local, đợi xong đã.", true); return; }
+  const key = (state.apiKey || apiKeyInput.value || "").trim();
+  if(!key){ setStatus("Cần nhập API Key trước.", false); return; }
+  if(!state.apiEndpoint && !apiEndpointInput.value){ setStatus("Cần endpoint.", false); return; }
+
+  // Lấy state sạch (không gửi key trong storyState)
+  const storyBlob = {};
+  Object.keys(state).forEach(k=>{
+    if(!GLOBAL_KEYS.includes(k)) storyBlob[k] = state[k];
+  });
+
+  const payload = {
+    storyState: storyBlob,
+    apiKey: key,
+    apiEndpoint: state.apiEndpoint || apiEndpointInput.value.trim(),
+    model: state.model || "deepseek/deepseek-v3.2",
+    modelNsfw: state.modelNsfw || "aion-labs/aion-2.0",
+    forceNsfw: false
+  };
+
+  setBgStatus("☁ Đang gửi job lên server...", true);
+  $ID("bgWriteBtn").disabled = true;
+
+  try{
+    const res = await fetch(BG_FUNCTIONS_BASE + "/create-job", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if(!res.ok || !data.jobId){
+      throw new Error(data.error || "Không tạo được job");
+    }
+    localStorage.setItem(BG_JOB_KEY, data.jobId);
+    setBgStatus("✓ Job đã gửi (" + data.jobId.slice(-8) + "). Bạn CÓ THỂ TẮT MÁY. Khi mở lại sẽ tự đồng bộ.", true);
+    setStatus("☁ Đã gửi viết chương nền. Có thể tắt máy.", false);
+    // Bắt đầu poll nhẹ
+    pollBackgroundJob(data.jobId);
+  }catch(err){
+    setBgStatus("Lỗi: " + err.message, true);
+    setStatus("Lỗi gửi job: " + err.message, false);
+  }finally{
+    $ID("bgWriteBtn").disabled = false;
+  }
+}
+
+let bgPollTimer = null;
+function pollBackgroundJob(jobId){
+  if(bgPollTimer) clearInterval(bgPollTimer);
+  bgPollTimer = setInterval(async ()=>{
+    try{
+      const res = await fetch(BG_FUNCTIONS_BASE + "/job-status?jobId=" + encodeURIComponent(jobId));
+      if(!res.ok) return;
+      const data = await res.json();
+      if(data.status === "running" || data.status === "pending"){
+        setBgStatus("☁ Đang viết nền... (" + (data.progress || data.status) + ")", true);
+      } else if(data.status === "completed"){
+        clearInterval(bgPollTimer);
+        bgPollTimer = null;
+        setBgStatus("✓ Chương nền đã xong! Đang đồng bộ...", true);
+        await mergeBackgroundChapter(data);
+        localStorage.removeItem(BG_JOB_KEY);
+        setBgStatus("✓ Đã đồng bộ chương mới từ server.", true);
+        setTimeout(()=> setBgStatus("", false), 8000);
+      } else if(data.status === "failed"){
+        clearInterval(bgPollTimer);
+        bgPollTimer = null;
+        setBgStatus("⚠ Job lỗi: " + (data.error || "unknown"), true);
+        localStorage.removeItem(BG_JOB_KEY);
+      }
+    }catch(e){ /* im lặng, thử lại lần sau */ }
+  }, 12000); // poll mỗi 12 giây
+}
+
+async function mergeBackgroundChapter(statusData){
+  if(!statusData || !statusData.resultChapter) return;
+  const ch = statusData.resultChapter;
+  // Tránh trùng nếu đã có sẵn
+  const already = state.chapters.some(c => c.createdBy === "background" && c.title === ch.title && c.wordCount === ch.wordCount);
+  if(already) return;
+
+  state.chapters.push(ch);
+  state.currentChapterIndex = state.chapters.length - 1;
+  state.chaptersSinceBackup = (state.chaptersSinceBackup || 0) + 1;
+  persist();
+  renderAll();
+  setStatus("☁ Đã nhận chương mới từ server: " + (ch.title || "") + " (" + (ch.wordCount||0) + " từ)", false);
+
+  // Chạy post-process local (character, status...) nếu muốn
+  // Ở phiên bản 1 mình chỉ merge text + summary, bạn có thể bấm Rescan sau.
+}
+
+function checkPendingBackgroundJob(){
+  const jobId = localStorage.getItem(BG_JOB_KEY);
+  if(!jobId) return;
+  setBgStatus("☁ Phát hiện job đang chạy / chờ đồng bộ...", true);
+  pollBackgroundJob(jobId);
+}
+
+// Gắn sự kiện
+document.addEventListener("DOMContentLoaded", ()=>{
+  const btn = $ID("bgWriteBtn");
+  if(btn) btn.addEventListener("click", startBackgroundWrite);
+});
+// Vì script chạy sau DOM nên gắn luôn
+(function(){
+  const btn = $ID("bgWriteBtn");
+  if(btn) btn.addEventListener("click", startBackgroundWrite);
+})();
+
 /* ========== BOOT ========== */
 bootstrapStorage();
 loadCurrentStoryIntoState();
+checkPendingBackgroundJob();
 
 /* Patch quy tắc tốc độ cũ làm dịu 18+ */
 try{
