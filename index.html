@@ -4920,9 +4920,13 @@ async function startBackgroundWrite(){
   $ID("bgWriteBtn").disabled = true;
 
   try{
-    // Gọi THẲNG Background Function (không qua create-job)
-    // Netlify nhận function tên *-background → trả 202 và chạy tiếp tối đa 15 phút
-    const res = await fetch(BG_FUNCTIONS_BASE + "/write-chapter-background", {
+    // QUAN TRỌNG: phải gọi qua /create-job (function thường, chạy đồng bộ) để
+    // LẤY ĐƯỢC jobId ngay lập tức. Netlify Background Function (*-background)
+    // chỉ trả về 202 RỖNG cho client — mọi "return {...jobId}" trong handler của
+    // nó KHÔNG BAO GIỜ tới được trình duyệt. Nếu gọi thẳng write-chapter-background
+    // thì client sẽ không bao giờ biết jobId để poll, job coi như "chạy vô hình".
+    // create-job sẽ tự kích hoạt write-chapter-background ở phía server sau khi lưu job.
+    const res = await fetch(BG_FUNCTIONS_BASE + "/create-job", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -4931,16 +4935,11 @@ async function startBackgroundWrite(){
     let data = {};
     try { data = await res.json(); } catch(e) {}
 
-    // Có thể nhận 200 (xong nhanh) hoặc 202 (đang chạy nền) hoặc timeout
-    if(data.jobId){
+    if(res.ok && data.jobId){
       localStorage.setItem(BG_JOB_KEY, data.jobId);
       setBgStatus("✓ Job đang chạy (" + data.jobId.slice(-8) + "). Bạn CÓ THỂ TẮT MÁY. Khi mở lại sẽ tự đồng bộ.", true);
       setStatus("☁ Đã gửi viết chương nền. Có thể tắt máy.", false);
       pollBackgroundJob(data.jobId);
-    } else if(res.ok || res.status === 202){
-      // Không có jobId trong response (hiếm) – vẫn thử poll nếu đã lưu trước đó
-      setBgStatus("☁ Job đã gửi. Đang chờ server xử lý...", true);
-      setStatus("☁ Đã gửi viết chương nền.", false);
     } else {
       throw new Error(data.error || ("HTTP " + res.status));
     }
