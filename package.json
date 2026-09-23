@@ -1,7 +1,7 @@
 {
   "name": "xuong-truyen-ai-v9",
   "private": true,
-  "version": "9.0.0",
+  "version": "9.1.0",
   "dependencies": {
     "@netlify/blobs": "^8.1.0"
   }

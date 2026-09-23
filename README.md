@@ -168,3 +168,10 @@ Vẫn nên dùng `Xuất JSON` định kỳ. Backup chứa:
 - cấu hình truyện
 
 API key không được xuất nếu `includeKeyOnExport` đang tắt.
+
+
+## v9.1 — JSON pipeline hardening
+- JSON parser tìm mọi ứng viên object/array cân bằng thay vì chỉ thử ứng viên đầu tiên.
+- Có lớp AI JSON repair khi model trả JSON lỗi/markdown/truncated.
+- `[]` hợp lệ được coi là kết quả thành công (không còn báo lỗi giả cho Scene/NV).
+- NV/Thế giới/Status/Memory/Scene đều dùng cùng lớp parse + repair.
