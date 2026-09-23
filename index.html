@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0e0f13">
-<title>Xưởng Truyện AI Pro Max v8</title>
+<title>Xưởng Truyện AI Pro Max v9</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -240,7 +240,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
     <div class="brand-mark"></div>
     <div>
       <div class="brand-name">Xưởng Truyện AI Pro Max</div>
-      <div class="brand-sub">v8 · Scene Tracker · Auto-NSFW · Miêu tả sâu</div>
+      <div class="brand-sub">v9 · Memory Engine · Background Safe · Continuity Guard</div>
     </div>
   </div>
   <div class="topbar-actions">
@@ -566,6 +566,15 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
       </div>
     </div>
 
+    <div class="section tone-purple" data-section>
+      <div class="section-head" data-toggle><span>1.6. Memory Engine v9</span><span class="chev">▾</span></div>
+      <div class="section-body">
+        <div class="hint">Bộ nhớ dài hạn: Timeline, Foreshadowing và Knowledge Ledger. Đây là dữ liệu phụ trợ để AI không quên diễn biến/kiến thức của từng nhân vật.</div>
+        <div id="memoryStats" class="status-box" style="max-height:180px;">Chưa có.</div>
+        <button class="btn btn-purple" id="memoryRescanBtn">🧠 Quét lại Memory toàn truyện</button>
+      </div>
+    </div>
+
     <div class="section tone-teal" data-section>
       <div class="section-head" data-toggle><span>1.5. Threads</span><span class="chev">▾</span></div>
       <div class="section-body">
@@ -776,10 +785,10 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 "use strict";
 
 /* ========== STORAGE KEYS (v7) ========== */
-const STORIES_INDEX_KEY = "aiStoryWorkshop_storiesIndex_v8";
-const STORY_KEY_PREFIX  = "aiStoryWorkshop_story_v8_";
-const GLOBAL_KEY        = "aiStoryWorkshop_global_v8";
-const LAST_STORY_KEY    = "aiStoryWorkshop_lastStoryId_v8";
+const STORIES_INDEX_KEY = "aiStoryWorkshop_storiesIndex_v9";
+const STORY_KEY_PREFIX  = "aiStoryWorkshop_story_v9_";
+const GLOBAL_KEY        = "aiStoryWorkshop_global_v9";
+const LAST_STORY_KEY    = "aiStoryWorkshop_lastStoryId_v9";
 const MIGRATION_KEYS_V6 = {
   index: "aiStoryWorkshop_storiesIndex_v6",
   story: "aiStoryWorkshop_story_v6_",
@@ -897,20 +906,38 @@ function extractBalancedJson(s){
   }
   return null;
 }
+function repairTruncatedArray(raw){
+  const s = stripCodeFences(raw || "");
+  const start = s.indexOf("[");
+  if(start < 0) return [];
+  const out = [];
+  let i = start + 1;
+  while(i < s.length){
+    while(i < s.length && /[\s,]/.test(s[i])) i++;
+    if(s[i] !== "{") break;
+    const st = i; let depth = 0, inStr = false, esc = false;
+    for(; i < s.length; i++){
+      const c = s[i];
+      if(inStr){ if(esc) esc=false; else if(c==='\\') esc=true; else if(c==='"') inStr=false; continue; }
+      if(c==='"'){ inStr=true; continue; }
+      if(c==='{') depth++;
+      else if(c==='}'){ depth--; if(depth===0){ try{ out.push(JSON.parse(s.slice(st,i+1))); }catch(e){} i++; break; } }
+    }
+    if(depth!==0) break;
+  }
+  return out;
+}
 function safeJsonParse(raw){
-  const cleaned = stripCodeFences(raw);
+  const cleaned = stripCodeFences(raw || "");
   const balanced = extractBalancedJson(cleaned);
-  if(balanced){ try{ return JSON.parse(balanced); }catch(e){} }
+  if(balanced){ try{return JSON.parse(balanced);}catch(e){} }
+  const repaired = repairTruncatedArray(cleaned);
+  if(repaired.length) return repaired;
   try{
-    const idxArr = cleaned.indexOf('[');
-    const idxObj = cleaned.indexOf('{');
-    let start = -1;
-    if(idxArr === -1 && idxObj === -1) start = -1;
-    else if(idxArr === -1) start = idxObj;
-    else if(idxObj === -1) start = idxArr;
-    else start = Math.min(idxArr, idxObj);
-    return JSON.parse(start >= 0 ? cleaned.slice(start) : cleaned);
-  }catch(e){ try{ return JSON.parse(raw); }catch(e2){ return null; } }
+    const idxArr = cleaned.indexOf('['), idxObj = cleaned.indexOf('{');
+    let start = idxArr<0 ? idxObj : (idxObj<0 ? idxArr : Math.min(idxArr,idxObj));
+    return JSON.parse(start>=0 ? cleaned.slice(start) : cleaned);
+  }catch(e){ try{return JSON.parse(raw);}catch(e2){return null;} }
 }
 function detectNonVietnamese(text){
   if(!text) return false;
@@ -967,7 +994,7 @@ function removeStoryFromDisk(id){ try{ localStorage.removeItem(STORY_KEY_PREFIX 
 
 /* ========== STATE ========== */
 const state = {
-  schemaVersion: 8,
+  schemaVersion: 9,
   apiEndpoint: "https://openrouter.ai/api/v1/chat/completions", apiKey: "",
   model: "deepseek/deepseek-v3.2", modelNsfw: "aion-labs/aion-2.0",
   nsfwMode: "auto", nsfwAutoThreshold: 6,
@@ -993,6 +1020,7 @@ const state = {
   scenes: [], consentLog: [],
   chapters: [], currentChapterIndex: -1,
   chaptersSinceBackup: 0,
+  statusState: {}, timeline: [], foreshadowing: [], knowledgeLedger: [], memoryEvents: [], lastMemorySyncChapter: 0,
   triggeredCheckpoints: [],
   lastPacingWarnChapter: 0,
   includeScenesInPrompt: true
@@ -1009,7 +1037,7 @@ function newMainCharProfile(){
 }
 function newStoryState(name){
   return {
-    schemaVersion: 8, storyId: newStoryId(), storyName: name || ("Truyện " + (storiesIndex.length + 1)),
+    schemaVersion: 9, storyId: newStoryId(), storyName: name || ("Truyện " + (storiesIndex.length + 1)),
     styleBible: { pov:"third_limited", tense:"past", tone:"", sample:"", extra:"" },
     mainPlot:"", genre:"", worldSetting:"", worldRules:"", antagonist:"",
     pronounRules:"", worldDescription:"", storyBibleLocked:false,
@@ -1020,7 +1048,9 @@ function newStoryState(name){
     characters:[], locations:[], items:[], threads:[],
     scenes:[], consentLog:[],
     chapters:[], currentChapterIndex:-1, chaptersSinceBackup:0,
-    triggeredCheckpoints: [], lastPacingWarnChapter: 0
+    triggeredCheckpoints: [], lastPacingWarnChapter: 0,
+    statusState: {}, timeline: [], foreshadowing: [], knowledgeLedger: [], memoryEvents: [],
+    lastMemorySyncChapter: 0
   };
 }
 
@@ -1240,6 +1270,13 @@ function loadCurrentStoryIntoState(){
   if(!Array.isArray(state.triggeredCheckpoints)) state.triggeredCheckpoints = [];
   if(!Array.isArray(state.scenes)) state.scenes = [];
   if(!Array.isArray(state.consentLog)) state.consentLog = [];
+  if(!state.statusState || typeof state.statusState !== "object") state.statusState = {};
+  if(!Array.isArray(state.timeline)) state.timeline = [];
+  if(!Array.isArray(state.foreshadowing)) state.foreshadowing = [];
+  if(!Array.isArray(state.knowledgeLedger)) state.knowledgeLedger = [];
+  if(!Array.isArray(state.memoryEvents)) state.memoryEvents = [];
+  if(!Number.isFinite(Number(state.lastMemorySyncChapter))) state.lastMemorySyncChapter = 0;
+  state.schemaVersion = 9;
 }
 
 /* ========== DOM REFS ========== */
@@ -1254,7 +1291,7 @@ const storyBibleLockEl = $ID("storyBibleLock"), storyClockEl = $ID("storyClock")
 const advancedRulesEl = $ID("advancedRules"), difficultyEl = $ID("difficulty"), matureToggle = $ID("matureToggle");
 const statusBox = $ID("statusBox"), statusEdit = $ID("statusEdit"), charList = $ID("charList");
 const arcList = $ID("arcList"), outlineList = $ID("outlineList"), locationList = $ID("locationList");
-const itemList = $ID("itemList"), threadList = $ID("threadList"), continuityList = $ID("continuityList");
+const itemList = $ID("itemList"), threadList = $ID("threadList"), continuityList = $ID("continuityList"), memoryStats = $ID("memoryStats");
 const sceneList = $ID("sceneList"), consentList = $ID("consentList");
 const chapterStrip = $ID("chapterStrip"), chapterSearch = $ID("chapterSearch"), quickJumpSelect = $ID("quickJumpSelect");
 const deleteChapterSelect = $ID("deleteChapterSelect"), deleteWipeMemoryToggle = $ID("deleteWipeMemoryToggle");
@@ -1567,7 +1604,7 @@ async function callAI(prompt, opts){
   const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + key };
   if(isOpenRouter){
     headers["HTTP-Referer"] = location.protocol === "file:" ? "https://localhost" : location.origin;
-    headers["X-Title"] = "Xuong Truyen AI Pro Max v8";
+    headers["X-Title"] = "Xuong Truyen AI Pro Max v9";
   }
 
   let lastErr = null;
@@ -1674,9 +1711,10 @@ stopBtn.addEventListener("click", stopGeneration);
 /* ========== QUEUE (parallel + sequential) ========== */
 const taskQueue = [];
 let queueRunning = false;
-function enqueueTask(fn, label){
+function enqueueTask(fn, label, opts){
+  opts=opts||{};
   return new Promise((resolve, reject)=>{
-    taskQueue.push({ fn, label, resolve, reject });
+    taskQueue.push({ fn, label, serial:!!opts.serial, resolve, reject });
     runQueue();
   });
 }
@@ -1684,8 +1722,9 @@ async function runQueue(){
   if(queueRunning) return;
   queueRunning = true;
   while(taskQueue.length){
-    if(state.parallelEnabled && taskQueue.length > 1){
-      /* Chạy song song batch đầu 2 task */
+    if(state.parallelEnabled && taskQueue.length > 1 && !taskQueue[0].serial && !taskQueue[1].serial){
+      /* Chỉ chạy song song các task thuần độc lập. Memory/Character/Status đều
+         ghi vào cùng state nên phải đánh dấu serial để tránh ghi đè localStorage. */
       const batch = taskQueue.splice(0, 2);
       try{
         const results = await Promise.allSettled(batch.map(t=> t.fn()));
@@ -2237,6 +2276,13 @@ function buildContextBlock(){
   const openThreads = state.threads.filter(t=>t.status!=='paid_off' && t.status!=='abandoned').slice(0, 6);
   if(openThreads.length) lines.push("THREADS:\n" + openThreads.map(t=>"- ["+t.type+"] "+clip(t.desc, 120)).join("\n"));
 
+  const openForeshadowing = (state.foreshadowing||[]).filter(f=>!['paid_off','abandoned','resolved'].includes(f.status)).slice(-8);
+  if(openForeshadowing.length) lines.push("FORESHADOWING CHƯA GIẢI:\n" + openForeshadowing.map(f=>"- "+clip(f.description,160)+" ["+(f.status||"seeded")+"]").join("\n"));
+  const timeline = (state.timeline||[]).slice(-8);
+  if(timeline.length) lines.push("TIMELINE GẦN:\n" + timeline.map(e=>"- Ch"+e.chapter+": "+clip(e.summary,160)).join("\n"));
+  const knownFacts = (state.knowledgeLedger||[]).slice(-12);
+  if(knownFacts.length) lines.push("KIẾN THỨC NHÂN VẬT:\n" + knownFacts.map(k=>"- "+k.character+" biết: "+clip(k.fact,140)).join("\n"));
+
   const sceneBlock = buildSceneHistoryBlock(4);
   if(sceneBlock) lines.push(clip(sceneBlock, 700));
 
@@ -2461,7 +2507,7 @@ $ID("saveKeyBtn").addEventListener("click", async ()=>{
     const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + state.apiKey };
     if(isOpenRouter){
       headers["HTTP-Referer"] = location.protocol === "file:" ? "https://localhost" : location.origin;
-      headers["X-Title"] = "Xuong Truyen AI Pro Max v8";
+      headers["X-Title"] = "Xuong Truyen AI Pro Max v9";
     }
     // Lightweight probe: request 1 token
     const body = {
@@ -3336,7 +3382,14 @@ function mergeCharacterUpdate(update, chapterNumber){
   Object.keys(update).forEach(key=>{
     if(["name","isNew","relationshipWithMain","relationships","chapterEvent","isDead"].includes(key)) return;
     if(lockedFields.includes(key)) return;
-    if(update[key] !== "" && update[key] != null) c[key] = update[key];
+    if(update[key] === "" || update[key] == null) return;
+    const value=String(update[key]);
+    const accumulative=["appearance","personality","goals","secret","weakness","fear","knowledge","independentPlot"];
+    if(accumulative.includes(key)){
+      const old=String(c[key]||"").trim();
+      if(!old)c[key]=value;
+      else if(normalizeName(old)!==normalizeName(value) && !normalizeName(old).includes(normalizeName(value))) c[key]=(old+"; "+value).slice(0,1800);
+    }else c[key]=update[key];
   });
   if(update.isDead === true && !c.dead){ c.dead = true; c.deathChapter = chapterNumber; }
   c.lastAppearance = chapterNumber;
@@ -3389,60 +3442,44 @@ const CHAR_JSON_FORMAT_HINT = [
   '- NV chỉ thoáng qua vẫn nên ghi nhận (tier: background/minor) để không bỏ sót, nhưng đừng bịa thêm chi tiết cho họ nếu chương không nói gì.'
 ].join('\n');
 async function updateCharactersIncremental(text, chapterNumber, silent){
-  if(!text) return { ok:false, reason:"empty" };
-  const mcName = (state.mainCharProfile && state.mainCharProfile.name) ? state.mainCharProfile.name : "";
-  const pool = [];
-  const seen = new Set();
-  relevantCharacters(30).forEach(c=>{ if(c.name && !seen.has(normalizeName(c.name))){ seen.add(normalizeName(c.name)); pool.push(c); } });
-  state.characters.forEach(c=>{
-    if(pool.length >= 45) return;
-    if(c.name && !seen.has(normalizeName(c.name))){ seen.add(normalizeName(c.name)); pool.push(c); }
-  });
-  const existingSummary = characterSummaryForPrompt(pool) || "(chưa có)";
-  const from = Math.max(0, chapterNumber - 3);
-  const recentSum = state.chapters.slice(from, chapterNumber - 1).map((c,i)=> "Ch" + (from + i + 1) + ": " + (c.summary || c.title || "")).join("\n");
-  let body = text;
-  /* Chương mặc định tối thiểu 5000 từ (~28-30k ký tự) — ngưỡng cắt cũ (14k)
-     làm mất gần nửa nội dung Ở GIỮA chương, khiến NV/sự kiện ở đoạn giữa
-     không bao giờ được AI thấy để cập nhật. Nâng ngưỡng, chỉ cắt khi
-     chương thực sự rất dài (do auto-continue nhiều lượt cộng lại). */
-  if(body.length > 32000) body = body.slice(0, 13000) + "\n\n[...]\n\n" + body.slice(-15000);
-  const prompt = [
-    "BẮT BUỘC: Cập nhật nhân vật SAU CHƯƠNG " + chapterNumber + ". Không bỏ sót NV mới hoặc thay đổi rõ.",
-    mcName ? ("NV chính: " + mcName) : "",
-    "Nhân vật đang theo dõi:", existingSummary, "",
-    recentSum ? ("Tóm tắt chương gần:\n" + recentSum) : "",
-    "",
-    "Nội dung CHƯƠNG " + chapterNumber + ":", body, "",
-    CHAR_JSON_FORMAT_HINT,
-    "Lưu ý: NV thoáng qua vẫn ghi background/minor. Cập nhật vị trí, quan hệ, trạng thái nếu có."
-  ].filter(Boolean).join("\n");
-  try{
-    const { text: raw } = await callAI(prompt, {maxTokens:3200, temperature:0.25});
-    let arr = safeJsonParse(raw);
-    if(!Array.isArray(arr)){
-      try{
-        const retry = await callAI("Chỉ trả JSON array NV thay đổi. " + CHAR_JSON_FORMAT_HINT + "\n\n" + body.slice(0, 8000), {maxTokens:2500, temperature:0.2});
-        arr = safeJsonParse(retry.text);
-      }catch(e2){}
-    }
-    if(!Array.isArray(arr)){
-      if(!silent) setStatus("⚠ Không parse được cập nhật NV (ch" + chapterNumber + ").", false);
-      return { ok:false, reason:"parse" };
-    }
-    let nNew = 0, nUpd = 0;
-    arr.forEach(u=>{
-      const r = mergeCharacterUpdate(u, chapterNumber);
-      if(r && r.isNewChar) nNew++; else if(r) nUpd++;
-    });
-    persist(); renderCharacters();
-    captureChapterSnapshot(chapterNumber);
-    if(!silent) setStatus("NV ch" + chapterNumber + ": +" + nNew + " mới, " + nUpd + " cập nhật.", false);
-    return { ok:true, nNew, nUpd };
-  }catch(err){
-    if(!silent) setStatus("Lỗi NV: " + err.message, false);
-    return { ok:false, reason: err.message };
+  if(!text) return {ok:false,reason:"empty"};
+  const chunks=[]; const maxChars=12000, overlap=800;
+  let pos=0;
+  while(pos<text.length){
+    let end=Math.min(text.length,pos+maxChars);
+    if(end<text.length){ const cut=text.lastIndexOf("\n",end); if(cut>pos+8000) end=cut; }
+    chunks.push(text.slice(pos,end)); if(end>=text.length) break; pos=Math.max(pos+1,end-overlap);
   }
+  const mcName=(state.mainCharProfile&&state.mainCharProfile.name)||"";
+  let nNew=0,nUpd=0,failed=0,repaired=0;
+  const nameList=state.characters.slice(0,100).map(c=>"- "+c.name+(c.dead?" [ĐÃ CHẾT]":"")).join("\n")||"(chưa có)";
+  for(let i=0;i<chunks.length;i++){
+    const prompt=[
+      "CẬP NHẬT NHÂN VẬT SAU CHƯƠNG "+chapterNumber+" — PHẦN "+(i+1)+"/"+chunks.length+".",
+      mcName?"Nhân vật chính: "+mcName:"",
+      "Chỉ ghi NV thực sự xuất hiện/được nhắc tới có ý nghĩa trong phần này. Không bịa.",
+      "Tên NV đã có:",nameList,
+      "NỘI DUNG:",chunks[i],
+      CHAR_JSON_FORMAT_HINT,
+      "Mỗi object ngắn gọn. Không cần lặp lại hồ sơ cũ nếu phần này không làm thay đổi nó."
+    ].filter(Boolean).join("\n\n");
+    try{
+      const r=await callAI(prompt,{maxTokens:3200,temperature:0.2});
+      let arr=safeJsonParse(r.text), wasRepair=false;
+      if(!Array.isArray(arr)){ const repaired=repairTruncatedArray(r.text); if(repaired.length){arr=repaired;wasRepair=true;} }
+      if(!Array.isArray(arr)){
+        const retry=await callAI("CHỈ TRẢ JSON ARRAY NHÂN VẬT. Không lời dẫn.\n"+CHAR_JSON_FORMAT_HINT+"\n\nNội dung:\n"+chunks[i].slice(0,8000),{maxTokens:2200,temperature:0.15});
+        arr=safeJsonParse(retry.text); if(!Array.isArray(arr)){ const repaired=repairTruncatedArray(retry.text); if(repaired.length){arr=repaired;wasRepair=true;} }
+      }
+      if(!Array.isArray(arr)){failed++;continue;}
+      if(wasRepair) repaired++;
+      arr.forEach(u=>{const r=mergeCharacterUpdate(u,chapterNumber);if(r&&r.isNewChar)nNew++;else if(r)nUpd++;});
+    }catch(err){failed++;}
+  }
+  state.lastMemorySyncChapter=chapterNumber;
+  persist(); renderCharacters(); captureChapterSnapshot(chapterNumber);
+  if(!silent) setStatus(failed?"⚠ NV ch"+chapterNumber+": "+nNew+" mới, "+nUpd+" cập nhật, "+failed+" lô lỗi." : "NV ch"+chapterNumber+": +"+nNew+" mới, "+nUpd+" cập nhật"+(repaired?"; đã cứu JSON ở "+repaired+" lô.":"."),false);
+  return {ok:failed<chunks.length,nNew,nUpd,failed,chunks:chunks.length,repaired};
 }
 $ID("npcUpdateBtn").addEventListener("click", async ()=>{
   if(!state.chapters.length){ setStatus("Chưa có truyện.", false); return; }
@@ -3558,61 +3595,43 @@ async function updateThreadsIncremental(text, chapterNumber, silent){ return { o
 
 /* ========== CURRENT STATUS ========== */
 async function updateCurrentStatusIncremental(text, chapterNumber, silent){
-  /* Ghép tóm tắt 3 chương gần để khỏi mất mạch */
-  const prevSummaries = state.chapters
-    .slice(Math.max(0, chapterNumber - 4), chapterNumber)
-    .map((c, idx) => {
-      const num = Math.max(0, chapterNumber - 4) + idx + 1;
-      return "Ch" + num + " (" + (c.title||"") + "): " + (c.summary || "(chưa tóm tắt — dựa vào status cũ)");
-    }).join("\n");
-  let body = text || "";
-  /* Xem giải thích ở updateCharactersIncremental — nâng ngưỡng cắt tương tự. */
-  if(body.length > 32000) body = body.slice(0, 13000) + "\n\n[...]::\n\n" + body.slice(-15000);
-  const prompt = [
-    "BẮT BUỘC: Viết lại CURRENT STATUS đầy đủ SAU CHƯƠNG " + chapterNumber + ".",
-    "Không được bỏ qua chương này. Dòng đầu phải là: Current Status Update - Sau Chương " + chapterNumber,
-    "",
-    "STATUS CŨ (giữ thông tin dài hạn còn đúng):",
-    state.currentStatus || "(chưa có)",
-    "",
-    "TÓM TẮT CÁC CHƯƠNG GẦN:",
-    prevSummaries || "(không)",
-    "",
-    "TOÀN VĂN / ĐOẠN CHƯƠNG " + chapterNumber + ":",
-    body,
-    "",
-    "Hợp nhất thành Current Status MỚI (TIẾNG VIỆT), cấu trúc:",
-    "Current Status Update - Sau Chương " + chapterNumber,
-    "- Thời điểm:",
-    "- Sự kiện chính (chương " + chapterNumber + "):",
-    "- Địa điểm hiện tại:",
-    "- NV chính — tâm lý / hành động / mục tiêu:",
-    "- Quan hệ quan trọng (thay đổi mới nhất):",
-    "- Sức mạnh / vật phẩm / thông tin mới:",
-    "- Xung đột đang mở:",
-    "- Mục tiêu chương tới:",
-    "Thông tin dài hạn:",
-    "- Bí mật / lời hứa chưa giải:",
-    "- Quy tắc / thỏa thuận:",
-    "- Điểm yếu / rủi ro:",
-    "- Drama / quan hệ nền:"
+  if(!text) return {ok:false,reason:"empty"};
+  const old=state.currentStatus||"";
+  const prevSummaries=state.chapters.slice(Math.max(0,chapterNumber-4),chapterNumber).map((c,i)=>"Ch"+(Math.max(0,chapterNumber-4)+i+1)+": "+(c.summary||c.title||"")).join("\n");
+  const body=text.length>24000?text.slice(0,9000)+"\n\n[...giữa...]\n\n"+text.slice(-11000):text;
+  const prompt=[
+    "Cập nhật CURRENT STATUS sau chương "+chapterNumber+".",
+    "Không xóa thông tin cũ chỉ vì chương này không nhắc lại. Chỉ thay đổi khi có bằng chứng.",
+    "STATUS CŨ:",old||"(chưa có)","",
+    "TÓM TẮT CHƯƠNG GẦN:",prevSummaries||"(không)","",
+    "CHƯƠNG:",body,"",
+    'Trả DUY NHẤT JSON: {"time":"","mainEvent":"","location":"","mc":"","relationships":"","powerItems":"","openConflict":"","nextGoal":"","longTermSecrets":"","rulesPromises":"","risks":"","drama":""}. Không markdown.'
   ].join("\n");
   try{
-    const { text: st } = await callAI(prompt, {maxTokens:2800, temperature:0.25});
-    let cleaned = (st || "").trim();
-    if(cleaned && !/sau chương\s*\d+/i.test(cleaned.slice(0, 80))){
-      cleaned = "Current Status Update - Sau Chương " + chapterNumber + "\n" + cleaned;
+    const r=await callAI(prompt,{maxTokens:2200,temperature:0.15});
+    let obj=safeJsonParse(r.text);
+    if(!obj||Array.isArray(obj)||typeof obj!=="object"){
+      const retry=await callAI("CHỈ TRẢ JSON OBJECT ĐÚNG ĐỊNH DẠNG.\n"+prompt,{maxTokens:1800,temperature:0.1});
+      obj=safeJsonParse(retry.text);
     }
-    state.currentStatus = cleaned;
-    state.lastStatusChapter = chapterNumber;
-    persist();
-    if(statusBox) statusBox.textContent = cleaned;
-    captureChapterSnapshot(chapterNumber);
-    if(!silent) setStatus("Đã cập nhật Current Status → ch" + chapterNumber + ".", false);
-    return { ok:true };
+    if(!obj||Array.isArray(obj)||typeof obj!=="object"){
+      if(!silent)setStatus("⚠ Status ch"+chapterNumber+": không parse được, giữ Status cũ.",false);
+      return {ok:false,reason:"parse"};
+    }
+    const lines=["Current Status Update - Sau Chương "+chapterNumber];
+    const map=[["Thời điểm",obj.time],["Sự kiện chính",obj.mainEvent],["Địa điểm hiện tại",obj.location],["NV chính",obj.mc],["Quan hệ",obj.relationships],["Sức mạnh / vật phẩm / thông tin mới",obj.powerItems],["Xung đột đang mở",obj.openConflict],["Mục tiêu chương tới",obj.nextGoal],["Bí mật / lời hứa chưa giải",obj.longTermSecrets],["Quy tắc / thỏa thuận",obj.rulesPromises],["Điểm yếu / rủi ro",obj.risks],["Drama / quan hệ nền",obj.drama]];
+    map.forEach(([k,v])=>{if(v&&String(v).trim())lines.push("- "+k+": "+String(v).trim());});
+    if(lines.length<2){if(!silent)setStatus("⚠ Status ch"+chapterNumber+": rỗng, giữ Status cũ.",false);return {ok:false,reason:"empty"};}
+    state.currentStatus=lines.join("\n");
+    state.statusState=obj;
+    state.lastStatusChapter=chapterNumber;
+    state.lastMemorySyncChapter=Math.max(state.lastMemorySyncChapter||0,chapterNumber);
+    persist(); if(statusBox)statusBox.textContent=state.currentStatus; captureChapterSnapshot(chapterNumber);
+    if(!silent)setStatus("Đã cập nhật Current Status → ch"+chapterNumber+".",false);
+    return {ok:true};
   }catch(err){
-    if(!silent) setStatus("Lỗi status: " + err.message, false);
-    return { ok:false, reason: err.message };
+    if(!silent)setStatus("Lỗi status: "+err.message+" — giữ Status cũ.",false);
+    return {ok:false,reason:err.message};
   }
 }
 $ID("statusFullRescanBtn").addEventListener("click", async ()=>{
@@ -3626,7 +3645,8 @@ $ID("statusFullRescanBtn").addEventListener("click", async ()=>{
        ~40.000 từ (~230k ký tự), vẫn quá lớn/chậm y như lỗi "Quét toàn
        truyện" đã vá. Giờ luôn quét TỪNG CHƯƠNG một cho chắc, bất kể
        truyện dài hay ngắn. */
-    state.currentStatus = "";
+    const oldStatusBackup = state.currentStatus || "";
+    state.currentStatus = oldStatusBackup;
     for(let i = 0; i < state.chapters.length; i++){
       setStatus("Status: chương " + (i+1) + "/" + state.chapters.length + "...", true);
       const r = await updateCurrentStatusIncremental(state.chapters[i].text, i+1, true);
@@ -3664,7 +3684,7 @@ function renderContinuityWarnings(warnings){
     + '</div>'
   ).join("");
 }
-const CONTINUITY_JSON_HINT = 'Trả về DUY NHẤT một mảng JSON cảnh báo (có thể []): {"severity":"low|medium|high","character":"","problem":"","suggestion":""}. TIẾNG VIỆT.';
+const CONTINUITY_JSON_HINT = 'Trả về DUY NHẤT một mảng JSON cảnh báo (có thể []): [{"severity":"low|medium|high","character":"","problem":"","suggestion":""}]. TIẾNG VIỆT.';
 async function runContinuityCheck(text, chapterNumber, contextSummary, silent){
   if(!text) return [];
   const prompt = ["Bối cảnh:", contextSummary, "", "Chương " + chapterNumber + ":", text, "", CONTINUITY_JSON_HINT].join("\n");
@@ -4208,37 +4228,41 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
           if(sum){ chapterObj.summary = sum; persist(); renderChapterNav(); renderCurrentChapter(); }
         }catch(e){}
       }
-    }, "summary");
+    }, "summary", {serial:true});
     enqueueTask(async ()=>{
       const r = await updateCharactersIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Cập nhật NV ch" + cn + " thất bại — bấm Quét toàn truyện khi rảnh.", false);
       markAutoUpdateIssue(cn, "NV", !r || !r.ok);
-    }, "char");
+    }, "char", {serial:true});
     enqueueTask(async ()=>{
       const r = await updateWorldIncremental(text, cn, true);
       markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok);
-    }, "world");
+    }, "world", {serial:true});
     enqueueTask(async ()=>{
       const r = await updateCurrentStatusIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Current Status ch" + cn + " lỗi — bấm Quét toàn bộ Status.", false);
       else if(cn % 5 === 0) setStatus("✓ Bộ nhớ đã cập nhật tới ch" + cn + ". Nên rescan NV định kỳ.", false);
       markAutoUpdateIssue(cn, "Status", !r || !r.ok);
-    }, "status");
+    }, "status", {serial:true});
+    enqueueTask(async ()=>{
+      const r = await updateLongMemoryIncremental(text, cn, true);
+      markAutoUpdateIssue(cn, "Memory", !r || !r.ok);
+    }, "memory", {serial:true});
     enqueueTask(async ()=>{
       /* Scene detection nếu mature */
       if(state.mature && state.autoSceneEnabled){
         try{ await scanScenesForChapter(cn); }catch(e){}
       }
-    }, "scene");
+    }, "scene", {serial:true});
     enqueueTask(async ()=>{
       const w = await runContinuityCheck(text, cn, buildStoryBibleSummary() + "\n" + characterSummaryForPrompt(relevantCharacters(20)), true);
       if(w && w.length){
         chapterObj.continuityWarnings = (chapterObj.continuityWarnings || []).concat(w);
         persist(); renderChapterNav(); renderCurrentChapter();
       }
-    }, "continuity");
-    enqueueTask(()=> checkCheckpoint(cn), "checkpoint");
-    enqueueTask(()=> checkPacingGuard(false), "pacing");
+    }, "continuity", {serial:true});
+    enqueueTask(()=> checkCheckpoint(cn), "checkpoint", {serial:true});
+    enqueueTask(()=> checkPacingGuard(false), "pacing", {serial:true});
 
   }catch(err){
     if(err.userAbort) setStatus("Đã dừng bởi người dùng.", false);
@@ -4345,14 +4369,18 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     persist(); renderChapterNav(); renderCurrentChapter();
     setStatus("Đã viết tiếp.", false);
     const cn = idx + 1;
-    enqueueTask(async ()=>{ const r = await updateCharactersIncremental(contText, cn, true); markAutoUpdateIssue(cn, "NV", !r || !r.ok); }, "char");
-    enqueueTask(async ()=>{ const r = await updateWorldIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok); }, "world");
-    enqueueTask(async ()=>{ const r = await updateCurrentStatusIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Status", !r || !r.ok); }, "status");
+    enqueueTask(async ()=>{ const r = await updateCharactersIncremental(contText, cn, true); markAutoUpdateIssue(cn, "NV", !r || !r.ok); }, "char", {serial:true});
+    enqueueTask(async ()=>{ const r = await updateWorldIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok); }, "world", {serial:true});
+    enqueueTask(async ()=>{ const r = await updateCurrentStatusIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Status", !r || !r.ok); }, "status", {serial:true});
+    enqueueTask(async ()=>{
+      const r = await updateLongMemoryIncremental(contText, cn, true);
+      markAutoUpdateIssue(cn, "Memory", !r || !r.ok);
+    }, "memory", {serial:true});
     enqueueTask(async ()=>{
       if(state.mature && state.autoSceneEnabled){
         try{ await scanScenesForChapter(cn); }catch(e){}
       }
-    }, "scene");
+    }, "scene", {serial:true});
   }catch(err){
     chapterTextEl.classList.remove("streaming");
     if(err.userAbort) setStatus("Đã dừng.", false);
@@ -4845,10 +4873,15 @@ $ID("jsonFileInput").addEventListener("change", (e)=>{
       if(!Array.isArray(storyBlob.triggeredCheckpoints)) storyBlob.triggeredCheckpoints = [];
       if(!Array.isArray(storyBlob.scenes)) storyBlob.scenes = [];
       if(!Array.isArray(storyBlob.consentLog)) storyBlob.consentLog = [];
+      if(!storyBlob.timeline) storyBlob.timeline = [];
+      if(!storyBlob.foreshadowing) storyBlob.foreshadowing = [];
+      if(!storyBlob.knowledgeLedger) storyBlob.knowledgeLedger = [];
+      if(!storyBlob.memoryEvents) storyBlob.memoryEvents = [];
+      if(!storyBlob.statusState) storyBlob.statusState = {};
       if(!storyBlob.mainCharProfile) storyBlob.mainCharProfile = newMainCharProfile();
       if(!storyBlob.styleBible) storyBlob.styleBible = { pov:"third_limited", tense:"past", tone:"", sample:"", extra:"" };
       if(!storyBlob.vocabulary) storyBlob.vocabulary = { preferred:"", banned:"", overused:"", anatomy:"" };
-      storyBlob.schemaVersion = 8;
+      storyBlob.schemaVersion = 9;
       persist();
       saveStoryStateToDisk(storyBlob.storyId, storyBlob);
       storiesIndex.push({ id: storyBlob.storyId, name: storyBlob.storyName, updatedAt: Date.now() });
@@ -5044,6 +5077,35 @@ function hydrateFormFromState(){
   updateNsfwHint();
 }
 
+function renderMemoryEngine(){
+  if(!memoryStats)return;
+  const tl=state.timeline||[], fs=state.foreshadowing||[], kl=state.knowledgeLedger||[];
+  const openFs=fs.filter(x=>!['paid_off','abandoned','resolved'].includes(x.status));
+  const recent=tl.slice(-5).map(e=>"- Ch"+e.chapter+": "+escapeHtml(e.summary||"")).join("\n");
+  const hooks=openFs.slice(-5).map(f=>"- ["+(f.status||"seeded")+"] "+escapeHtml(f.description||"")).join("\n");
+  memoryStats.innerHTML="<b>Timeline:</b> "+tl.length+" sự kiện<br><b>Foreshadowing:</b> "+fs.length+" (đang mở: "+openFs.length+")<br><b>Knowledge Ledger:</b> "+kl.length+" dữ kiện<br><b>Đồng bộ tới:</b> chương "+(state.lastMemorySyncChapter||0)+"<hr style=\"border:0;border-top:1px solid var(--line);\"><b>Diễn biến gần:</b><br>"+(recent||"Chưa có")+"<br><br><b>Foreshadowing đang mở:</b><br>"+(hooks||"Không có");
+}
+async function updateLongMemoryIncremental(text, chapterNumber, silent){
+  if(!text)return {ok:false,reason:"empty"};
+  const source=(state.chapters[chapterNumber-1]?.summary||"")+"\n\n"+text.slice(0,3500)+"\n\n[ĐOẠN CUỐI]\n"+text.slice(-7500);
+  const prompt=["CẬP NHẬT LONG-TERM MEMORY SAU CHƯƠNG "+chapterNumber,"Chỉ ghi điều có bằng chứng. Không bịa.","FORESHADOWING MỞ:",(state.foreshadowing||[]).filter(x=>!['paid_off','abandoned','resolved'].includes(x.status)).slice(-20).map(x=>x.description+" ["+x.status+"]").join("\n"),"NỘI DUNG:",source,'Trả DUY NHẤT JSON: {"events":[{"type":"event|consequence|reveal|death|power_change","summary":"","causes":"","consequences":""}],"foreshadowing":[{"description":"","status":"seeded|developing|paid_off|abandoned","match":"","characters":""}],"knowledge":[{"character":"","fact":"","confidence":"direct|inferred|reported"}]}'].join("\n\n");
+  try{
+    const r=await callAI(prompt,{maxTokens:2200,temperature:0.15});
+    let obj=safeJsonParse(r.text);
+    if(!obj||Array.isArray(obj)){const rr=await callAI("CHỈ TRẢ JSON OBJECT. "+prompt,{maxTokens:1800,temperature:0.1});obj=safeJsonParse(rr.text);}
+    if(!obj||Array.isArray(obj))return {ok:false,reason:"parse"};
+    if(!Array.isArray(state.timeline))state.timeline=[]; if(!Array.isArray(state.foreshadowing))state.foreshadowing=[]; if(!Array.isArray(state.knowledgeLedger))state.knowledgeLedger=[];
+    (obj.events||[]).forEach(e=>{if(e&&e.summary)state.timeline.push({id:genId(),chapter:chapterNumber,type:e.type||"event",summary:e.summary,causes:e.causes||"",consequences:e.consequences||""});});
+    (obj.foreshadowing||[]).forEach(f=>{if(!f||!f.description)return;const key=normalizeName(f.match||f.description).slice(0,60);let x=state.foreshadowing.find(a=>normalizeName(a.description).slice(0,60)===key||normalizeName(a.description).includes(key.slice(0,30)));if(!x)state.foreshadowing.push({id:genId(),description:f.description,status:f.status||"seeded",plantedChapter:chapterNumber,lastUpdated:chapterNumber,characters:f.characters||""});else{if(f.status)x.status=f.status;x.lastUpdated=chapterNumber;if(f.characters)x.characters=f.characters;}});
+    (obj.knowledge||[]).forEach(k=>{if(!k||!k.character||!k.fact)return;const key=normalizeName(k.character)+"|"+normalizeName(k.fact).slice(0,80);let x=state.knowledgeLedger.find(a=>normalizeName(a.character)+"|"+normalizeName(a.fact).slice(0,80)===key);if(!x)state.knowledgeLedger.push({id:genId(),character:k.character,fact:k.fact,confidence:k.confidence||"direct",firstChapter:chapterNumber,lastUpdated:chapterNumber});else x.lastUpdated=chapterNumber;});
+    state.timeline=state.timeline.slice(-250);state.foreshadowing=state.foreshadowing.slice(-150);state.knowledgeLedger=state.knowledgeLedger.slice(-500);state.lastMemorySyncChapter=chapterNumber;persist();renderMemoryEngine();return {ok:true};
+  }catch(err){if(!silent)setStatus("Lỗi Memory ch"+chapterNumber+": "+err.message,false);return {ok:false,reason:err.message};}
+}
+$ID("memoryRescanBtn").addEventListener("click",async()=>{
+  if(!state.chapters.length){setStatus("Chưa có chương.",false);return;} if(generating){setStatus("Đang bận.",true);return;}
+  setGenerating(true);let ok=0,fail=0;try{for(let i=0;i<state.chapters.length;i++){setStatus("Memory: chương "+(i+1)+"/"+state.chapters.length+"...",true);const r=await updateLongMemoryIncremental(state.chapters[i].text,i+1,true);if(r&&r.ok)ok++;else fail++;if(userStopRequested)break;}persist();renderMemoryEngine();setStatus("Memory scan xong: "+ok+" OK"+(fail?", "+fail+" lỗi.":"."),false);}catch(e){setStatus("Lỗi Memory: "+e.message,false);}finally{setGenerating(false);}
+});
+
 /* ========== RENDER ALL ========== */
 function renderAll(){
   renderCharacters();
@@ -5054,6 +5116,7 @@ function renderAll(){
   renderThreads();
   renderScenes();
   renderConsentLog();
+  renderMemoryEngine();
   renderChapterNav();
   renderCurrentChapter();
   renderSnapshotChapterSelect();
@@ -5068,7 +5131,7 @@ function renderAll(){
 
 
 /* ========== BACKGROUND JOB (Netlify) ========== */
-const BG_JOB_KEY = "aiStoryWorkshop_bgJobId_v8";
+const BG_JOB_KEY = "aiStoryWorkshop_bgJobId_v9";
 const BG_FUNCTIONS_BASE = "/.netlify/functions"; // khi deploy Netlify sẽ đúng path
 
 function getBgStatusEl(){ return $ID("bgJobStatus"); }
@@ -5081,155 +5144,103 @@ function setBgStatus(msg, show){
 }
 
 async function startBackgroundWrite(){
-  if(generating){ setStatus("Đang bận viết local, đợi xong đã.", true); return; }
-  const key = (state.apiKey || apiKeyInput.value || "").trim();
-  if(!key){ setStatus("Cần nhập API Key trước.", false); return; }
-  if(!state.apiEndpoint && !apiEndpointInput.value){ setStatus("Cần endpoint.", false); return; }
-
-  // Lấy state sạch (không gửi key trong storyState)
-  const storyBlob = {};
-  Object.keys(state).forEach(k=>{
-    if(!GLOBAL_KEYS.includes(k)) storyBlob[k] = state[k];
-  });
-  // QUAN TRỌNG: các thiết lập này nằm trong GLOBAL_KEYS nên bị vòng lặp trên loại bỏ,
-  // nhưng server VIẾT CHƯƠNG lại cần đọc trực tiếp từ storyState. Nếu không gửi lại
-  // ở đây, server sẽ luôn dùng giá trị mặc định (vd: 4000 từ thay vì 5000 bạn đặt).
-  ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold",
-   "advancedRules","includeScenesInPrompt"].forEach(k=>{
-    if(state[k] !== undefined) storyBlob[k] = state[k];
-  });
-
-  const payload = {
-    storyState: storyBlob,
-    apiKey: key,
-    apiEndpoint: state.apiEndpoint || apiEndpointInput.value.trim(),
-    model: state.model || "deepseek/deepseek-v3.2",
-    modelNsfw: state.modelNsfw || "aion-labs/aion-2.0",
-    forceNsfw: false
-  };
-
-  setBgStatus("☁ Đang gửi job lên server...", true);
-  $ID("bgWriteBtn").disabled = true;
-
+  if(generating){setStatus("Đang bận viết local, đợi xong đã.",true);return;}
+  const key=(state.apiKey||apiKeyInput.value||"").trim();
+  if(!key){setStatus("Cần nhập API Key trước.",false);return;}
+  if(!state.apiEndpoint&&!apiEndpointInput.value){setStatus("Cần endpoint.",false);return;}
+  if(state.storyId && state.chapters.length>=1){
+    const old=localStorage.getItem(BG_JOB_KEY);
+    if(old){setBgStatus("⚠ Đã có job nền đang theo dõi. Hãy chờ job đó xong trước khi tạo job mới.",true);return;}
+  }
+  const storyBlob={};
+  Object.keys(state).forEach(k=>{if(!GLOBAL_KEYS.includes(k))storyBlob[k]=state[k];});
+  ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","advancedRules","includeScenesInPrompt"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
+  const payload={storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:false};
+  setBgStatus("☁ Đang tạo job an toàn trên server...",true); $ID("bgWriteBtn").disabled=true;
   try{
-    // QUAN TRỌNG: phải gọi qua /create-job (function thường, chạy đồng bộ) để
-    // LẤY ĐƯỢC jobId ngay lập tức. Netlify Background Function (*-background)
-    // chỉ trả về 202 RỖNG cho client — mọi "return {...jobId}" trong handler của
-    // nó KHÔNG BAO GIỜ tới được trình duyệt. Nếu gọi thẳng write-chapter-background
-    // thì client sẽ không bao giờ biết jobId để poll, job coi như "chạy vô hình".
-    // create-job sẽ tự kích hoạt write-chapter-background ở phía server sau khi lưu job.
-    const res = await fetch(BG_FUNCTIONS_BASE + "/create-job", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    let data = {};
-    try { data = await res.json(); } catch(e) {}
-
-    if(res.ok && data.jobId){
-      localStorage.setItem(BG_JOB_KEY, data.jobId);
-      setBgStatus("✓ Job đang chạy (" + data.jobId.slice(-8) + "). Bạn CÓ THỂ TẮT MÁY. Khi mở lại sẽ tự đồng bộ.", true);
-      setStatus("☁ Đã gửi viết chương nền. Có thể tắt máy.", false);
-      pollBackgroundJob(data.jobId);
-    } else {
-      throw new Error(data.error || ("HTTP " + res.status));
-    }
-  }catch(err){
-    // Nếu request bị timeout vì function chạy lâu – có thể job vẫn đang chạy
-    // Người dùng nên mở lại trang sau vài phút để đồng bộ
-    const msg = err.message || String(err);
-    if(msg.indexOf("abort") >= 0 || msg.indexOf("timeout") >= 0 || msg.indexOf("Failed to fetch") >= 0){
-      setBgStatus("☁ Request dài – job có thể vẫn đang chạy trên server. Mở lại trang sau 5–10 phút để kiểm tra.", true);
-      setStatus("☁ Đã gửi. Nếu tắt máy, hãy mở lại sau vài phút để đồng bộ.", false);
-    } else {
-      setBgStatus("Lỗi: " + msg, true);
-      setStatus("Lỗi gửi job: " + msg, false);
-    }
-  }finally{
-    $ID("bgWriteBtn").disabled = false;
-  }
+    const res=await fetch(BG_FUNCTIONS_BASE+"/create-job",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    let data={};try{data=await res.json();}catch(e){}
+    if(!res.ok||!data.jobId||!data.accessToken)throw new Error(data.error||("HTTP "+res.status));
+    const record={jobId:data.jobId,accessToken:data.accessToken,storyId:state.storyId,baseChapterCount:state.chapters.length,createdAt:Date.now()};
+    localStorage.setItem(BG_JOB_KEY,JSON.stringify(record));
+    setBgStatus("✓ Job "+data.jobId.slice(-8)+" đang chạy. Có thể tắt iPhone.",true);
+    setStatus("☁ Đã gửi background. API key không được trả về status.",false);
+    pollBackgroundJob(record);
+  }catch(err){setBgStatus("Lỗi gửi job: "+(err.message||err),true);setStatus("Lỗi gửi job: "+(err.message||err),false);}
+  finally{$ID("bgWriteBtn").disabled=false;}
 }
 
-let bgPollTimer = null;
-function pollBackgroundJob(jobId){
-  if(bgPollTimer) clearInterval(bgPollTimer);
-  bgPollTimer = setInterval(async ()=>{
+let bgPollTimer=null;
+function normalizeBgRecord(raw){
+  if(!raw)return null;
+  try{const o=JSON.parse(raw);if(o&&o.jobId)return o;}catch(e){}
+  return {jobId:raw,accessToken:""};
+}
+function pollBackgroundJob(record){
+  if(!record||!record.jobId)return;
+  if(bgPollTimer)clearInterval(bgPollTimer);
+  const poll=async()=>{
     try{
-      const res = await fetch(BG_FUNCTIONS_BASE + "/job-status?jobId=" + encodeURIComponent(jobId));
-      if(!res.ok) return;
-      const data = await res.json();
-      if(data.status === "running" || data.status === "pending"){
-        setBgStatus("☁ Đang viết nền... (" + (data.progress || data.status) + ")", true);
-      } else if(data.status === "completed"){
-        clearInterval(bgPollTimer);
-        bgPollTimer = null;
-        setBgStatus("✓ Chương nền đã xong! Đang đồng bộ...", true);
-        await mergeBackgroundChapter(data);
-        localStorage.removeItem(BG_JOB_KEY);
-        setBgStatus("✓ Đã đồng bộ chương mới từ server.", true);
-        setTimeout(()=> setBgStatus("", false), 8000);
-      } else if(data.status === "failed"){
-        clearInterval(bgPollTimer);
-        bgPollTimer = null;
-        setBgStatus("⚠ Job lỗi: " + (data.error || "unknown"), true);
-        localStorage.removeItem(BG_JOB_KEY);
+      const token=encodeURIComponent(record.accessToken||"");
+      const res=await fetch(BG_FUNCTIONS_BASE+"/job-status?jobId="+encodeURIComponent(record.jobId)+"&token="+token);
+      if(res.status===403){clearInterval(bgPollTimer);bgPollTimer=null;setBgStatus("⚠ Job còn tồn tại nhưng token theo dõi trên iPhone không hợp lệ. Có thể cần mở backup/job cũ để đồng bộ thủ công.",true);return;}
+      if(!res.ok)return;
+      const data=await res.json();
+      if(data.status==="running"||data.status==="pending")setBgStatus("☁ Đang viết nền... "+(data.progress||data.status),true);
+      else if(data.status==="completed"){
+        clearInterval(bgPollTimer);bgPollTimer=null;setBgStatus("✓ Chương nền đã xong — đang hợp nhất an toàn...",true);
+        await mergeBackgroundChapter(data,record);
+        localStorage.removeItem(BG_JOB_KEY);setBgStatus("✓ Đã đồng bộ background v9.",true);setTimeout(()=>setBgStatus("",false),9000);
+      }else if(data.status==="failed"){
+        clearInterval(bgPollTimer);bgPollTimer=null;setBgStatus("⚠ Job lỗi: "+(data.error||"unknown"),true);localStorage.removeItem(BG_JOB_KEY);
       }
-    }catch(e){ /* im lặng, thử lại lần sau */ }
-  }, 12000); // poll mỗi 12 giây
+    }catch(e){}
+  };
+  poll(); bgPollTimer=setInterval(poll,12000);
 }
 
-async function mergeBackgroundChapter(statusData){
-  if(!statusData) return;
-
-  // Ưu tiên dùng toàn bộ storyState đã được server cập nhật đầy đủ
-  if(statusData.storyState && Array.isArray(statusData.storyState.chapters)){
-    const incoming = statusData.storyState;
-
-    // Giữ lại các setting global (API key, model...) của local
-    const keep = {};
-    GLOBAL_KEYS.forEach(k => keep[k] = state[k]);
-
-    // Ghi đè các phần story bằng bản server đã cập nhật
-    Object.assign(state, keep, {
-      chapters: incoming.chapters || state.chapters,
-      characters: incoming.characters || state.characters,
-      locations: incoming.locations || state.locations,
-      items: incoming.items || state.items,
-      threads: incoming.threads || state.threads,
-      scenes: incoming.scenes || state.scenes,
-      currentStatus: incoming.currentStatus || state.currentStatus,
-      currentChapterIndex: (incoming.chapters ? incoming.chapters.length - 1 : state.currentChapterIndex),
-      chaptersSinceBackup: (incoming.chaptersSinceBackup != null ? incoming.chaptersSinceBackup : state.chaptersSinceBackup),
-      lastStatusChapter: incoming.lastStatusChapter || state.lastStatusChapter
-    });
-
-    persist();
-    renderAll();
-    const lastCh = state.chapters[state.chapters.length - 1];
-    setStatus("☁ Đã đồng bộ đầy đủ từ server: " + (lastCh ? lastCh.title : "") + " (" + (lastCh ? lastCh.wordCount : 0) + " từ) + Character/Status/Scene", false);
-    return;
+function mergeArrayByIdOrName(localArr,incomingArr,nameKey="name"){
+  const out=Array.isArray(localArr)?localArr.slice():[];
+  (incomingArr||[]).forEach(item=>{
+    const idx=out.findIndex(x=>(item.id&&x.id===item.id)||(item[nameKey]&&normalizeName(x[nameKey])===normalizeName(item[nameKey])));
+    if(idx<0)out.push(item);else out[idx]=Object.assign({},out[idx],item);
+  });
+  return out;
+}
+async function mergeBackgroundChapter(statusData,record){
+  if(!statusData)return;
+  const incoming=statusData.storyState;
+  if(!incoming||!Array.isArray(incoming.chapters))return;
+  const base=Number(statusData.baseChapterCount!=null?statusData.baseChapterCount:(record&&record.baseChapterCount)||0);
+  const localCount=state.chapters.length;
+  const serverNew=incoming.chapters.slice(Math.min(base,incoming.chapters.length));
+  if(localCount>base){
+    // Local đã có thêm chương sau khi job bắt đầu: tuyệt đối KHÔNG ghi đè toàn bộ state.
+    const known=new Set(state.chapters.map(c=>String(c.title||"")+"|"+(c.wordCount||0)));
+    serverNew.forEach(ch=>{const k=String(ch.title||"")+"|"+(ch.wordCount||0);if(!known.has(k)){state.chapters.push(ch);known.add(k);}});
+    setStatus("✓ Background hoàn tất. Đã hợp nhất chương mới mà không ghi đè các chương local.",false);
+  }else{
+    state.chapters=incoming.chapters;
+    state.currentChapterIndex=state.chapters.length-1;
   }
-
-  // Fallback cũ (chỉ có resultChapter)
-  if(!statusData.resultChapter) return;
-  const ch = statusData.resultChapter;
-  const already = state.chapters.some(c => c.createdBy === "background" && c.title === ch.title && c.wordCount === ch.wordCount);
-  if(already) return;
-
-  state.chapters.push(ch);
-  state.currentChapterIndex = state.chapters.length - 1;
-  state.chaptersSinceBackup = (state.chaptersSinceBackup || 0) + 1;
-  persist();
-  renderAll();
-  setStatus("☁ Đã nhận chương mới từ server: " + (ch.title || "") + " (" + (ch.wordCount||0) + " từ)", false);
+  state.characters=mergeArrayByIdOrName(state.characters,incoming.characters||[]);
+  state.locations=mergeArrayByIdOrName(state.locations,incoming.locations||[]);
+  state.items=mergeArrayByIdOrName(state.items,incoming.items||[]);
+  state.threads=mergeArrayByIdOrName(state.threads,incoming.threads||[],"desc");
+  state.scenes=mergeArrayByIdOrName(state.scenes,incoming.scenes||[],"description");
+  if(incoming.currentStatus)state.currentStatus=incoming.currentStatus;
+  if(incoming.statusState)state.statusState=incoming.statusState;
+  state.lastStatusChapter=incoming.lastStatusChapter||state.lastStatusChapter;
+  state.chaptersSinceBackup=incoming.chaptersSinceBackup!=null?incoming.chaptersSinceBackup:state.chaptersSinceBackup;
+  state.lastMemorySyncChapter=incoming.lastMemorySyncChapter||state.lastMemorySyncChapter||0;
+  persist();renderAll();
+  const last=state.chapters[state.chapters.length-1];
+  setStatus("☁ Đã đồng bộ: "+(last?last.title:"")+" ("+(last?last.wordCount:0)+" từ). NV/World/Status/Scene đã hợp nhất.",false);
 }
-
 function checkPendingBackgroundJob(){
-  const jobId = localStorage.getItem(BG_JOB_KEY);
-  if(!jobId) return;
-  setBgStatus("☁ Phát hiện job đang chạy / chờ đồng bộ...", true);
-  pollBackgroundJob(jobId);
+  const record=normalizeBgRecord(localStorage.getItem(BG_JOB_KEY));
+  if(!record)return;
+  setBgStatus("☁ Phát hiện job nền đang chờ đồng bộ...",true);pollBackgroundJob(record);
 }
 
 // Gắn sự kiện
@@ -5276,12 +5287,12 @@ if(location.protocol === "file:"){
 }
 /* Thông báo v7 lần đầu */
 try{
-  const v7Flag = "aiStoryWorkshop_v8_notified";
+  const v7Flag = "aiStoryWorkshop_v9_notified";
   if(!localStorage.getItem(v7Flag)){
     localStorage.setItem(v7Flag, "1");
     setTimeout(()=>{
       if(state.chapters.length > 0){
-        setStatus("🎉 Nâng cấp v8 — Scene Tracker, Vocabulary, Pacing Guard, đã gỡ Voiceover.", false);
+        setStatus("🎉 Nâng cấp v9 — Memory Engine, JSON Recovery, Background Safe, Continuity Guard.", false);
       }
     }, 1500);
   }

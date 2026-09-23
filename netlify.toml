@@ -6,9 +6,12 @@
   node_bundler = "esbuild"
   directory = "netlify/functions"
 
+# Background Functions vẫn được Netlify nhận diện theo hậu tố -background.
+# Không cần cấu hình timeout trong file này; giới hạn thực tế phụ thuộc gói Netlify.
+
 [[headers]]
   for = "/*"
   [headers.values]
     Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Methods = "GET, POST, OPTIONS"
-    Access-Control-Allow-Headers = "Content-Type, Authorization"
+    Access-Control-Allow-Headers = "Content-Type, Authorization, X-Worker-Token"
