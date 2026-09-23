@@ -447,6 +447,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
         </div>
         <div class="char-list" id="charList"><div class="empty-note">Chưa có.</div></div>
         <button class="btn btn-ghost" id="charGraphBtn" style="margin-top:6px;">🕸️ Sơ đồ quan hệ nhân vật</button>
+        <button class="btn btn-ghost" id="autoTierBtn" style="margin-top:6px;">⚙️ Tự động xếp hạng tất cả NV</button>
         <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
           <input type="text" id="npcNameInput" placeholder="Tên" style="margin-bottom:6px;">
           <textarea id="npcDescInput" rows="2" placeholder="Ngoại hình" style="margin-bottom:6px;"></textarea>
@@ -456,7 +457,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
           </div>
           <div class="row2" style="margin-bottom:6px;">
             <input type="text" id="npcPositionInput" placeholder="Vị trí">
-            <select id="npcTierInput">
+            <select id="npcTierInput" title="Chỉ là xếp hạng ban đầu — dùng nút '⚙️ Tự động xếp hạng' bên dưới để AI tự tính lại sau này">
               <option value="minor">Minor</option>
               <option value="supporting" selected>Supporting</option>
               <option value="important">Important</option>
@@ -464,6 +465,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
               <option value="background">Background</option>
             </select>
           </div>
+          <div class="hint" style="margin-top:-2px;margin-bottom:6px;">Tier chỉ là gợi ý ban đầu (ảnh hưởng NV nào được AI "nhớ" khi viết chương) — không cần đoán chuẩn ngay, dùng nút ⚙️ bên dưới để tự tính lại sau vài chương.</div>
         </div>
         <button class="btn btn-ghost" id="npcAddBtn">＋ Thêm NV</button>
         <button class="btn btn-purple" id="npcUpdateBtn">👤 Quét toàn truyện</button>
@@ -2993,6 +2995,37 @@ function openRelationshipGraph(){
   overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
 }
 $ID("charGraphBtn").addEventListener("click", openRelationshipGraph);
+
+/* ========== TỰ ĐỘNG XẾP HẠNG TIER ========== */
+function autoAssignTiers(){
+  let changed = 0, skippedLocked = 0;
+  state.characters.forEach(c=>{
+    if(c.locked){ skippedLocked++; return; } // tôn trọng NV đã khóa tier thủ công
+    const histCount = Array.isArray(c.history) ? c.history.length : 0;
+    const spanCount = (c.firstAppearance!=null && c.lastAppearance!=null) ? (c.lastAppearance - c.firstAppearance + 1) : 0;
+    const appearances = Math.max(histCount, spanCount);
+    let score = appearances * 2;
+    score += (Array.isArray(c.relationships) ? c.relationships.length : 0) * 1.5;
+    if(c.goals) score += 1;
+    if(c.secret) score += 1;
+    if(c.weakness || c.fear) score += 0.5;
+    if(c.attractionToMC || c.tensionWithMC) score += 1.5;
+    if(c.dead) score *= 0.6; // vẫn giữ trọng số cũ nhưng giảm bớt vì không còn hoạt động
+    let newTier;
+    if(score >= 12) newTier = "major";
+    else if(score >= 7) newTier = "important";
+    else if(score >= 3) newTier = "supporting";
+    else if(score >= 1) newTier = "minor";
+    else newTier = "background";
+    if(c.tier !== newTier){ c.tier = newTier; changed++; }
+  });
+  persist(); renderCharacters();
+  setStatus("⚙️ Đã tự động xếp hạng: " + changed + " NV đổi tier" + (skippedLocked ? " (bỏ qua " + skippedLocked + " NV đã khóa 🔒)" : "") + ".", false);
+}
+$ID("autoTierBtn").addEventListener("click", ()=>{
+  if(!state.characters.length){ setStatus("Chưa có nhân vật nào.", false); return; }
+  autoAssignTiers();
+});
 
 $ID("npcAddBtn").addEventListener("click", ()=>{
   const name = $ID("npcNameInput").value.trim();
