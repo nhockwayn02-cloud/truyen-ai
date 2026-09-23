@@ -446,6 +446,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
           <div class="stat"><b id="statDead">0</b>Chết</div>
         </div>
         <div class="char-list" id="charList"><div class="empty-note">Chưa có.</div></div>
+        <button class="btn btn-ghost" id="charGraphBtn" style="margin-top:6px;">🕸️ Sơ đồ quan hệ nhân vật</button>
         <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
           <input type="text" id="npcNameInput" placeholder="Tên" style="margin-bottom:6px;">
           <textarea id="npcDescInput" rows="2" placeholder="Ngoại hình" style="margin-bottom:6px;"></textarea>
@@ -1028,6 +1029,8 @@ const openCharDetails = new Set();
 function newCharacter(partial){
   return Object.assign({
     id: genId(), name:"", tier:"supporting", age:"", gender:"",
+    /* Phân loại vai trò & mức liên quan tới truyện/nhân vật chính */
+    role:"", relevanceToMC:"",
     /* Miêu tả ngoại hình chi tiết */
     appearance:"", height:"", bodyType:"", hair:"", eyes:"", skin:"",
     voice:"", scent:"", style:"", scars:"", tattoos:"",
@@ -2766,6 +2769,10 @@ function relationshipRowHtml(charIdx, relIdx, rel){
     + '</div>';
 }
 function charDetailHtml(c, idx){
+  const classifyFields = [
+    ["role","Vai trò với truyện (vd: đồng minh, phản diện phụ, nạn nhân...)"],
+    ["relevanceToMC","Mức độ liên quan tới nhân vật chính"]
+  ];
   const fields = [
     ["age","Tuổi"], ["gender","Giới tính"], ["occupation","Nghề"], ["position","Vị trí"],
     ["faction","Phe"], ["currentLocation","Đang ở"], ["schedule","Lịch trình"],
@@ -2790,7 +2797,11 @@ function charDetailHtml(c, idx){
     ["tensionWithMC","Căng thẳng dục vọng với NV chính"],
     ["consentNotes","Ghi chú consent"]
   ];
-  let html = '<div class="hint" style="color:var(--purple);margin-top:4px;">🎨 Miêu tả chi tiết</div>';
+  let html = '<div class="hint" style="color:var(--purple);margin-top:4px;">🏷 Phân loại vai trò</div>';
+  html += classifyFields.map(([f,label])=>
+    '<input type="text" data-char-field="'+f+'" data-char="'+idx+'" value="'+escapeHtml(c[f]||"")+'" placeholder="'+label+'" style="width:100%;margin-bottom:4px;">'
+  ).join("");
+  html += '<div class="hint" style="color:var(--purple);margin-top:4px;">🎨 Miêu tả chi tiết</div>';
   html += '<div class="row2">' + fields.map(([f,label])=>
     '<input type="text" data-char-field="'+f+'" data-char="'+idx+'" value="'+escapeHtml(c[f]||"")+'" placeholder="'+label+'">'
   ).join("") + '</div>';
@@ -2828,6 +2839,7 @@ function renderCharacters(){
           + (stale ? '<span class="lock-badge" style="color:var(--ink-dim);">💤</span>' : '')
           + '<span class="tier-badge tier-'+c.tier+'">'+c.tier+'</span>'
         + '</span></div>'
+      + (c.role ? '<div class="hint" style="margin-top:3px;color:var(--purple);">🏷 '+escapeHtml(c.role)+'</div>' : '')
       + (c.personality ? '<div class="hint" style="margin-top:3px;">'+escapeHtml(c.personality)+'</div>' : '')
       + '<div class="char-detail' + (isOpen?' open':'') + '" id="charDetail'+idx+'">'
         + '<div class="toggle-row"><span>🔒 Khóa</span><label class="switch"><input type="checkbox" data-char-lock="'+idx+'" '+(c.locked?'checked':'')+'><span class="slider-tg"></span></label></div>'
@@ -2896,6 +2908,92 @@ function saveCharacterFromDom(idx){
   persist(); renderCharacters();
   setStatus("Đã lưu nhân vật.", false);
 }
+
+/* ========== SƠ ĐỒ QUAN HỆ NHÂN VẬT (SVG) ========== */
+function buildRelationshipGraphSVG(){
+  const mcName = (state.mainCharProfile && state.mainCharProfile.name) ? state.mainCharProfile.name : "Nhân vật chính";
+  const chars = (state.characters || []).filter(c=>c.name);
+  // Node đầu tiên luôn là nhân vật chính, rồi tới các NV theo tier (major trước)
+  const tierOrder = {major:0, important:1, supporting:2, minor:3, background:4};
+  const sorted = chars.slice().sort((a,b)=>(tierOrder[a.tier]??5)-(tierOrder[b.tier]??5));
+  const nodes = [{name: mcName, isMC:true, tier:"major", dead:false}].concat(
+    sorted.map(c=>({name:c.name, isMC:false, tier:c.tier||"supporting", dead:!!c.dead}))
+  );
+  if(nodes.length < 2){
+    return '<div class="empty-note">Cần ít nhất 1 nhân vật để vẽ sơ đồ.</div>';
+  }
+  const W = 520, H = 520, cx = W/2, cy = H/2, R = Math.min(W,H)/2 - 70;
+  const pos = {};
+  nodes.forEach((n,i)=>{
+    if(i===0){ pos[n.name] = {x:cx, y:cy}; return; }
+    const ang = (2*Math.PI*(i-1))/Math.max(1,(nodes.length-1)) - Math.PI/2;
+    pos[n.name] = { x: cx + R*Math.cos(ang), y: cy + R*Math.sin(ang) };
+  });
+  const tierColor = {major:"#e2584d", important:"#e0a83f", supporting:"#5b8cf0", minor:"#7a8599", background:"#4a5265"};
+  // Cạnh: quan hệ với NVC (relationshipWithMain đã lưu vào c.relationships với withName chứa "nhan vat chinh"),
+  // và quan hệ giữa các NV phụ với nhau (c.relationships[].withName khớp tên NV khác đang có trong danh sách).
+  const edges = [];
+  const nameSet = new Set(nodes.map(n=>n.name));
+  const seenPair = new Set();
+  chars.forEach(c=>{
+    (c.relationships||[]).forEach(r=>{
+      if(!r.withName) return;
+      let targetName = r.withName;
+      if(normalizeName(r.withName).includes("nhan vat chinh")) targetName = mcName;
+      if(!nameSet.has(targetName) || targetName === c.name) return;
+      const pairKey = [c.name, targetName].sort().join("~~");
+      if(seenPair.has(pairKey)) return; // tránh vẽ 2 lần nếu cả 2 phía đều ghi quan hệ
+      seenPair.add(pairKey);
+      const label = r.stage || r.notes || r.trust || "";
+      edges.push({ from: c.name, to: targetName, label: (label||"").slice(0,26) });
+    });
+  });
+  const esc = (s)=>escapeHtml(String(s||""));
+  let svg = '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;max-height:70vh;background:#0d0f14;border-radius:10px;">';
+  svg += '<defs><marker id="rgArrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#666"/></marker></defs>';
+  edges.forEach(e=>{
+    const a = pos[e.from], b = pos[e.to];
+    if(!a||!b) return;
+    const mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
+    svg += '<line x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'" stroke="#555" stroke-width="1.5" marker-end="url(#rgArrow)"/>';
+    if(e.label) svg += '<text x="'+mx+'" y="'+my+'" fill="#9aa4b8" font-size="9" text-anchor="middle" style="paint-order:stroke;stroke:#0d0f14;stroke-width:3px;">'+esc(e.label)+'</text>';
+  });
+  nodes.forEach(n=>{
+    const p = pos[n.name];
+    const color = n.isMC ? "#c9a24b" : (tierColor[n.tier] || "#5b8cf0");
+    const rNode = n.isMC ? 30 : 24;
+    svg += '<circle cx="'+p.x+'" cy="'+p.y+'" r="'+rNode+'" fill="'+color+'" opacity="'+(n.dead?0.35:0.92)+'" stroke="#0d0f14" stroke-width="2"/>';
+    const label = n.name.length > 10 ? n.name.slice(0,9)+"…" : n.name;
+    svg += '<text x="'+p.x+'" y="'+(p.y+rNode+13)+'" fill="#e8ecf4" font-size="11" text-anchor="middle" font-weight="'+(n.isMC?"700":"400")+'">'+esc(label)+(n.dead?" 💀":"")+'</text>';
+  });
+  svg += '</svg>';
+  const legend = '<div class="hint" style="margin-top:8px;">'
+    + '<span style="color:#c9a24b;">● NV chính</span> &nbsp; '
+    + '<span style="color:#e2584d;">● Major</span> &nbsp; '
+    + '<span style="color:#e0a83f;">● Important</span> &nbsp; '
+    + '<span style="color:#5b8cf0;">● Supporting</span> &nbsp; '
+    + '<span style="color:#7a8599;">● Minor/Background</span>'
+    + '</div>'
+    + (edges.length ? '' : '<div class="hint" style="margin-top:6px;">⚠ Chưa có quan hệ nào được ghi nhận giữa các nhân vật — hãy bấm "🔄 Rescan" hoặc chạy quét NV sau khi viết thêm chương.</div>');
+  return svg + legend;
+}
+function openRelationshipGraph(){
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const box = document.createElement("div");
+  box.className = "modal-box";
+  box.style.maxWidth = "600px";
+  box.innerHTML = '<div class="modal-close" id="rgClose">×</div>'
+    + '<h3 class="modal-title">🕸️ Sơ đồ quan hệ nhân vật</h3>'
+    + '<div class="hint" style="margin-bottom:8px;">Đường nối = có quan hệ được ghi nhận trong hồ sơ. Nhãn là giai đoạn/ghi chú quan hệ mới nhất.</div>'
+    + buildRelationshipGraphSVG();
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  box.querySelector("#rgClose").onclick = ()=>overlay.remove();
+  overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
+}
+$ID("charGraphBtn").addEventListener("click", openRelationshipGraph);
+
 $ID("npcAddBtn").addEventListener("click", ()=>{
   const name = $ID("npcNameInput").value.trim();
   if(!name){ setStatus("Nhập tên.", false); return; }
@@ -3144,9 +3242,12 @@ function characterSummaryForPrompt(list){
     const parts = [c.name || "?"];
     if(c.dead) parts.push("[ĐÃ CHẾT]");
     if(c.tier) parts.push("["+c.tier+"]");
+    if(c.role) parts.push("vai trò:"+cut(c.role, 50));
+    if(c.relevanceToMC) parts.push("liên quan NVC:"+cut(c.relevanceToMC, 60));
     if(c.age) parts.push("tuổi:"+c.age);
     if(c.gender) parts.push(c.gender);
     if(c.occupation) parts.push("nghề:"+cut(c.occupation, 40));
+    if(c.faction) parts.push("phe:"+cut(c.faction, 40));
     /* Ngoại hình / số đo — ƯU TIÊN (để cảnh 18+ bám hồ sơ) */
     if(c.height) parts.push("cao:"+cut(c.height, 30));
     if(c.bodyType) parts.push("dáng:"+cut(c.bodyType, 40));
@@ -3160,11 +3261,22 @@ function characterSummaryForPrompt(list){
     if(c.preferences) parts.push("kink:"+cut(c.preferences, 80));
     if(c.boundaries) parts.push("ranh:"+cut(c.boundaries, 60));
     if(c.personality) parts.push("tính:"+cut(c.personality, 70));
+    if(c.goals) parts.push("mục tiêu:"+cut(c.goals, 60));
+    if(c.secret) parts.push("bí mật:"+cut(c.secret, 60));
+    if(c.weakness) parts.push("điểm yếu:"+cut(c.weakness, 40));
+    if(c.fear) parts.push("sợ:"+cut(c.fear, 40));
+    if(c.knowledge) parts.push("biết:"+cut(c.knowledge, 60));
     if(c.currentLocation) parts.push("ở:"+cut(c.currentLocation, 40));
     if(c.mentalState) parts.push("tâm:"+cut(c.mentalState, 50));
     if(c.physicalState) parts.push("thể:"+cut(c.physicalState, 50));
     if(c.attractionToMC) parts.push("cảmMC:"+cut(c.attractionToMC, 40));
     if(c.tensionWithMC) parts.push("căngMC:"+cut(c.tensionWithMC, 40));
+    if(Array.isArray(c.relationships) && c.relationships.length){
+      const relTxt = c.relationships.filter(r=>r.withName).slice(0,4).map(r=>
+        r.withName + (r.stage ? "("+cut(r.stage,20)+")" : "") + (r.notes ? ":"+cut(r.notes,40) : "")
+      ).join("; ");
+      if(relTxt) parts.push("quan hệ:"+relTxt);
+    }
     if(c.notes) parts.push("note:"+cut(c.notes, 50));
     if(c.lastAppearance != null) parts.push("ch"+c.lastAppearance);
     return "- " + parts.join(" | ");
@@ -3189,7 +3301,7 @@ function mergeCharacterUpdate(update, chapterNumber){
   }
   const lockedFields = c.locked ? CHARACTER_CORE_LOCK_FIELDS : [];
   Object.keys(update).forEach(key=>{
-    if(["name","isNew","relationshipWithMain","chapterEvent","isDead"].includes(key)) return;
+    if(["name","isNew","relationshipWithMain","relationships","chapterEvent","isDead"].includes(key)) return;
     if(lockedFields.includes(key)) return;
     if(update[key] !== "" && update[key] != null) c[key] = update[key];
   });
@@ -3200,9 +3312,49 @@ function mergeCharacterUpdate(update, chapterNumber){
     if(!rel){ rel = newRelationship({withName:"Nhân vật chính"}); c.relationships.push(rel); }
     Object.assign(rel, update.relationshipWithMain);
   }
+  // Quan hệ với các nhân vật KHÁC (không chỉ nhân vật chính) — cập nhật theo
+  // sự kiện, không reset về trạng thái cũ nếu chương này không nói ngược lại.
+  if(Array.isArray(update.relationships)){
+    update.relationships.forEach(ru=>{
+      if(!ru || !ru.withName) return;
+      let rel = c.relationships.find(r=>normalizeName(r.withName)===normalizeName(ru.withName));
+      if(!rel){ rel = newRelationship({withName: ru.withName}); c.relationships.push(rel); }
+      Object.keys(ru).forEach(k=>{ if(k!=="withName" && ru[k]!=="" && ru[k]!=null) rel[k]=ru[k]; });
+    });
+  }
   if(update.chapterEvent) c.history.push({chapter: chapterNumber, event: update.chapterEvent});
   return { name: c.name, isNewChar };
 }
+// Định dạng JSON mà AI phải trả về khi cập nhật nhân vật — bao gồm phân loại
+// vai trò, mức liên quan tới nhân vật chính, mục tiêu, quan hệ với các NV
+// khác, kiến thức. Theo nguyên tắc: KHÔNG bịa, KHÔNG xóa thông tin cũ nếu
+// chương này không nhắc/mâu thuẫn, chỉ update trường có bằng chứng rõ trong chương.
+const CHAR_JSON_FORMAT_HINT = [
+  'Trả về DUY NHẤT một mảng JSON (không markdown, không lời dẫn), mỗi phần tử là 1 nhân vật CÓ XUẤT HIỆN hoặc ĐƯỢC NHẮC TỚI có ý nghĩa trong chương này:',
+  '[{',
+  '  "name": "",',
+  '  "isNew": false,',
+  '  "tier": "background|minor|supporting|important|major",',
+  '  "role": "vai trò/phân loại của NV này đối với truyện (vd: đồng minh, phản diện phụ, nạn nhân, người cung cấp thông tin, trung lập...)",',
+  '  "relevanceToMC": "mức độ + cách liên quan tới nhân vật chính (vd: liên quan trực tiếp đến vụ X, chỉ quen biết xã giao, đối thủ trong công việc...)",',
+  '  "appearance": "", "personality": "", "occupation": "", "faction": "",',
+  '  "goals": "mục tiêu hiện tại của NV (không phải mục tiêu của NVC)",',
+  '  "secret": "bí mật NV đang giữ (nếu có, chỉ ghi nếu chương có gợi ý rõ)",',
+  '  "weakness": "", "fear": "",',
+  '  "currentLocation": "", "physicalState": "", "mentalState": "",',
+  '  "knowledge": "những gì NV này BIẾT/NGHI NGỜ tính đến hết chương này — chỉ ghi điều họ thực sự đã chứng kiến/được kể/suy luận hợp lý, KHÔNG được gán kiến thức của người đọc cho nhân vật",',
+  '  "chapterEvent": "1 câu ngắn mô tả sự kiện quan trọng nhất liên quan tới NV này trong chương (để lưu vào lịch sử)",',
+  '  "relationshipWithMain": {"trust":"","affection":"","tension":"","stage":"","notes":""},',
+  '  "relationships": [{"withName": "tên NV khác", "stage": "", "trust": "", "notes": "diễn biến quan hệ MỚI trong chương này, không lặp lại thông tin cũ"}],',
+  '  "isDead": false',
+  '}]',
+  '',
+  'QUY TẮC BẮT BUỘC:',
+  '- Nếu một trường không có thông tin MỚI/thay đổi thật sự trong chương này → để trống ("") hoặc bỏ qua trường đó, ĐỪNG bịa hay đoán để điền cho đủ.',
+  '- Không được suy đoán cảm xúc/kiến thức/bí mật nếu chương không có bằng chứng — thà bỏ trống còn hơn đoán sai.',
+  '- "relationships" chỉ liệt kê quan hệ CÓ diễn biến/xuất hiện trong chương này, không cần liệt kê lại toàn bộ mạng lưới quan hệ cũ.',
+  '- NV chỉ thoáng qua vẫn nên ghi nhận (tier: background/minor) để không bỏ sót, nhưng đừng bịa thêm chi tiết cho họ nếu chương không nói gì.'
+].join('\n');
 async function updateCharactersIncremental(text, chapterNumber, silent){
   if(!text) return { ok:false, reason:"empty" };
   const mcName = (state.mainCharProfile && state.mainCharProfile.name) ? state.mainCharProfile.name : "";
