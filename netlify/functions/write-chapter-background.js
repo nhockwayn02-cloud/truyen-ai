@@ -1,71 +1,94 @@
 const { getStore, connectLambda } = require("@netlify/blobs");
+const crypto = require("crypto");
 
-/**
- * Background Function – nhận job trực tiếp từ frontend, viết 1 chương + cập nhật đầy đủ.
- * Netlify trả 202 ngay, function chạy tối đa ~15 phút.
+/*
+ * Xưởng Truyện AI v9 — Background Worker
+ *
+ * Mục tiêu của bản này:
+ * - Không mất toàn bộ NV khi JSON array bị cắt.
+ * - Không để Status rỗng ghi đè Status cũ.
+ * - Tách cập nhật NV/Thế giới thành nhiều lô nhỏ thay vì 1 JSON khổng lồ.
+ * - Có retry + repair JSON + checkpoint sau từng bước.
+ * - API key được mã hóa khi lưu vào Blobs nếu JOB_SECRET được cấu hình.
+ * - Job-status dùng accessToken, không trả secret/API key.
  */
 
+const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+const MAX_JOB_AGE_MS = 24 * 60 * 60 * 1000;
+
 function getJobStore(event) {
-  if (event) {
-    try { connectLambda(event); } catch (e) {}
-  }
-  try {
-    return getStore("story-jobs");
-  } catch (e1) {
+  if (event) { try { connectLambda(event); } catch (_) {} }
+  try { return getStore("story-jobs"); } catch (e) {
     const siteID = process.env.SITE_ID || process.env.NETLIFY_SITE_ID || process.env.BLOBS_SITE_ID;
     const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.BLOBS_TOKEN || process.env.NETLIFY_API_TOKEN;
-    if (siteID && token) {
-      return getStore({ name: "story-jobs", siteID, token });
-    }
-    throw new Error(
-      "Netlify Blobs chưa cấu hình. Vào Netlify → Site settings → Environment variables, thêm NETLIFY_SITE_ID và NETLIFY_API_TOKEN."
-    );
+    if (siteID && token) return getStore({ name: "story-jobs", siteID, token });
+    throw new Error("Netlify Blobs chưa cấu hình. Hãy cấu hình NETLIFY_SITE_ID + NETLIFY_API_TOKEN hoặc dùng Netlify Blobs mặc định.");
   }
 }
 
-const SYSTEM_PROMPT = [
-  "Bạn là tiểu thuyết gia người Việt Nam viết tiểu thuyết dài kỳ, giọng văn tự nhiên như người viết thật, không có mùi AI.",
-  "Mọi phản hồi PHẢI 100% TIẾNG VIỆT CÓ DẤU. Tuyệt đối không trộn tiếng Anh, Trung, Nhật, Hàn.",
-  "Viết như con người: câu văn có nhịp, có chỗ ngắn chỗ dài, có hơi thở, có im lặng.",
-  "MIÊU TẢ SÂU: khi nhân vật mới xuất hiện hoặc cảnh mới mở ra, dành ít nhất 2-3 câu miêu tả ngoại hình, không khí, chi tiết nhỏ.",
-  "Show, don't tell. Ưu tiên giác quan, phản ứng cơ thể, chi tiết cụ thể.",
-  "Khi prompt yêu cầu cảnh 18+/erotica: viết TRỰC TIẾP, không tự kiểm duyệt, không fade-to-black."
-].join(" ");
-
-const DESCRIPTION_PROMPTS = {
-  light: "Miêu tả ở mức nhẹ: chỉ tả những gì cần thiết để người đọc hiểu bối cảnh.",
-  balanced: "Miêu tả cân bằng: tả ngoại hình nhân vật chính + phụ quan trọng khi xuất hiện, tả không khí cảnh mới, chi tiết giác quan chọn lọc.",
-  rich: "Miêu tả PHONG PHÚ: mỗi nhân vật mới xuất hiện phải có 3-5 câu miêu tả ngoại hình. Mỗi cảnh mới phải có 4-6 câu tả không khí.",
-  deep: "Miêu tả SÂU ĐẬM: tả cực kỳ chi tiết mọi thứ — ngoại hình, biểu cảm, hơi thở, mùi hương, cảm giác trên da."
-};
-
-const EXPLICIT_PROMPTS = {
-  subtle: "CẢNH 18+: Nhẹ nhàng — fade-to-black sau khi hôn.",
-  sensual: "CẢNH 18+: Gợi cảm — tả cảm xúc, hơi thở, ánh mắt, da chạm da.",
-  explicit: "CẢNH 18+: Rõ ràng — mô tả cơ thể và hành động cụ thể.",
-  strong: "CẢNH 18+: MẠNH — mô tả chi tiết cơ thể, cảm giác, nội tâm, âm thanh.",
-  wild: "CẢNH 18+: CỰC MẠNH — từ thô tục được phép, đủ 4 lớp (cơ thể + cảm giác + nội tâm + âm thanh)."
-};
-
-function countWords(text) {
-  return (text || "").trim().split(/\s+/).filter(Boolean).length;
+function jsonResponse(statusCode, obj) {
+  return {
+    statusCode,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Worker-Token",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(obj)
+  };
 }
-function genId() {
-  return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+function genId(prefix = "x") {
+  return prefix + Date.now().toString(36) + crypto.randomBytes(5).toString("hex");
 }
+function genSecret() { return crypto.randomBytes(32).toString("base64url"); }
+function hashSecret(value) { return crypto.createHash("sha256").update(String(value || "")).digest("hex"); }
+function secretsEqual(a, b) { return crypto.timingSafeEqual(Buffer.from(a || ""), Buffer.from(b || "")); }
+
+function encryptionKey() {
+  const secret = process.env.JOB_SECRET || process.env.NETLIFY_JOB_SECRET || process.env.NETLIFY_API_TOKEN || "";
+  if (!secret) return null;
+  return crypto.createHash("sha256").update(secret).digest();
+}
+function encryptText(text) {
+  const key = encryptionKey();
+  if (!key) return { encrypted: false, value: text };
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const enc = Buffer.concat([cipher.update(String(text), "utf8"), cipher.final()]);
+  return { encrypted: true, value: `${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${enc.toString("base64url")}` };
+}
+function decryptText(record) {
+  if (!record) return "";
+  if (!record.encrypted) return record.value || "";
+  const key = encryptionKey();
+  if (!key) throw new Error("JOB_SECRET đã được dùng để mã hóa API key nhưng runtime hiện tại không có JOB_SECRET.");
+  const [ivS, tagS, dataS] = String(record.value || "").split(".");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivS, "base64url"));
+  decipher.setAuthTag(Buffer.from(tagS, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(dataS, "base64url")), decipher.final()]).toString("utf8");
+}
+
+function countWords(text) { return (text || "").trim().split(/\s+/).filter(Boolean).length; }
 function normalizeName(s) {
-  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
 }
-function safeJsonParse(raw) {
-  if (!raw) return null;
-  let cleaned = String(raw).replace(/```json/gi, "```").replace(/```/g, "").trim();
-  for (let i = 0; i < cleaned.length; i++) {
-    const ch = cleaned[i];
-    if (ch !== "[" && ch !== "{") continue;
-    const open = ch, close = ch === "[" ? "]" : "}";
+function stripFences(raw) {
+  return String(raw || "").replace(/```json/gi, "```").replace(/```/g, "").trim();
+}
+
+/* JSON parser chống lỗi: lấy object/array cân bằng trước, sau đó thử JSON.parse. */
+function extractBalanced(raw, preferred) {
+  const s = stripFences(raw);
+  const starts = preferred ? [preferred] : ["[", "{"];
+  for (const open of starts) {
+    const start = s.indexOf(open);
+    if (start < 0) continue;
+    const close = open === "[" ? "]" : "}";
     let depth = 0, inStr = false, esc = false;
-    for (let j = i; j < cleaned.length; j++) {
-      const c = cleaned[j];
+    for (let i = start; i < s.length; i++) {
+      const c = s[i];
       if (inStr) {
         if (esc) esc = false;
         else if (c === "\\") esc = true;
@@ -77,31 +100,28 @@ function safeJsonParse(raw) {
       else if (c === close) {
         depth--;
         if (depth === 0) {
-          try { return JSON.parse(cleaned.slice(i, j + 1)); } catch (e) {}
+          try { return JSON.parse(s.slice(start, i + 1)); } catch (_) { return null; }
         }
       }
     }
   }
-  try { return JSON.parse(cleaned); } catch (e) { return null; }
+  try { return JSON.parse(s); } catch (_) { return null; }
 }
 
-// Khi model bị cắt giữa chừng (hết maxTokens) trước khi đóng dấu "]" của mảng,
-// safeJsonParse() phía trên trả về null và TOÀN BỘ cập nhật bị mất — kể cả những
-// nhân vật đã được model viết xong đầy đủ ở phần đầu response. Hàm này "cứu"
-// lại các object {...} đã hoàn chỉnh, chỉ bỏ đúng phần tử cuối bị cắt dở.
+/* Khi array bị cắt giữa chừng, cứu TẤT CẢ object hoàn chỉnh, không chỉ object đầu tiên. */
 function repairTruncatedArray(raw) {
-  if (!raw) return null;
-  let cleaned = String(raw).replace(/```json/gi, "```").replace(/```/g, "").trim();
-  const start = cleaned.indexOf("[");
-  if (start === -1) return null;
-  const objs = [];
+  const s = stripFences(raw);
+  const start = s.indexOf("[");
+  if (start < 0) return [];
+  const out = [];
   let i = start + 1;
-  while (i < cleaned.length) {
-    while (i < cleaned.length && /[\s,]/.test(cleaned[i])) i++;
-    if (cleaned[i] !== "{") break;
-    let depth = 0, inStr = false, esc = false, j = i;
-    for (; j < cleaned.length; j++) {
-      const c = cleaned[j];
+  while (i < s.length) {
+    while (i < s.length && /[\s,]/.test(s[i])) i++;
+    if (s[i] !== "{") break;
+    const objStart = i;
+    let depth = 0, inStr = false, esc = false;
+    for (; i < s.length; i++) {
+      const c = s[i];
       if (inStr) {
         if (esc) esc = false;
         else if (c === "\\") esc = true;
@@ -110,685 +130,525 @@ function repairTruncatedArray(raw) {
       }
       if (c === '"') { inStr = true; continue; }
       if (c === "{") depth++;
-      else if (c === "}") { depth--; if (depth === 0) { j++; break; } }
+      else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          const rawObj = s.slice(objStart, i + 1);
+          try { out.push(JSON.parse(rawObj)); } catch (_) {}
+          i++;
+          break;
+        }
+      }
     }
-    if (depth !== 0) break; // object bị cắt dở giữa chừng — dừng, không cố parse rác
-    try { objs.push(JSON.parse(cleaned.slice(i, j))); } catch (e) {}
-    i = j;
+    if (depth !== 0) break;
   }
-  return objs.length ? objs : null;
+  return out;
+}
+
+function parseArray(raw) {
+  const parsed = extractBalanced(raw, "[");
+  if (Array.isArray(parsed)) return { items: parsed, repaired: false };
+  const repaired = repairTruncatedArray(raw);
+  return { items: repaired, repaired: repaired.length > 0 };
+}
+function parseObject(raw) {
+  const parsed = extractBalanced(raw, "{");
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+}
+
+function chunkText(text, maxChars = 14000, overlap = 900) {
+  const s = String(text || "");
+  if (s.length <= maxChars) return [s];
+  const chunks = [];
+  let start = 0;
+  while (start < s.length) {
+    let end = Math.min(s.length, start + maxChars);
+    if (end < s.length) {
+      const cut = s.lastIndexOf("\n", end);
+      if (cut > start + maxChars * 0.65) end = cut;
+    }
+    chunks.push(s.slice(start, end));
+    if (end >= s.length) break;
+    start = Math.max(0, end - overlap);
+  }
+  return chunks;
+}
+function representativeText(text, maxChars = 42000) {
+  const s = String(text || "");
+  if (s.length <= maxChars) return s;
+  const part = Math.floor(maxChars / 3);
+  return s.slice(0, part) + "\n\n[...ĐOẠN GIỮA... ]\n\n" + s.slice(Math.floor((s.length - part) / 2), Math.floor((s.length + part) / 2)) + "\n\n[...ĐOẠN CUỐI... ]\n\n" + s.slice(-part);
+}
+
+const SYSTEM_PROMPT = [
+  "Bạn là tiểu thuyết gia Việt Nam viết tiểu thuyết dài kỳ.",
+  "Phản hồi văn xuôi phải 100% tiếng Việt có dấu; dữ liệu JSON cũng dùng tiếng Việt ở giá trị chuỗi.",
+  "Giữ tính liên tục tuyệt đối: không tự ý hồi sinh người chết, đổi thân phận, đổi địa điểm, đổi cảnh giới hoặc cho nhân vật biết điều họ chưa thể biết.",
+  "Ưu tiên chi tiết cụ thể, hành động, giác quan, nguyên nhân và hệ quả."
+].join(" ");
+
+const DESCRIPTION_PROMPTS = {
+  light: "Miêu tả nhẹ, tập trung diễn biến.",
+  balanced: "Miêu tả cân bằng, có giác quan và chi tiết vừa đủ.",
+  rich: "Miêu tả phong phú, chú ý ngoại hình và không khí cảnh.",
+  deep: "Miêu tả sâu, giàu giác quan nhưng không lặp."
+};
+const EXPLICIT_PROMPTS = {
+  subtle: "Cảnh trưởng thành ở mức nhẹ.",
+  sensual: "Cảnh trưởng thành thiên về cảm xúc và cảm giác.",
+  explicit: "Cảnh trưởng thành rõ ràng theo yêu cầu của truyện.",
+  strong: "Cảnh trưởng thành chi tiết theo thiết lập người dùng.",
+  wild: "Cảnh trưởng thành ở mức rất mạnh theo thiết lập người dùng."
+};
+
+async function callOpenRouter({ endpoint, apiKey, model, messages, maxTokens = 4000, temperature = 0.3 }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 170000);
+  try {
+    const res = await fetch(endpoint || DEFAULT_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": process.env.URL || "https://xuong-truyen-ai.netlify.app",
+        "X-Title": "Xuong Truyen AI v9"
+      },
+      body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature, frequency_penalty: 0.35, presence_penalty: 0.25 }),
+      signal: controller.signal
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      const e = new Error(`API ${res.status}: ${err.slice(0, 500)}`);
+      e.status = res.status;
+      throw e;
+    }
+    const data = await res.json();
+    const choice = data.choices?.[0];
+    return { text: choice?.message?.content || choice?.text || "", finishReason: choice?.finish_reason || null };
+  } finally { clearTimeout(timer); }
+}
+
+async function callWithRetry(args, tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return await callOpenRouter(args); }
+    catch (e) {
+      last = e;
+      if (![408, 425, 429, 500, 502, 503, 504, 524].includes(e.status) && i > 0) break;
+      await new Promise(r => setTimeout(r, Math.min(8000, 900 * Math.pow(2, i))));
+    }
+  }
+  throw last || new Error("API thất bại");
 }
 
 function buildContext(state) {
-  const parts = [];
-  if (state.mainPlot) parts.push("CỐT TRUYỆN CHÍNH:\n" + state.mainPlot);
-  if (state.genre) parts.push("Thể loại: " + state.genre);
-  if (state.worldSetting) parts.push("Thế giới:\n" + state.worldSetting);
-  if (state.worldRules) parts.push("Quy tắc thế giới:\n" + state.worldRules);
-  if (state.worldDescription) parts.push("Miêu tả không khí:\n" + state.worldDescription);
-  if (state.pronounRules) parts.push("QUY TẮC XƯNG HÔ (BẮT BUỘC):\n" + state.pronounRules);
-  if (state.currentStatus) parts.push("CURRENT STATUS:\n" + state.currentStatus);
-  if (state.directive) parts.push("MỆNH LỆNH CHƯƠNG TỚI:\n" + state.directive);
-  if (state.advancedRules) parts.push("QUY TẮC NÂNG CAO:\n" + state.advancedRules);
-  const mc = state.mainCharProfile;
-  if (mc && mc.name) {
-    parts.push("NHÂN VẬT CHÍNH: " + mc.name +
-      (mc.appearance ? "\nNgoại hình: " + mc.appearance : "") +
-      (mc.personality ? "\nTính cách: " + mc.personality : "") +
-      (mc.speech ? "\nCách nói: " + mc.speech : ""));
+  const p = [];
+  if (state.mainPlot) p.push("CỐT TRUYỆN:\n" + state.mainPlot);
+  if (state.genre) p.push("THỂ LOẠI: " + state.genre);
+  if (state.worldSetting) p.push("THẾ GIỚI:\n" + state.worldSetting);
+  if (state.worldRules) p.push("LUẬT THẾ GIỚI:\n" + state.worldRules);
+  if (state.worldDescription) p.push("KHÔNG KHÍ:\n" + state.worldDescription);
+  if (state.pronounRules) p.push("XƯNG HÔ:\n" + state.pronounRules);
+  if (state.currentStatus) p.push("CURRENT STATUS:\n" + state.currentStatus);
+  if (state.directive) p.push("MỆNH LỆNH:\n" + state.directive);
+  if (state.advancedRules) p.push("QUY TẮC:\n" + state.advancedRules);
+  if (state.mainCharProfile?.name) p.push("NVC:\n" + JSON.stringify(state.mainCharProfile));
+  const chars = (state.characters || []).filter(c => !c.dead).slice(0, 18);
+  if (chars.length) {
+    p.push("NHÂN VẬT QUAN TRỌNG:\n" + chars.map(c => `- ${c.name} [${c.tier || "supporting"}] | vai trò:${c.role || ""} | ở:${c.currentLocation || "?"} | thể:${c.physicalState || ""} | tâm:${c.mentalState || ""} | biết:${c.knowledge || ""}`).join("\n"));
   }
-  if (Array.isArray(state.characters) && state.characters.length) {
-    const important = state.characters
-      .filter(c => ["major", "important", "supporting"].includes(c.tier) && !c.dead)
-      .slice(0, 10);
-    if (important.length) {
-      parts.push("NHÂN VẬT QUAN TRỌNG:\n" + important.map(c => {
-        const bits = [`- ${c.name} (${c.tier})`];
-        if (c.role) bits.push(`vai trò: ${c.role}`);
-        if (c.relevanceToMC) bits.push(`liên quan NVC: ${c.relevanceToMC}`);
-        bits.push(`ngoại hình: ${c.appearance || ""}`);
-        bits.push(`tính cách: ${c.personality || ""}`);
-        if (c.goals) bits.push(`mục tiêu: ${c.goals}`);
-        if (c.secret) bits.push(`bí mật: ${c.secret}`);
-        if (c.weakness) bits.push(`điểm yếu: ${c.weakness}`);
-        if (c.fear) bits.push(`sợ: ${c.fear}`);
-        if (c.knowledge) bits.push(`đang biết: ${c.knowledge}`);
-        bits.push(`vị trí: ${c.currentLocation || "?"}`);
-        if (c.mentalState) bits.push(`tâm lý: ${c.mentalState}`);
-        if (c.physicalState) bits.push(`thể chất: ${c.physicalState}`);
-        if (Array.isArray(c.relationships) && c.relationships.length) {
-          const rels = c.relationships.filter(r => r.withName).slice(0, 3)
-            .map(r => `${r.withName}${r.stage ? "(" + r.stage + ")" : ""}${r.notes ? ": " + r.notes : ""}`)
-            .join("; ");
-          if (rels) bits.push(`quan hệ: ${rels}`);
-        }
-        return bits.join(" | ");
-      }).join("\n"));
-    }
+  if (Array.isArray(state.threads) && state.threads.length) {
+    p.push("PLOT THREADS ĐANG MỞ:\n" + state.threads.filter(t => !["paid_off","abandoned","completed"].includes(t.status)).slice(0, 20).map(t => `- ${t.type}: ${t.desc} [${t.status}]`).join("\n"));
   }
-  const sb = state.styleBible || {};
-  if (sb.tone || sb.sample) {
-    parts.push("STYLE: " + (sb.tone || "") + (sb.sample ? "\nMẫu: " + sb.sample.slice(0, 400) : ""));
+  if (Array.isArray(state.foreshadowing) && state.foreshadowing.length) {
+    p.push("伏イ / FORESHADOWING CHƯA GIẢI:\n" + state.foreshadowing.filter(f => !["paid_off","abandoned","resolved"].includes(f.status)).slice(-20).map(f => `- ${f.description} [${f.status}] từ ch${f.plantedChapter || "?"}`).join("\n"));
   }
-  return parts.join("\n\n");
+  if (Array.isArray(state.timeline) && state.timeline.length) {
+    p.push("TIMELINE GẦN ĐÂY:\n" + state.timeline.slice(-12).map(e => `- Ch${e.chapter}: ${e.summary}`).join("\n"));
+  }
+  return p.join("\n\n");
 }
-
-function buildRecentContext(chapters) {
-  if (!chapters || !chapters.length) return "Đây là chương đầu tiên.";
+function recentContext(chapters) {
+  if (!chapters.length) return "Đây là chương đầu tiên.";
   const last = chapters[chapters.length - 1];
-  const ending = (last.text || "").slice(-1400);
-  let older = "";
-  if (chapters.length >= 2) {
-    const prev = chapters[chapters.length - 2];
-    older = `Chương trước nữa (${prev.title || ""}): ${(prev.summary || prev.text || "").slice(0, 700)}\n\n`;
-  }
-  return older + `===== ĐOẠN KẾT CHƯƠNG GẦN NHẤT (PHẢI TIẾP NỐI) =====\n${ending}\n===== HẾT =====`;
-}
-
-async function callOpenRouter({ endpoint, apiKey, model, messages, maxTokens = 12000, temperature = 0.95 }) {
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-      "HTTP-Referer": "https://xuong-truyen-ai.netlify.app",
-      "X-Title": "Xuong Truyen AI Background"
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: maxTokens,
-      temperature,
-      frequency_penalty: 0.4,
-      presence_penalty: 0.3
-    })
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`API ${res.status}: ${errText.slice(0, 400)}`);
-  }
-  const data = await res.json();
-  return {
-    text: data.choices?.[0]?.message?.content || "",
-    finishReason: data.choices?.[0]?.finish_reason || null
-  };
+  const prev = chapters.length > 1 ? chapters[chapters.length - 2] : null;
+  return `${prev ? `CHƯƠNG TRƯỚC NỮA:\n${(prev.summary || prev.text || "").slice(0, 900)}\n\n` : ""}ĐOẠN CUỐI CHƯƠNG GẦN NHẤT:\n${(last.text || "").slice(-5000)}`;
 }
 
 async function generateOneChapter(job) {
   const state = job.storyState;
-  const chapters = state.chapters || [];
+  const chapters = Array.isArray(state.chapters) ? state.chapters : [];
   const chapterNumber = chapters.length + 1;
-  const context = buildContext(state);
-  const recent = buildRecentContext(chapters);
-  const descLevel = state.descriptionLevel || "balanced";
-  const explicitLevel = state.explicitLevel || "strong";
-  const minWords = Math.min(Math.max(state.minChapterWords || 5000, 500), 8000);
-
-  let useModel = job.model;
-  let isNsfw = false;
-  if (job.forceNsfw || (state.mature && state.nsfwMode !== "never")) {
-    const directive = (state.directive || "").toLowerCase();
-    const hotKeywords = ["cảnh nóng", "sex", "18+", "làm tình", "âu yếm", "quan hệ", "nóng", "erotic", "nsfw"];
-    if (job.forceNsfw || hotKeywords.some(k => directive.includes(k))) {
-      useModel = job.modelNsfw || job.model;
-      isNsfw = true;
-    }
-  }
-
+  const minWords = Math.min(Math.max(Number(state.minChapterWords) || 5000, 500), 9000);
+  const directive = String(state.directive || "").toLowerCase();
+  const hot = ["cảnh nóng", "18+", "sex", "nsfw", "erotic", "quan hệ"].some(k => directive.includes(k));
+  const isNsfw = !!job.forceNsfw || (state.mature && state.nsfwMode !== "never" && hot);
+  const model = isNsfw ? (job.modelNsfw || job.model) : job.model;
   const prompt = [
-    "BẮT BUỘC NGÔN NGỮ: 100% TIẾNG VIỆT CÓ DẤU.",
-    "GIỌNG VĂN: Tự nhiên như người viết thật.",
-    "",
-    `Bạn đang viết CHƯƠNG THỨ ${chapterNumber}. Truyện đã có ${chapters.length} chương.`,
-    "",
-    "🎨 " + (DESCRIPTION_PROMPTS[descLevel] || DESCRIPTION_PROMPTS.balanced),
-    "",
-    "QUY TẮC MIÊU TẢ CỤ THỂ (BẮT BUỘC, áp dụng mọi mức miêu tả):",
-    "- CẤM dùng tính từ mơ hồ một mình mà không có số đo/so sánh đi kèm, ví dụ KHÔNG viết trơ trọi 'to lớn', 'rất cao', 'xinh đẹp', 'căn phòng rộng', 'rất khỏe'.",
-    "- PHẢI cụ thể hóa bằng MỘT trong hai cách: (1) số đo/con số ước lượng (chiều cao, cân nặng, tuổi, khoảng cách, diện tích, thời gian...), hoặc (2) so sánh với vật/người/khoảng cách quen thuộc mà độc giả hình dung được ngay.",
-    "  Ví dụ ĐÚNG: 'cao chừng 1m85, hơn cô nửa cái đầu', 'bắp tay to gần bằng bắp chân người thường', 'căn phòng rộng khoảng 20 mét vuông, kê vừa hai chiếc giường đôi', 'gã to con như một cánh cửa tủ vừa bước ra khỏi khung'.",
-    "  Ví dụ SAI (không được viết kiểu này): 'anh ta rất cao lớn', 'căn phòng khá rộng', 'cô ấy vô cùng xinh đẹp'.",
-    "- Áp dụng cho: chiều cao/vóc dáng, kích thước không gian/vật thể, khoảng cách, thời lượng, tuổi tác, sức mạnh — bất cứ chỗ nào đang mô tả độ lớn/nhỏ/xa/gần/lâu/mau.",
-    "",
-    "QUY TẮC KIẾN THỨC NHÂN VẬT (BẮT BUỘC): mỗi nhân vật (kể cả phụ) chỉ được suy nghĩ/hành động/nói dựa trên điều HỌ đã thực sự chứng kiến, được kể lại, hoặc tự suy luận hợp lý — xem mục 'đang biết' của từng nhân vật ở phần NHÂN VẬT QUAN TRỌNG bên dưới. TUYỆT ĐỐI không để nhân vật biết trước bí mật/sự kiện mà độc giả biết nhưng nhân vật đó chưa từng tiếp xúc.",
-    "",
-    "Bối cảnh:",
-    context || "(chưa có — tự sáng tạo hợp lý)",
-    "",
-    recent,
-    "",
-    `Viết chương TỐI THIỂU ${minWords} từ. Chia nhiều cảnh/đoạn.`,
-    "CHỐNG LẶP: Không lặp sự kiện, cấu trúc, cụm từ đã dùng.",
-    state.pronounRules ? ("\nQUY TẮC XƯNG HÔ:\n" + state.pronounRules) : "",
-    isNsfw ? ("\nMỨC 18+: " + (EXPLICIT_PROMPTS[explicitLevel] || EXPLICIT_PROMPTS.strong)) : "",
-    "",
-    "QUY TẮC TIÊU ĐỀ: Chỉ TÊN CHƯƠNG tiếng Việt, KHÔNG chữ 'Chương', KHÔNG số.",
-    "",
-    "Định dạng:",
-    "TIÊU ĐỀ: <tên chương>",
-    "NỘI DUNG:",
-    "<toàn bộ chương>"
-  ].filter(Boolean).join("\n");
+    `VIẾT CHƯƠNG ${chapterNumber}. Truyện đã có ${chapters.length} chương.`,
+    `Tối thiểu ${minWords} từ. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`,
+    "Không mở đầu bằng tiêu đề, không giải thích ngoài truyện.",
+    "Không lặp lại đoạn kết chương trước; phải tiếp nối nguyên nhân và hệ quả.",
+    buildContext(state), recentContext(chapters),
+    isNsfw ? ("MỨC TRƯỞNG THÀNH: " + (EXPLICIT_PROMPTS[state.explicitLevel] || "")) : "",
+    "Định dạng cuối: TIÊU ĐỀ: <tên>\nNỘI DUNG:\n<văn xuôi>"
+  ].filter(Boolean).join("\n\n");
 
-  let { text: rawText, finishReason } = await callOpenRouter({
-    endpoint: job.apiEndpoint,
-    apiKey: job.apiKey,
-    model: useModel,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: prompt }
-    ],
-    maxTokens: 16000,
-    temperature: isNsfw ? 1.0 : 0.95
-  });
-
-  const titleMatch = rawText.match(/TIÊU ĐỀ:\s*(.+)/i);
-  const bodyMatch = rawText.match(/NỘI DUNG:\s*([\s\S]*)/i);
-  let title = titleMatch ? titleMatch[1].trim() : "";
-  title = title
-    .replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, "")
-    .replace(/^chương\s*\d+\s*[:\-–—.]\s*/i, "")
-    .replace(/^\d+\s*[:\-–—.]\s*/, "")
-    .trim();
-  if (!title) title = "Không có tiêu đề";
-
-  let text = bodyMatch ? bodyMatch[1].trim() : rawText.trim();
-  let wordCount = countWords(text);
-  let truncated = finishReason === "length";
-
-  // Auto-continue LẶP LẠI cho tới khi đủ từ (tối đa 4 lần viết-tiếp,
-  // để tránh chạy vô hạn/tốn phí nếu model cứ viết ngắn hoài).
-  // Viết tiếp NGAY CẢ KHI bị cắt do hết token (truncated=true) —
-  // đó chính là lúc cần viết tiếp nhất, không phải lúc để bỏ qua.
+  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 16000, temperature: isNsfw ? 1 : 0.95 });
+  const titleMatch = result.text.match(/TIÊU ĐỀ\s*:\s*(.+)/i);
+  const bodyMatch = result.text.match(/NỘI DUNG\s*:\s*([\s\S]*)/i);
+  const title = (titleMatch?.[1] || "Chương mới").replace(/^chương\s*\d+\s*[:\-–—.]*/i, "").trim() || "Chương mới";
+  let text = (bodyMatch?.[1] || result.text).trim();
+  let truncated = result.finishReason === "length";
   const issues = [];
-  const MAX_CONTINUE_ATTEMPTS = 4;
-  let attempt = 0;
-  while (wordCount < minWords * 0.85 && attempt < MAX_CONTINUE_ATTEMPTS) {
-    attempt++;
-    const remaining = minWords - wordCount;
-    const tail = text.slice(-1800);
-    const contPrompt = [
-      "BẮT BUỘC: 100% TIẾNG VIỆT CÓ DẤU.",
-      `VIẾT TIẾP chương ${chapterNumber} (không mở chương mới, không lặp lại nội dung cũ). Hiện ${wordCount} từ, cần tối thiểu ${minWords} từ (còn thiếu khoảng ${remaining} từ).`,
-      "",
-      "===== ĐOẠN CUỐI (PHẢI TIẾP NỐI) =====",
-      tail,
-      "===== HẾT =====",
-      "",
-      `Viết tiếp ít nhất ${Math.min(Math.max(remaining, 1200), 2500)} từ. Bắt đầu ngay từ câu tiếp theo, không tóm tắt, không kết thúc chương vội nếu chưa đủ từ.`,
-      "Miêu tả phải CỤ THỂ, có số đo hoặc so sánh (không viết 'to lớn', 'rất đẹp' trơ trọi — phải như 'cao chừng 1m8', 'to gần bằng...').",
-      isNsfw ? ("MỨC 18+: " + (EXPLICIT_PROMPTS[explicitLevel] || "")) : ""
-    ].join("\n");
+  let attempts = 0;
 
+  while (countWords(text) < minWords * 0.9 && attempts < 4) {
+    attempts++;
+    const current = countWords(text);
+    const tail = text.slice(-5000);
+    const need = Math.max(1200, minWords - current);
     try {
-      const contRes = await callOpenRouter({
-        endpoint: job.apiEndpoint,
-        apiKey: job.apiKey,
-        model: useModel,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: contPrompt }
-        ],
-        maxTokens: 8000,
-        temperature: 0.95
-      });
-      if (contRes.text && contRes.text.length > 100) {
-        text = text.replace(/\s+$/, "") + "\n\n" + contRes.text.trim();
-        const newWordCount = countWords(text);
-        truncated = contRes.finishReason === "length";
-        if (newWordCount <= wordCount + 30) {
-          // Model gần như không thêm được từ nào mới — dừng lặp để tránh vòng vô ích
-          issues.push(`Lần viết-tiếp #${attempt} không thêm được nội dung mới, dừng lại`);
-          wordCount = newWordCount;
-          break;
-        }
-        wordCount = newWordCount;
-      } else {
-        issues.push(`Viết-tiếp lần #${attempt} trả về rỗng/quá ngắn`);
-        break;
+      const cont = await callWithRetry({
+        endpoint: job.apiEndpoint, apiKey: job.apiKey, model,
+        messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: [
+          `Viết TIẾP chương ${chapterNumber}. Hiện ${current} từ, cần thêm khoảng ${need} từ.`,
+          "Bắt đầu ngay sau câu cuối. Không tóm tắt, không mở chương mới, không lặp.",
+          "ĐOẠN CUỐI:", tail,
+          "Chỉ trả văn xuôi tiếp theo."
+        ].join("\n\n") }],
+        maxTokens: 9000, temperature: isNsfw ? 1 : 0.95
+      }, 2);
+      if (!cont.text || cont.text.trim().length < 50) { issues.push(`Viết tiếp #${attempts} quá ngắn`); break; }
+      text = text.replace(/\s+$/, "") + "\n\n" + cont.text.trim();
+      truncated = cont.finishReason === "length";
+    } catch (e) { issues.push(`Viết tiếp #${attempts}: ${e.message}`); break; }
+  }
+  const wordCount = countWords(text);
+  if (wordCount < minWords * 0.9) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
+  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v9", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
+}
+
+async function generateSummary(job, chapter, n) {
+  try {
+    const body = representativeText(chapter.text, 30000);
+    const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: `Tóm tắt CHƯƠNG ${n} bằng 5-8 câu tiếng Việt. Bắt buộc bao quát đầu, giữa, cuối; nhân vật; thay đổi trạng thái; quan hệ; vật phẩm/địa điểm; hệ quả và việc chưa giải quyết.\n\n${body}` }], maxTokens: 1000, temperature: 0.25 }, 2);
+    return (r.text || "").trim();
+  } catch (_) { return ""; }
+}
+
+function compactCharacterList(state) {
+  return (state.characters || []).slice(0, 80).map(c => `- ${c.name} [${c.tier || "supporting"}]${c.dead ? " [ĐÃ CHẾT]" : ""}`).join("\n") || "(chưa có)";
+}
+
+function mergeTextField(oldValue, newValue, max = 1400) {
+  const a = String(oldValue || "").trim(), b = String(newValue || "").trim();
+  if (!b) return a;
+  if (!a) return b.slice(0, max);
+  if (normalizeName(a) === normalizeName(b) || normalizeName(a).includes(normalizeName(b))) return a;
+  if (normalizeName(b).includes(normalizeName(a))) return b.slice(0, max);
+  const merged = a + "; " + b;
+  return merged.slice(0, max);
+}
+
+function mergeCharacter(state, u, chapterNumber) {
+  if (!u?.name) return { created: false, updated: false };
+  const name = String(u.name).trim();
+  if (!name) return { created: false, updated: false };
+  let c = (state.characters || []).find(x => normalizeName(x.name) === normalizeName(name));
+  let created = false;
+  if (!c) {
+    c = {
+      id: genId("c"), name, tier: u.tier || "supporting", role: u.role || "", relevanceToMC: u.relevanceToMC || "",
+      appearance: u.appearance || "", personality: u.personality || "", occupation: u.occupation || "", faction: u.faction || "",
+      goals: u.goals || "", secret: u.secret || "", weakness: u.weakness || "", fear: u.fear || "", knowledge: u.knowledge || "",
+      currentLocation: u.currentLocation || "", physicalState: u.physicalState || "", mentalState: u.mentalState || "", independentPlot: "",
+      relationships: [], firstAppearance: chapterNumber, lastAppearance: chapterNumber, locked: false, dead: !!u.isDead,
+      deathChapter: u.isDead ? chapterNumber : null, history: []
+    };
+    state.characters.push(c); created = true;
+  } else {
+    ["appearance","personality","goals","secret","weakness","fear","knowledge"].forEach(k => { if (u[k]) c[k] = mergeTextField(c[k], u[k]); });
+    ["role","relevanceToMC","occupation","faction"].forEach(k => { if (u[k]) c[k] = u[k]; });
+    ["currentLocation","physicalState","mentalState"].forEach(k => { if (u[k]) c[k] = u[k]; });
+    if (u.tier && !c.locked) c.tier = u.tier;
+    if (u.isDead === true && !c.dead) { c.dead = true; c.deathChapter = chapterNumber; }
+    c.lastAppearance = chapterNumber;
+  }
+  if (!Array.isArray(c.relationships)) c.relationships = [];
+  (u.relationships || []).forEach(r => {
+    if (!r?.withName) return;
+    let rel = c.relationships.find(x => normalizeName(x.withName) === normalizeName(r.withName));
+    if (!rel) { rel = { withName: r.withName, stage: "", trust: "", notes: "", history: [] }; c.relationships.push(rel); }
+    ["stage","trust","notes"].forEach(k => { if (r[k]) rel[k] = r[k]; });
+    if (r.notes) { if (!Array.isArray(rel.history)) rel.history = []; rel.history.push({ chapter: chapterNumber, change: r.notes }); }
+  });
+  if (u.chapterEvent) { if (!Array.isArray(c.history)) c.history = []; c.history.push({ chapter: chapterNumber, event: u.chapterEvent }); }
+  return { created, updated: true };
+}
+
+async function updateCharacters(job, chapter, n, state) {
+  const chunks = chunkText(chapter.text, 12000, 800);
+  let totalNew = 0, totalUpdated = 0, repaired = 0, failed = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const prompt = [
+      `CẬP NHẬT NHÂN VẬT — CHƯƠNG ${n}, PHẦN ${i + 1}/${chunks.length}.`,
+      "Chỉ liệt kê nhân vật thực sự xuất hiện hoặc được nhắc tới có ý nghĩa trong PHẦN này. Không bịa.",
+      "Mỗi object phải ngắn; không lặp hồ sơ cũ dài dòng. Chỉ trả về JSON array.",
+      "Danh sách tên đã biết:", compactCharacterList(state),
+      "NỘI DUNG PHẦN:", chunks[i],
+      'JSON: [{"name":"","tier":"background|minor|supporting|important|major","role":"","relevanceToMC":"","appearance":"","personality":"","occupation":"","faction":"","goals":"","secret":"","weakness":"","fear":"","knowledge":"","currentLocation":"","physicalState":"","mentalState":"","chapterEvent":"","relationships":[{"withName":"","stage":"","trust":"","notes":""}],"isDead":false}]'
+    ].join("\n\n");
+    try {
+      const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "system", content: "Bạn là bộ máy trích xuất dữ liệu nhân vật. Không được viết văn xuôi." }, { role: "user", content: prompt }], maxTokens: 3200, temperature: 0.15 }, 2);
+      const parsed = parseArray(r.text);
+      if (!parsed.items.length) {
+        failed++;
+        continue;
       }
-    } catch (e) {
-      console.warn("Auto-continue failed:", e.message);
-      issues.push(`Viết-tiếp lần #${attempt} lỗi API: ` + (e.message || "").slice(0, 120));
-      break;
+      if (parsed.repaired) repaired++;
+      parsed.items.forEach(u => { const x = mergeCharacter(state, u, n); if (x.created) totalNew++; else if (x.updated) totalUpdated++; });
+    } catch (_) { failed++; }
+  }
+  return { ok: failed < chunks.length, chunks: chunks.length, nNew: totalNew, nUpdated: totalUpdated, repaired, failed };
+}
+
+function findThread(state, t) {
+  const key = normalizeName(t.matchExistingDesc || t.desc).slice(0, 50);
+  if (!key) return null;
+  return (state.threads || []).find(x => normalizeName(x.desc).slice(0, 50) === key || normalizeName(x.desc).includes(key.slice(0, 28)) || key.includes(normalizeName(x.desc).slice(0, 28)));
+}
+function applyWorld(obj, n, state) {
+  if (!Array.isArray(state.locations)) state.locations = [];
+  if (!Array.isArray(state.items)) state.items = [];
+  if (!Array.isArray(state.threads)) state.threads = [];
+  (obj.locations || []).forEach(u => {
+    if (!u?.name) return;
+    let x = state.locations.find(a => normalizeName(a.name) === normalizeName(u.name));
+    if (!x) { x = { id: genId("l"), name: u.name, description: "", status: "active", firstAppearance: n, lastAppearance: n }; state.locations.push(x); }
+    if (u.description) x.description = mergeTextField(x.description, u.description, 1200);
+    if (u.status) x.status = u.status;
+    x.lastAppearance = n;
+  });
+  (obj.items || []).forEach(u => {
+    if (!u?.name) return;
+    let x = state.items.find(a => normalizeName(a.name) === normalizeName(u.name));
+    if (!x) { x = { id: genId("i"), name: u.name, description: "", owner: "", status: "active", firstAppearance: n, lastAppearance: n }; state.items.push(x); }
+    if (u.description) x.description = mergeTextField(x.description, u.description, 1000);
+    if (u.owner) x.owner = u.owner;
+    if (u.status) x.status = u.status;
+    x.lastAppearance = n;
+  });
+  (obj.threads || []).forEach(t => {
+    if (!t?.desc) return;
+    let x = findThread(state, t);
+    if (!x) state.threads.push({ id: genId("t"), type: t.type || "open_thread", status: t.status || "seeded", desc: t.desc, chapterIntroduced: n, lastUpdated: n, history: [] });
+    else { if (t.status) x.status = t.status; x.lastUpdated = n; if (!Array.isArray(x.history)) x.history = []; x.history.push({ chapter: n, status: t.status || x.status, note: t.desc }); }
+  });
+}
+async function updateWorld(job, chapter, n, state) {
+  const chunks = chunkText(chapter.text, 14000, 800);
+  let failed = 0, repaired = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const prompt = [
+      `CẬP NHẬT THẾ GIỚI — CHƯƠNG ${n}, PHẦN ${i + 1}/${chunks.length}.`,
+      "Chỉ trả địa điểm/vật phẩm/thread mới hoặc thay đổi rõ trong phần này. Không bịa.",
+      "Địa điểm hiện có: " + (state.locations || []).map(x => x.name).join(", "),
+      "Vật phẩm hiện có: " + (state.items || []).map(x => x.name).join(", "),
+      "Thread hiện có:\n" + (state.threads || []).slice(-30).map(x => `${x.type}: ${x.desc} [${x.status}]`).join("\n"),
+      "NỘI DUNG:", chunks[i],
+      'JSON: {"locations":[{"name":"","description":"","status":"active|destroyed|abandoned|locked"}],"items":[{"name":"","description":"","owner":"","status":"active|lost|destroyed|stored"}],"threads":[{"type":"open_thread|foreshadowing|consequence","desc":"","status":"seeded|developing|paid_off|abandoned","matchExistingDesc":""}]}'
+    ].join("\n\n");
+    try {
+      const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "system", content: "Bạn là bộ máy trích xuất world state. Chỉ trả JSON." }, { role: "user", content: prompt }], maxTokens: 2200, temperature: 0.15 }, 2);
+      const obj = parseObject(r.text);
+      if (!obj) { failed++; continue; }
+      applyWorld(obj, n, state);
+      if (r.finishReason === "length") repaired++;
+    } catch (_) { failed++; }
+  }
+  return { ok: failed < chunks.length, chunks: chunks.length, repaired, failed };
+}
+
+function formatStatus(obj, n) {
+  const lines = [`Current Status Update - Sau Chương ${n}`];
+  const map = [
+    ["Tình hình chung", obj.currentSituation], ["Nhân vật chính", obj.mainCharacter], ["Nhân vật liên quan", obj.characters],
+    ["Vị trí", obj.locations], ["Sức mạnh/cảnh giới", obj.power], ["Quan hệ", obj.relationships],
+    ["Bí mật/kiến thức", obj.knowledge], ["Vấn đề chưa giải quyết", obj.unresolved], ["Hệ quả tiếp theo", obj.nextHooks]
+  ];
+  map.forEach(([k, v]) => { if (v) lines.push(`- ${k}: ${v}`); });
+  return lines.join("\n");
+}
+async function updateCurrentStatus(job, chapter, n, state) {
+  const previous = state.currentStatus || "(chưa có)";
+  const source = ["STATUS CŨ:", previous, "", "TÓM TẮT CHƯƠNG:", chapter.summary || "", "", "ĐOẠN CUỐI:", chapter.text.slice(-9000)].join("\n");
+  try {
+    const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: [
+      `Cập nhật CURRENT STATUS sau chương ${n}. Chỉ thay đổi những gì chương chứng minh. Không xóa thông tin cũ chỉ vì không nhắc lại.`,
+      source,
+      'Trả DUY NHẤT JSON: {"currentSituation":"","mainCharacter":"","characters":"","locations":"","power":"","relationships":"","knowledge":"","unresolved":"","nextHooks":""}'
+    ].join("\n\n") }], maxTokens: 1800, temperature: 0.15 }, 2);
+    const obj = parseObject(r.text);
+    if (!obj) return { ok: false, reason: "status-parse" };
+    const merged = {
+      currentSituation: obj.currentSituation || "", mainCharacter: obj.mainCharacter || "", characters: obj.characters || "",
+      locations: obj.locations || "", power: obj.power || "", relationships: obj.relationships || "", knowledge: obj.knowledge || "",
+      unresolved: obj.unresolved || "", nextHooks: obj.nextHooks || ""
+    };
+    state.statusState = merged;
+    const formatted = formatStatus(merged, n);
+    if (formatted.split("\n").length >= 2) {
+      state.currentStatus = formatted;
+      state.lastStatusChapter = n;
     }
-  }
-
-  // Vẫn thiếu từ sau khi đã thử hết số lần cho phép — ghi lại để hiện cảnh báo trên UI
-  if (wordCount < minWords * 0.85) {
-    issues.push(`Chỉ đạt ${wordCount}/${minWords} từ mục tiêu sau ${attempt} lần viết-tiếp`);
-  }
-
-  return {
-    title,
-    text,
-    wordCount,
-    truncated,
-    plan: "",
-    continuityWarnings: [],
-    modelUsed: useModel,
-    isNsfw,
-    polished: false,
-    summary: "",
-    versions: [],
-    compressed: false,
-    createdBy: "background",
-    createdAt: Date.now(),
-    autoUpdateIssues: issues,
-    minWordsTarget: minWords
-  };
+    return { ok: true };
+  } catch (e) { return { ok: false, reason: e.message }; }
 }
 
-async function generateSummary(job, chapter, chapterNumber) {
+async function updateLongMemory(job, chapter, n, state) {
+  const source = [
+    "TÓM TẮT:", chapter.summary || "",
+    "ĐOẠN ĐẦU:", chapter.text.slice(0, 3500),
+    "ĐOẠN CUỐI:", chapter.text.slice(-7500),
+    "FORESHADOWING ĐANG MỞ:", (state.foreshadowing || []).filter(x => !["paid_off","abandoned","resolved"].includes(x.status)).slice(-20).map(x => `${x.description} [${x.status}]`).join("\n")
+  ].join("\n\n");
   try {
-    // Gửi TOÀN BỘ nội dung chương (không cắt) — cắt ở giữa/cuối sẽ làm tóm tắt
-    // bỏ sót sự kiện, khiến chương sau dựa vào tóm tắt thiếu mà viết lệch mạch.
-    // Chỉ cắt nếu quá dài bất thường (an toàn context, hiếm khi xảy ra).
-    let body = chapter.text;
-    if (body.length > 60000) body = body.slice(0, 30000) + "\n\n[...]\n\n" + body.slice(-25000);
-    const { text } = await callOpenRouter({
-      endpoint: job.apiEndpoint,
-      apiKey: job.apiKey,
-      model: job.model,
-      messages: [{
-        role: "user",
-        content: [
-          "Tóm tắt TOÀN BỘ chương sau (kể cả đoạn cuối) trong 4-6 câu (TIẾNG VIỆT).",
-          "Tập trung: sự kiện chính đầu-giữa-cuối chương, nhân vật xuất hiện (kể cả phụ), thay đổi quan hệ/trạng thái. Chỉ trả tóm tắt, không thêm lời dẫn.",
-          "",
-          "Chương " + chapterNumber + ":",
-          body
-        ].join("\n")
-      }],
-      maxTokens: 700,
-      temperature: 0.3
-    });
-    return (text || "").trim();
-  } catch (e) {
-    return "";
-  }
-}
-
-async function updateCharacters(job, chapter, chapterNumber, state) {
-  try {
-    const existing = (state.characters || []).map(c => {
-      const lines = [`- ${c.name} (tier: ${c.tier || "supporting"}${c.dead ? ", ĐÃ CHẾT" : ""})`];
-      if (c.role) lines.push(`  Vai trò với truyện: ${c.role}`);
-      if (c.relevanceToMC) lines.push(`  Liên quan tới nhân vật chính: ${c.relevanceToMC}`);
-      lines.push(`  Ngoại hình đã biết: ${c.appearance || "(chưa có)"}`);
-      lines.push(`  Tính cách đã biết: ${c.personality || "(chưa có)"}`);
-      if (c.goals) lines.push(`  Mục tiêu: ${c.goals}`);
-      if (c.secret) lines.push(`  Bí mật đang giữ: ${c.secret}`);
-      if (c.weakness) lines.push(`  Điểm yếu: ${c.weakness}`);
-      if (c.fear) lines.push(`  Nỗi sợ: ${c.fear}`);
-      if (c.knowledge) lines.push(`  Đang biết/nghi ngờ: ${c.knowledge}`);
-      lines.push(`  Vị trí/trạng thái trước đó: ${c.currentLocation || "(chưa rõ)"}${c.mentalState ? " | tâm lý: " + c.mentalState : ""}${c.physicalState ? " | thể chất: " + c.physicalState : ""}`);
-      if (Array.isArray(c.relationships) && c.relationships.length) {
-        lines.push("  Quan hệ đã biết: " + c.relationships.filter(r => r.withName).map(r =>
-          `${r.withName}${r.stage ? "(" + r.stage + ")" : ""}${r.notes ? ": " + r.notes : ""}`
-        ).join("; "));
-      }
-      return lines.join("\n");
-    }).join("\n") || "(chưa có nhân vật nào)";
-    // Gửi TOÀN BỘ chương (không cắt giữa) — cắt đoạn giữa từng làm mất đúng
-    // đoạn có phát triển nhân vật phụ, khiến cập nhật thiếu/sai giữa các chương.
-    let body = chapter.text;
-    if (body.length > 60000) body = body.slice(0, 30000) + "\n\n[...]\n\n" + body.slice(-25000);
-
-    const { text: raw } = await callOpenRouter({
-      endpoint: job.apiEndpoint,
-      apiKey: job.apiKey,
-      model: job.model,
-      messages: [{
-        role: "user",
-        content: [
-          "Bạn là người theo dõi hồ sơ nhân vật xuyên suốt truyện dài kỳ (kể cả nhân vật phụ). Đọc chương dưới đây và CẬP NHẬT hồ sơ.",
-          "",
-          "NHÂN VẬT ĐÃ CÓ HỒ SƠ TỪ TRƯỚC (dữ liệu NỀN, phải giữ lại, không được xóa/quên):",
-          existing,
-          "",
-          "CHƯƠNG " + chapterNumber + " (đọc kỹ cả đoạn đầu, giữa, cuối):",
-          body,
-          "",
-          "QUY TẮC BẮT BUỘC:",
-          "- 'appearance'/'personality' cho NV đã có hồ sơ: trả bản ĐẦY ĐỦ đã GỘP (giữ nguyên chi tiết cũ + nối thêm chi tiết mới). Không tự bịa, không rút gọn/xóa mất thông tin cũ nếu chương không mâu thuẫn. Nếu không có gì mới thì để y hệt giá trị cũ.",
-          "- 'role' (vai trò/phân loại của NV đối với mạch truyện, vd: đồng minh, phản diện phụ, nạn nhân, người cung cấp thông tin, trung lập, nhân vật nền) và 'relevanceToMC' (mức độ + cách liên quan tới nhân vật chính) — CHỈ cập nhật nếu chương này làm rõ hoặc thay đổi vai trò đó, nếu không thì giữ nguyên giá trị cũ hoặc để trống.",
-          "- 'goals', 'secret', 'weakness', 'fear': chỉ điền/sửa nếu chương có bằng chứng RÕ RÀNG. Không suy đoán để 'cho đủ trường'. Giữ nguyên giá trị cũ nếu không có gì mới.",
-          "- 'knowledge': liệt kê NGẮN GỌN những gì nhân vật này THỰC SỰ đã biết/nghi ngờ tính đến hết chương này (điều họ chứng kiến, được kể, suy luận hợp lý). TUYỆT ĐỐI không gán cho nhân vật thông tin mà chỉ độc giả biết còn nhân vật chưa từng tiếp xúc.",
-          "- 'currentLocation'/'physicalState'/'mentalState': LUÔN cập nhật theo trạng thái MỚI NHẤT cuối chương (trường tạm thời, được phép thay đổi hoàn toàn mỗi chương).",
-          "- 'relationships': CHỈ liệt kê những mối quan hệ (với NV khác, không phải nhân vật chính) có diễn biến/xuất hiện RÕ trong chương này — 'notes' ghi diễn biến MỚI, không lặp lại toàn bộ lịch sử quan hệ cũ. Quan hệ phải tiến triển theo sự kiện, không tự nhiên quay về trạng thái cũ nếu truyện không có lý do.",
-          "- 'chapterEvent': 1 câu ngắn nêu sự kiện quan trọng nhất của nhân vật này trong chương (để lưu vào lịch sử/dòng thời gian nhân vật).",
-          "- Liệt kê MỌI nhân vật thực sự xuất hiện/được nhắc tới có ý nghĩa trong chương, kể cả nhân vật phụ chỉ xuất hiện thoáng qua — đừng bỏ sót. Nhân vật phụ vẫn có mục tiêu/cuộc sống riêng, không chỉ tồn tại để phục vụ nhân vật chính.",
-          "",
-          'Trả DUY NHẤT JSON, không thêm lời dẫn: [{"name":"","tier":"supporting","role":"","relevanceToMC":"","appearance":"","personality":"","goals":"","secret":"","weakness":"","fear":"","knowledge":"","currentLocation":"","physicalState":"","mentalState":"","chapterEvent":"","relationships":[{"withName":"","stage":"","trust":"","notes":""}],"isDead":false}]'
-        ].join("\n")
-      }],
-      maxTokens: 6500,
-      temperature: 0.2
-    });
-
-    let arr = safeJsonParse(raw);
-    let wasRepaired = false;
-    if (!Array.isArray(arr)) { arr = repairTruncatedArray(raw); wasRepaired = Array.isArray(arr); }
-    if (!Array.isArray(arr)) return { ok: false, reason: "Không đọc được JSON trả về (có thể model trả sai định dạng)" };
-    if (!Array.isArray(state.characters)) state.characters = [];
-
-    arr.forEach(u => {
-      if (!u.name) return;
-      const n = normalizeName(u.name);
-      let char = state.characters.find(c => normalizeName(c.name) === n);
-      if (!char) {
-        char = {
-          id: genId(), name: u.name, tier: u.tier || "supporting",
-          role: u.role || "", relevanceToMC: u.relevanceToMC || "",
-          appearance: u.appearance || "", personality: u.personality || "",
-          goals: u.goals || "", secret: u.secret || "", weakness: u.weakness || "", fear: u.fear || "",
-          knowledge: u.knowledge || "",
-          currentLocation: u.currentLocation || "", physicalState: u.physicalState || "", mentalState: u.mentalState || "",
-          firstAppearance: chapterNumber, lastAppearance: chapterNumber,
-          locked: false, dead: !!u.isDead, deathChapter: u.isDead ? chapterNumber : null,
-          relationships: [], history: []
-        };
-        state.characters.push(char);
-      } else {
-        // Trường mô tả tích lũy: chỉ ghi đè nếu bản mới không NGẮN HƠN ĐÁNG KỂ bản cũ
-        // — phòng model lỡ trả bản rút gọn, tránh làm mất thông tin đã tích lũy.
-        ["appearance", "personality", "goals", "secret", "weakness", "fear", "knowledge"].forEach(f => {
-          if (u[f] && (!char[f] || u[f].length >= char[f].length * 0.8)) char[f] = u[f];
-        });
-        // Trường phân loại: chỉ cập nhật khi có giá trị mới, không xóa giá trị cũ bằng rỗng
-        if (u.role) char.role = u.role;
-        if (u.relevanceToMC) char.relevanceToMC = u.relevanceToMC;
-        // Trường trạng thái tạm thời: luôn theo giá trị mới nhất
-        if (u.currentLocation) char.currentLocation = u.currentLocation;
-        if (u.physicalState) char.physicalState = u.physicalState;
-        if (u.mentalState) char.mentalState = u.mentalState;
-        if (u.tier && (!char.tier || char.tier === "supporting")) char.tier = u.tier;
-        if (u.isDead && !char.dead) { char.dead = true; char.deathChapter = chapterNumber; }
-        char.lastAppearance = chapterNumber;
-      }
-
-      if (!Array.isArray(char.relationships)) char.relationships = [];
-      if (Array.isArray(u.relationships)) {
-        u.relationships.forEach(ru => {
-          if (!ru || !ru.withName) return;
-          let rel = char.relationships.find(r => normalizeName(r.withName) === normalizeName(ru.withName));
-          if (!rel) { rel = { withName: ru.withName, trust: "", stage: "", notes: "", history: [] }; char.relationships.push(rel); }
-          if (ru.stage) rel.stage = ru.stage;
-          if (ru.trust) rel.trust = ru.trust;
-          if (ru.notes) rel.notes = ru.notes;
-        });
-      }
-      if (!Array.isArray(char.history)) char.history = [];
-      if (u.chapterEvent) char.history.push({ chapter: chapterNumber, event: u.chapterEvent });
-    });
-    return wasRepaired
-      ? { ok: true, reason: `JSON bị cắt giữa chừng (hết token) — đã cứu được ${arr.length} NV, có thể sót vài NV cuối danh sách` }
-      : { ok: true };
-  } catch (e) {
-    return { ok: false, reason: "Lỗi gọi API: " + (e.message || "").slice(0, 150) };
-  }
-}
-
-async function updateWorld(job, chapter, chapterNumber, state) {
-  try {
-    // Không cắt giữa chương — lý do giống updateCharacters ở trên.
-    let body = chapter.text;
-    if (body.length > 60000) body = body.slice(0, 30000) + "\n\n[...]\n\n" + body.slice(-25000);
-    const { text: raw } = await callOpenRouter({
-      endpoint: job.apiEndpoint,
-      apiKey: job.apiKey,
-      model: job.model,
-      messages: [{
-        role: "user",
-        content: [
-          "Địa điểm: " + ((state.locations || []).map(l => l.name).join(", ") || "(chưa)"),
-          "Vật phẩm: " + ((state.items || []).map(i => i.name).join(", ") || "(chưa)"),
-          "",
-          "Chương " + chapterNumber + ":", body,
-          "",
-          'Trả JSON: {"locations":[{"name":"","description":"","status":"active"}],"items":[{"name":"","description":"","owner":"","status":"active"}],"threads":[{"type":"open_thread","desc":"","status":"seeded"}]}'
-        ].join("\n")
-      }],
-      maxTokens: 1500,
-      temperature: 0.25
-    });
-    const obj = safeJsonParse(raw);
+    const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: [
+      `CẬP NHẬT LONG-TERM MEMORY SAU CHƯƠNG ${n}.`,
+      "Chỉ ghi sự kiện có bằng chứng. Không bịa.",
+      source,
+      'Trả DUY NHẤT JSON: {"events":[{"type":"event|consequence|reveal|death|power_change","summary":"","causes":"","consequences":""}],"foreshadowing":[{"description":"","status":"seeded|developing|paid_off|abandoned","match":"","characters":""}],"knowledge":[{"character":"","fact":"","confidence":"direct|inferred|reported"}]}.'
+    ].join("\n\n") }], maxTokens: 2200, temperature: 0.15 }, 2);
+    const obj = parseObject(r.text);
     if (!obj) return { ok: false };
-    if (!Array.isArray(state.locations)) state.locations = [];
-    if (!Array.isArray(state.items)) state.items = [];
-    if (!Array.isArray(state.threads)) state.threads = [];
-
-    (obj.locations || []).forEach(u => {
-      if (!u.name) return;
-      let l = state.locations.find(x => normalizeName(x.name) === normalizeName(u.name));
-      if (!l) state.locations.push({ id: genId(), name: u.name, description: u.description || "", status: u.status || "active", firstAppearance: chapterNumber, lastAppearance: chapterNumber });
-      else { if (u.description) l.description = u.description; if (u.status) l.status = u.status; l.lastAppearance = chapterNumber; }
+    if (!Array.isArray(state.timeline)) state.timeline = [];
+    if (!Array.isArray(state.foreshadowing)) state.foreshadowing = [];
+    if (!Array.isArray(state.knowledgeLedger)) state.knowledgeLedger = [];
+    (obj.events || []).forEach(e => {
+      if (!e?.summary) return;
+      state.timeline.push({ id: genId("ev"), chapter: n, type: e.type || "event", summary: e.summary, causes: e.causes || "", consequences: e.consequences || "" });
     });
-    (obj.items || []).forEach(u => {
-      if (!u.name) return;
-      let it = state.items.find(x => normalizeName(x.name) === normalizeName(u.name));
-      if (!it) state.items.push({ id: genId(), name: u.name, description: u.description || "", owner: u.owner || "", status: u.status || "active", firstAppearance: chapterNumber, lastAppearance: chapterNumber });
-      else { if (u.description) it.description = u.description; if (u.owner) it.owner = u.owner; if (u.status) it.status = u.status; it.lastAppearance = chapterNumber; }
+    (obj.foreshadowing || []).forEach(f => {
+      if (!f?.description) return;
+      const key = normalizeName(f.match || f.description).slice(0, 60);
+      let x = state.foreshadowing.find(a => normalizeName(a.description).slice(0, 60) === key || normalizeName(a.description).includes(key.slice(0, 30)));
+      if (!x) state.foreshadowing.push({ id: genId("fs"), description: f.description, status: f.status || "seeded", plantedChapter: n, lastUpdated: n, characters: f.characters || "" });
+      else { if (f.status) x.status = f.status; x.lastUpdated = n; if (f.characters) x.characters = f.characters; }
     });
-    (obj.threads || []).forEach(t => {
-      if (!t.desc) return;
-      state.threads.push({ id: genId(), type: t.type || "open_thread", status: t.status || "seeded", desc: t.desc, chapterIntroduced: chapterNumber });
+    (obj.knowledge || []).forEach(k => {
+      if (!k?.character || !k?.fact) return;
+      const key = normalizeName(k.character) + "|" + normalizeName(k.fact).slice(0, 80);
+      let x = state.knowledgeLedger.find(a => normalizeName(a.character) + "|" + normalizeName(a.fact).slice(0, 80) === key);
+      if (!x) state.knowledgeLedger.push({ id: genId("kl"), character: k.character, fact: k.fact, confidence: k.confidence || "direct", firstChapter: n, lastUpdated: n });
+      else x.lastUpdated = n;
     });
+    state.timeline = state.timeline.slice(-250);
+    state.foreshadowing = state.foreshadowing.slice(-150);
+    state.knowledgeLedger = state.knowledgeLedger.slice(-500);
+    state.lastMemorySyncChapter = n;
     return { ok: true };
-  } catch (e) {
-    return { ok: false };
-  }
+  } catch (_) { return { ok: false }; }
 }
 
-async function updateCurrentStatus(job, chapter, chapterNumber, state) {
-  try {
-    let body = chapter.text;
-    if (body.length > 22000) body = body.slice(0, 9000) + "\n\n[...]\n\n" + body.slice(-10000);
-    const { text: st } = await callOpenRouter({
-      endpoint: job.apiEndpoint,
-      apiKey: job.apiKey,
-      model: job.model,
-      messages: [{
-        role: "user",
-        content: [
-          "Viết lại CURRENT STATUS sau chương " + chapterNumber + ".",
-          "STATUS CŨ:", state.currentStatus || "(chưa có)",
-          "",
-          "CHƯƠNG " + chapterNumber + ":", body,
-          "",
-          "Trả về status mới, dòng đầu: Current Status Update - Sau Chương " + chapterNumber
-        ].join("\n")
-      }],
-      maxTokens: 2000,
-      temperature: 0.25
-    });
-    let cleaned = (st || "").trim();
-    if (cleaned && !/sau chương\s*\d+/i.test(cleaned.slice(0, 80))) {
-      cleaned = "Current Status Update - Sau Chương " + chapterNumber + "\n" + cleaned;
-    }
-    state.currentStatus = cleaned;
-    state.lastStatusChapter = chapterNumber;
-    return { ok: true };
-  } catch (e) {
-    return { ok: false };
-  }
-}
-
-async function scanScenes(job, chapter, chapterNumber, state) {
+async function scanScenes(job, chapter, n, state) {
   if (!state.mature) return { ok: true, skipped: true };
+  const source = representativeText(chapter.text, 24000);
   try {
-    let body = chapter.text;
-    if (body.length > 20000) body = body.slice(0, 8000) + "\n\n[...]\n\n" + body.slice(-9000);
-    const { text: raw } = await callOpenRouter({
-      endpoint: job.apiEndpoint,
-      apiKey: job.apiKey,
-      model: job.model,
-      messages: [{
-        role: "user",
-        content: [
-          "Phát hiện cảnh 18+. Chương " + chapterNumber + ":", body,
-          "",
-          'Trả JSON array (có thể []): [{"intensity":1-10,"participants":[],"description":"","structure":"kiss|foreplay|sex|other"}]'
-        ].join("\n")
-      }],
-      maxTokens: 1200,
-      temperature: 0.2
-    });
-    const arr = safeJsonParse(raw);
-    if (!Array.isArray(arr)) return { ok: false };
+    const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: `Nếu chương có cảnh trưởng thành, trích xuất ngắn gọn. Nếu không có trả []. Chỉ JSON array.\n${source}\n[{"intensity":1,"participants":[],"description":"","structure":"kiss|foreplay|sex|other"}]` }], maxTokens: 1400, temperature: 0.1 }, 2);
+    const parsed = parseArray(r.text);
+    if (!parsed.items.length && String(r.text || "").trim() !== "[]") return { ok: false };
     if (!Array.isArray(state.scenes)) state.scenes = [];
-    arr.forEach(s => {
-      if (!s.description) return;
-      state.scenes.push({
-        id: genId(), chapter: chapterNumber,
-        intensity: Math.min(10, Math.max(1, parseInt(s.intensity, 10) || 5)),
-        participants: Array.isArray(s.participants) ? s.participants : [],
-        description: s.description, structure: s.structure || "other", createdAt: Date.now()
-      });
-    });
-    return { ok: true };
-  } catch (e) {
-    return { ok: false };
-  }
+    parsed.items.forEach(s => { if (!s?.description) return; state.scenes.push({ id: genId("s"), chapter: n, intensity: Math.max(1, Math.min(10, Number(s.intensity) || 5)), participants: Array.isArray(s.participants) ? s.participants : [], description: s.description, structure: s.structure || "other", createdAt: Date.now() }); });
+    return { ok: true, repaired: parsed.repaired };
+  } catch (_) { return { ok: false }; }
+}
+
+function cleanJobForStore(job) {
+  return { ...job, apiKey: job.apiKeyEncrypted ? null : (job.apiKey || null), apiKeyEncrypted: job.apiKeyEncrypted || null };
 }
 
 exports.handler = async (event) => {
-  // CORS
-  if (event.httpMethod === "OPTIONS") {
-    return {
-      statusCode: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
-      },
-      body: ""
-    };
-  }
-
-  let jobId = null;
-  let job = null;
-  const store = getJobStore(event);
-
+  if (event.httpMethod === "OPTIONS") return jsonResponse(204, {});
+  let jobId = null, job = null, store;
   try {
+    store = getJobStore(event);
     const body = JSON.parse(event.body || "{}");
+    jobId = body.jobId;
+    if (!jobId) return jsonResponse(400, { error: "Thiếu jobId" });
+    job = await store.get(jobId, { type: "json" });
+    if (!job) return jsonResponse(404, { error: "Job not found" });
+    if (Date.now() - Number(job.createdAt || 0) > MAX_JOB_AGE_MS) return jsonResponse(410, { error: "Job đã quá hạn" });
 
-    // Hai chế độ:
-    // 1) Có jobId → tiếp tục job cũ (từ create-job)
-    // 2) Có storyState + apiKey → tạo job mới và viết luôn (khuyến nghị)
-    if (body.jobId && !body.storyState) {
-      jobId = body.jobId;
-      job = await store.get(jobId, { type: "json" });
-      if (!job) {
-        return { statusCode: 404, body: JSON.stringify({ error: "Job not found" }) };
-      }
-    } else if (body.storyState && body.apiKey) {
-      jobId = "job_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
-      job = {
-        jobId,
-        status: "running",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        apiEndpoint: body.apiEndpoint || "https://openrouter.ai/api/v1/chat/completions",
-        model: body.model || "deepseek/deepseek-v3.2",
-        modelNsfw: body.modelNsfw || "aion-labs/aion-2.0",
-        forceNsfw: !!body.forceNsfw,
-        apiKey: body.apiKey.trim(),
-        storyState: body.storyState,
-        resultChapter: null,
-        error: null,
-        progress: "Đang viết chương..."
-      };
-      await store.setJSON(jobId, job);
-    } else {
-      return {
-        statusCode: 400,
-        headers: { "Access-Control-Allow-Origin": "*" },
-        body: JSON.stringify({ error: "Cần jobId hoặc (storyState + apiKey)" })
-      };
+    const workerToken = body.workerToken || event.headers?.["x-worker-token"] || event.headers?.["X-Worker-Token"] || "";
+    if (job.workerTokenHash) {
+      if (!secretsEqual(job.workerTokenHash, hashSecret(workerToken))) return jsonResponse(403, { error: "Worker token không hợp lệ" });
+    } else if (Number(job.schemaVersion || 0) >= 9) {
+      return jsonResponse(403, { error: "Worker token không hợp lệ" });
     }
+    if (["completed", "failed"].includes(job.status)) return jsonResponse(200, { success: true, jobId, status: job.status });
+    if (job.status === "running") return jsonResponse(202, { success: true, jobId, status: "running" });
 
-    // Đánh dấu running
     job.status = "running";
-    job.progress = "Đang viết chương...";
     job.updatedAt = Date.now();
-    await store.setJSON(jobId, job);
+    job.progress = "Đang chuẩn bị viết chương...";
+    job.apiKey = decryptText(job.apiKeyEncrypted);
+    await store.setJSON(jobId, cleanJobForStore(job));
 
-    // Viết chương
     const chapter = await generateOneChapter(job);
-    const chapterNumber = (job.storyState.chapters || []).length + 1;
-
-    job.progress = "Đang tạo tóm tắt...";
-    job.updatedAt = Date.now();
-    await store.setJSON(jobId, job);
-
-    chapter.summary = await generateSummary(job, chapter, chapterNumber);
+    const n = (job.storyState.chapters || []).length + 1;
+    job.progress = "Đang tạo tóm tắt..."; job.updatedAt = Date.now(); await store.setJSON(jobId, cleanJobForStore(job));
+    chapter.summary = await generateSummary(job, chapter, n);
 
     const newState = JSON.parse(JSON.stringify(job.storyState));
     if (!Array.isArray(newState.chapters)) newState.chapters = [];
     newState.chapters.push(chapter);
     newState.currentChapterIndex = newState.chapters.length - 1;
     newState.chaptersSinceBackup = (newState.chaptersSinceBackup || 0) + 1;
+    if (!Array.isArray(chapter.autoUpdateIssues)) chapter.autoUpdateIssues = [];
 
-    job.progress = "Đang cập nhật nhân vật...";
-    await store.setJSON(jobId, job);
-    const rChar = await updateCharacters(job, chapter, chapterNumber, newState);
-    if (!rChar.ok) chapter.autoUpdateIssues.push("NV lỗi: " + (rChar.reason || "không rõ nguyên nhân"));
-    else if (rChar.reason) chapter.autoUpdateIssues.push("NV: " + rChar.reason);
+    const checkpoint = async (progress) => { job.progress = progress; job.updatedAt = Date.now(); job.storyState = newState; await store.setJSON(jobId, cleanJobForStore(job)); };
 
-    job.progress = "Đang cập nhật thế giới...";
-    await store.setJSON(jobId, job);
-    const rWorld = await updateWorld(job, chapter, chapterNumber, newState);
-    if (!rWorld.ok) chapter.autoUpdateIssues.push("Thế giới");
+    await checkpoint("Đang cập nhật nhân vật...");
+    const rc = await updateCharacters(job, chapter, n, newState);
+    if (!rc.ok) chapter.autoUpdateIssues.push(`NV: ${rc.failed}/${rc.chunks} lô lỗi; hệ thống vẫn giữ các NV đã cứu${rc.repaired ? `; JSON được cứu ${rc.repaired} lô` : ""}.`);
+    else if (rc.repaired) chapter.autoUpdateIssues.push(`NV: đã tự cứu JSON bị cắt ở ${rc.repaired} lô; không bỏ toàn bộ danh sách.`);
+    await checkpoint("Đang cập nhật địa điểm, vật phẩm, plot thread...");
 
-    job.progress = "Đang cập nhật Current Status...";
-    await store.setJSON(jobId, job);
-    const rStatus = await updateCurrentStatus(job, chapter, chapterNumber, newState);
-    if (!rStatus.ok) chapter.autoUpdateIssues.push("Status");
+    const rw = await updateWorld(job, chapter, n, newState);
+    if (!rw.ok) chapter.autoUpdateIssues.push(`Thế giới: ${rw.failed}/${rw.chunks} lô lỗi.`);
+    await checkpoint("Đang cập nhật Current Status...");
 
-    job.progress = "Đang quét Scene...";
-    await store.setJSON(jobId, job);
-    const rScene = await scanScenes(job, chapter, chapterNumber, newState);
-    if (!rScene.ok && !rScene.skipped) chapter.autoUpdateIssues.push("Scene");
+    const rs = await updateCurrentStatus(job, chapter, n, newState);
+    if (!rs.ok) chapter.autoUpdateIssues.push("Status: không cập nhật được; Status cũ được giữ nguyên.");
+    await checkpoint("Đang cập nhật Timeline / Foreshadowing / Knowledge Ledger...");
+    const rm = await updateLongMemory(job, chapter, n, newState);
+    if (!rm.ok) chapter.autoUpdateIssues.push("Memory: không cập nhật được Timeline/Foreshadowing/Knowledge; dữ liệu cũ được giữ.");
+    await checkpoint("Đang quét Scene...");
 
-    // Hoàn thành
+    const rscene = await scanScenes(job, chapter, n, newState);
+    if (!rscene.ok && !rscene.skipped) chapter.autoUpdateIssues.push("Scene: không đọc được dữ liệu cảnh.");
+
     job.status = "completed";
     job.progress = "Hoàn thành";
     job.resultChapter = chapter;
     job.storyState = newState;
-    job.apiKey = null;
     job.updatedAt = Date.now();
     job.completedAt = Date.now();
-    await store.setJSON(jobId, job);
-
-    return {
-      statusCode: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        success: true,
-        jobId,
-        chapterTitle: chapter.title,
-        wordCount: chapter.wordCount
-      })
-    };
+    job.apiKey = null;
+    job.apiKeyEncrypted = null;
+    await store.setJSON(jobId, cleanJobForStore(job));
+    return jsonResponse(200, { success: true, jobId, chapterTitle: chapter.title, wordCount: chapter.wordCount });
   } catch (err) {
-    console.error("Background error:", err);
-    if (job && jobId) {
+    console.error("Background v9 error:", err);
+    if (job && jobId && store) {
       job.status = "failed";
       job.error = err.message || String(err);
-      job.progress = "Lỗi: " + (err.message || "unknown");
+      job.progress = "Lỗi: " + job.error;
       job.apiKey = null;
       job.updatedAt = Date.now();
-      try { await store.setJSON(jobId, job); } catch (e) {}
+      try { await store.setJSON(jobId, cleanJobForStore(job)); } catch (_) {}
     }
-    return {
-      statusCode: 500,
-      headers: { "Access-Control-Allow-Origin": "*" },
-      body: JSON.stringify({ error: err.message })
-    };
+    return jsonResponse(500, { error: err.message || "Lỗi server", jobId });
   }
 };
