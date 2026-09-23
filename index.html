@@ -4906,6 +4906,13 @@ async function startBackgroundWrite(){
   Object.keys(state).forEach(k=>{
     if(!GLOBAL_KEYS.includes(k)) storyBlob[k] = state[k];
   });
+  // QUAN TRỌNG: các thiết lập này nằm trong GLOBAL_KEYS nên bị vòng lặp trên loại bỏ,
+  // nhưng server VIẾT CHƯƠNG lại cần đọc trực tiếp từ storyState. Nếu không gửi lại
+  // ở đây, server sẽ luôn dùng giá trị mặc định (vd: 4000 từ thay vì 5000 bạn đặt).
+  ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold",
+   "advancedRules","includeScenesInPrompt"].forEach(k=>{
+    if(state[k] !== undefined) storyBlob[k] = state[k];
+  });
 
   const payload = {
     storyState: storyBlob,
