@@ -169,7 +169,7 @@ async function generateOneChapter(job) {
   const recent = buildRecentContext(chapters);
   const descLevel = state.descriptionLevel || "balanced";
   const explicitLevel = state.explicitLevel || "strong";
-  const minWords = Math.min(state.minChapterWords || 4000, 5000);
+  const minWords = Math.min(Math.max(state.minChapterWords || 5000, 500), 8000);
 
   let useModel = job.model;
   let isNsfw = false;
@@ -216,7 +216,7 @@ async function generateOneChapter(job) {
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: prompt }
     ],
-    maxTokens: 12000,
+    maxTokens: 16000,
     temperature: isNsfw ? 1.0 : 0.95
   });
 
@@ -235,7 +235,9 @@ async function generateOneChapter(job) {
   let truncated = finishReason === "length";
 
   // Auto-continue tối đa 1 lần (tiết kiệm thời gian)
-  if (wordCount < minWords * 0.8 && !truncated) {
+  // Lưu ý: viết tiếp NGAY CẢ KHI bị cắt do hết token (truncated=true) —
+  // đó chính là lúc cần viết tiếp nhất, không phải lúc để bỏ qua.
+  if (wordCount < minWords * 0.8) {
     const tail = text.slice(-1800);
     const contPrompt = [
       "BẮT BUỘC: 100% TIẾNG VIỆT CÓ DẤU.",
