@@ -237,6 +237,7 @@ async function generateOneChapter(job) {
   // Auto-continue tối đa 1 lần (tiết kiệm thời gian)
   // Lưu ý: viết tiếp NGAY CẢ KHI bị cắt do hết token (truncated=true) —
   // đó chính là lúc cần viết tiếp nhất, không phải lúc để bỏ qua.
+  const issues = [];
   if (wordCount < minWords * 0.8) {
     const tail = text.slice(-1800);
     const contPrompt = [
@@ -267,9 +268,17 @@ async function generateOneChapter(job) {
         text = text.replace(/\s+$/, "") + "\n\n" + contRes.text.trim();
         wordCount = countWords(text);
         truncated = contRes.finishReason === "length";
+      } else {
+        issues.push("Viết-tiếp trả về rỗng/quá ngắn");
       }
     } catch (e) {
       console.warn("Auto-continue failed:", e.message);
+      issues.push("Viết-tiếp lỗi API: " + (e.message || "").slice(0, 120));
+    }
+
+    // Vẫn thiếu từ sau khi đã thử viết tiếp — ghi lại để hiện cảnh báo trên UI
+    if (wordCount < minWords * 0.8) {
+      issues.push(`Chỉ đạt ${wordCount}/${minWords} từ mục tiêu`);
     }
   }
 
@@ -288,7 +297,8 @@ async function generateOneChapter(job) {
     compressed: false,
     createdBy: "background",
     createdAt: Date.now(),
-    autoUpdateIssues: []
+    autoUpdateIssues: issues,
+    minWordsTarget: minWords
   };
 }
 
