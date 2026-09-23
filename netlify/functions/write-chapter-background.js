@@ -108,9 +108,28 @@ function buildContext(state) {
       .filter(c => ["major", "important", "supporting"].includes(c.tier) && !c.dead)
       .slice(0, 10);
     if (important.length) {
-      parts.push("NHÂN VẬT QUAN TRỌNG:\n" + important.map(c =>
-        `- ${c.name} (${c.tier}): ${c.appearance || ""} | ${c.personality || ""} | Vị trí: ${c.currentLocation || "?"}`
-      ).join("\n"));
+      parts.push("NHÂN VẬT QUAN TRỌNG:\n" + important.map(c => {
+        const bits = [`- ${c.name} (${c.tier})`];
+        if (c.role) bits.push(`vai trò: ${c.role}`);
+        if (c.relevanceToMC) bits.push(`liên quan NVC: ${c.relevanceToMC}`);
+        bits.push(`ngoại hình: ${c.appearance || ""}`);
+        bits.push(`tính cách: ${c.personality || ""}`);
+        if (c.goals) bits.push(`mục tiêu: ${c.goals}`);
+        if (c.secret) bits.push(`bí mật: ${c.secret}`);
+        if (c.weakness) bits.push(`điểm yếu: ${c.weakness}`);
+        if (c.fear) bits.push(`sợ: ${c.fear}`);
+        if (c.knowledge) bits.push(`đang biết: ${c.knowledge}`);
+        bits.push(`vị trí: ${c.currentLocation || "?"}`);
+        if (c.mentalState) bits.push(`tâm lý: ${c.mentalState}`);
+        if (c.physicalState) bits.push(`thể chất: ${c.physicalState}`);
+        if (Array.isArray(c.relationships) && c.relationships.length) {
+          const rels = c.relationships.filter(r => r.withName).slice(0, 3)
+            .map(r => `${r.withName}${r.stage ? "(" + r.stage + ")" : ""}${r.notes ? ": " + r.notes : ""}`)
+            .join("; ");
+          if (rels) bits.push(`quan hệ: ${rels}`);
+        }
+        return bits.join(" | ");
+      }).join("\n"));
     }
   }
   const sb = state.styleBible || {};
@@ -190,6 +209,15 @@ async function generateOneChapter(job) {
     "",
     "🎨 " + (DESCRIPTION_PROMPTS[descLevel] || DESCRIPTION_PROMPTS.balanced),
     "",
+    "QUY TẮC MIÊU TẢ CỤ THỂ (BẮT BUỘC, áp dụng mọi mức miêu tả):",
+    "- CẤM dùng tính từ mơ hồ một mình mà không có số đo/so sánh đi kèm, ví dụ KHÔNG viết trơ trọi 'to lớn', 'rất cao', 'xinh đẹp', 'căn phòng rộng', 'rất khỏe'.",
+    "- PHẢI cụ thể hóa bằng MỘT trong hai cách: (1) số đo/con số ước lượng (chiều cao, cân nặng, tuổi, khoảng cách, diện tích, thời gian...), hoặc (2) so sánh với vật/người/khoảng cách quen thuộc mà độc giả hình dung được ngay.",
+    "  Ví dụ ĐÚNG: 'cao chừng 1m85, hơn cô nửa cái đầu', 'bắp tay to gần bằng bắp chân người thường', 'căn phòng rộng khoảng 20 mét vuông, kê vừa hai chiếc giường đôi', 'gã to con như một cánh cửa tủ vừa bước ra khỏi khung'.",
+    "  Ví dụ SAI (không được viết kiểu này): 'anh ta rất cao lớn', 'căn phòng khá rộng', 'cô ấy vô cùng xinh đẹp'.",
+    "- Áp dụng cho: chiều cao/vóc dáng, kích thước không gian/vật thể, khoảng cách, thời lượng, tuổi tác, sức mạnh — bất cứ chỗ nào đang mô tả độ lớn/nhỏ/xa/gần/lâu/mau.",
+    "",
+    "QUY TẮC KIẾN THỨC NHÂN VẬT (BẮT BUỘC): mỗi nhân vật (kể cả phụ) chỉ được suy nghĩ/hành động/nói dựa trên điều HỌ đã thực sự chứng kiến, được kể lại, hoặc tự suy luận hợp lý — xem mục 'đang biết' của từng nhân vật ở phần NHÂN VẬT QUAN TRỌNG bên dưới. TUYỆT ĐỐI không để nhân vật biết trước bí mật/sự kiện mà độc giả biết nhưng nhân vật đó chưa từng tiếp xúc.",
+    "",
     "Bối cảnh:",
     context || "(chưa có — tự sáng tạo hợp lý)",
     "",
@@ -254,6 +282,7 @@ async function generateOneChapter(job) {
       "===== HẾT =====",
       "",
       `Viết tiếp ít nhất ${Math.min(Math.max(remaining, 1200), 2500)} từ. Bắt đầu ngay từ câu tiếp theo, không tóm tắt, không kết thúc chương vội nếu chưa đủ từ.`,
+      "Miêu tả phải CỤ THỂ, có số đo hoặc so sánh (không viết 'to lớn', 'rất đẹp' trơ trọi — phải như 'cao chừng 1m8', 'to gần bằng...').",
       isNsfw ? ("MỨC 18+: " + (EXPLICIT_PROMPTS[explicitLevel] || "")) : ""
     ].join("\n");
 
@@ -318,6 +347,11 @@ async function generateOneChapter(job) {
 
 async function generateSummary(job, chapter, chapterNumber) {
   try {
+    // Gửi TOÀN BỘ nội dung chương (không cắt) — cắt ở giữa/cuối sẽ làm tóm tắt
+    // bỏ sót sự kiện, khiến chương sau dựa vào tóm tắt thiếu mà viết lệch mạch.
+    // Chỉ cắt nếu quá dài bất thường (an toàn context, hiếm khi xảy ra).
+    let body = chapter.text;
+    if (body.length > 60000) body = body.slice(0, 30000) + "\n\n[...]\n\n" + body.slice(-25000);
     const { text } = await callOpenRouter({
       endpoint: job.apiEndpoint,
       apiKey: job.apiKey,
@@ -325,13 +359,14 @@ async function generateSummary(job, chapter, chapterNumber) {
       messages: [{
         role: "user",
         content: [
-          "Tóm tắt chương sau trong 3-5 câu (TIẾNG VIỆT). Tập trung sự kiện, nhân vật, thay đổi quan hệ. Chỉ trả tóm tắt.",
+          "Tóm tắt TOÀN BỘ chương sau (kể cả đoạn cuối) trong 4-6 câu (TIẾNG VIỆT).",
+          "Tập trung: sự kiện chính đầu-giữa-cuối chương, nhân vật xuất hiện (kể cả phụ), thay đổi quan hệ/trạng thái. Chỉ trả tóm tắt, không thêm lời dẫn.",
           "",
           "Chương " + chapterNumber + ":",
-          chapter.text.slice(0, 12000)
+          body
         ].join("\n")
       }],
-      maxTokens: 500,
+      maxTokens: 700,
       temperature: 0.3
     });
     return (text || "").trim();
@@ -342,11 +377,29 @@ async function generateSummary(job, chapter, chapterNumber) {
 
 async function updateCharacters(job, chapter, chapterNumber, state) {
   try {
-    const existing = (state.characters || []).map(c =>
-      `${c.name} (${c.tier || "supporting"}): ${c.appearance || ""} | ${c.personality || ""}`
-    ).join("\n") || "(chưa có)";
+    const existing = (state.characters || []).map(c => {
+      const lines = [`- ${c.name} (tier: ${c.tier || "supporting"}${c.dead ? ", ĐÃ CHẾT" : ""})`];
+      if (c.role) lines.push(`  Vai trò với truyện: ${c.role}`);
+      if (c.relevanceToMC) lines.push(`  Liên quan tới nhân vật chính: ${c.relevanceToMC}`);
+      lines.push(`  Ngoại hình đã biết: ${c.appearance || "(chưa có)"}`);
+      lines.push(`  Tính cách đã biết: ${c.personality || "(chưa có)"}`);
+      if (c.goals) lines.push(`  Mục tiêu: ${c.goals}`);
+      if (c.secret) lines.push(`  Bí mật đang giữ: ${c.secret}`);
+      if (c.weakness) lines.push(`  Điểm yếu: ${c.weakness}`);
+      if (c.fear) lines.push(`  Nỗi sợ: ${c.fear}`);
+      if (c.knowledge) lines.push(`  Đang biết/nghi ngờ: ${c.knowledge}`);
+      lines.push(`  Vị trí/trạng thái trước đó: ${c.currentLocation || "(chưa rõ)"}${c.mentalState ? " | tâm lý: " + c.mentalState : ""}${c.physicalState ? " | thể chất: " + c.physicalState : ""}`);
+      if (Array.isArray(c.relationships) && c.relationships.length) {
+        lines.push("  Quan hệ đã biết: " + c.relationships.filter(r => r.withName).map(r =>
+          `${r.withName}${r.stage ? "(" + r.stage + ")" : ""}${r.notes ? ": " + r.notes : ""}`
+        ).join("; "));
+      }
+      return lines.join("\n");
+    }).join("\n") || "(chưa có nhân vật nào)";
+    // Gửi TOÀN BỘ chương (không cắt giữa) — cắt đoạn giữa từng làm mất đúng
+    // đoạn có phát triển nhân vật phụ, khiến cập nhật thiếu/sai giữa các chương.
     let body = chapter.text;
-    if (body.length > 25000) body = body.slice(0, 10000) + "\n\n[...]\n\n" + body.slice(-12000);
+    if (body.length > 60000) body = body.slice(0, 30000) + "\n\n[...]\n\n" + body.slice(-25000);
 
     const { text: raw } = await callOpenRouter({
       endpoint: job.apiEndpoint,
@@ -355,15 +408,28 @@ async function updateCharacters(job, chapter, chapterNumber, state) {
       messages: [{
         role: "user",
         content: [
-          "Theo dõi nhân vật. Trả JSON array nhân vật MỚI hoặc CÓ THAY ĐỔI.",
-          "NHÂN VẬT HIỆN CÓ:", existing,
+          "Bạn là người theo dõi hồ sơ nhân vật xuyên suốt truyện dài kỳ (kể cả nhân vật phụ). Đọc chương dưới đây và CẬP NHẬT hồ sơ.",
           "",
-          "CHƯƠNG " + chapterNumber + ":", body,
+          "NHÂN VẬT ĐÃ CÓ HỒ SƠ TỪ TRƯỚC (dữ liệu NỀN, phải giữ lại, không được xóa/quên):",
+          existing,
           "",
-          'Trả DUY NHẤT JSON: [{"name":"","tier":"supporting","appearance":"","personality":"","currentLocation":""}]'
+          "CHƯƠNG " + chapterNumber + " (đọc kỹ cả đoạn đầu, giữa, cuối):",
+          body,
+          "",
+          "QUY TẮC BẮT BUỘC:",
+          "- 'appearance'/'personality' cho NV đã có hồ sơ: trả bản ĐẦY ĐỦ đã GỘP (giữ nguyên chi tiết cũ + nối thêm chi tiết mới). Không tự bịa, không rút gọn/xóa mất thông tin cũ nếu chương không mâu thuẫn. Nếu không có gì mới thì để y hệt giá trị cũ.",
+          "- 'role' (vai trò/phân loại của NV đối với mạch truyện, vd: đồng minh, phản diện phụ, nạn nhân, người cung cấp thông tin, trung lập, nhân vật nền) và 'relevanceToMC' (mức độ + cách liên quan tới nhân vật chính) — CHỈ cập nhật nếu chương này làm rõ hoặc thay đổi vai trò đó, nếu không thì giữ nguyên giá trị cũ hoặc để trống.",
+          "- 'goals', 'secret', 'weakness', 'fear': chỉ điền/sửa nếu chương có bằng chứng RÕ RÀNG. Không suy đoán để 'cho đủ trường'. Giữ nguyên giá trị cũ nếu không có gì mới.",
+          "- 'knowledge': liệt kê NGẮN GỌN những gì nhân vật này THỰC SỰ đã biết/nghi ngờ tính đến hết chương này (điều họ chứng kiến, được kể, suy luận hợp lý). TUYỆT ĐỐI không gán cho nhân vật thông tin mà chỉ độc giả biết còn nhân vật chưa từng tiếp xúc.",
+          "- 'currentLocation'/'physicalState'/'mentalState': LUÔN cập nhật theo trạng thái MỚI NHẤT cuối chương (trường tạm thời, được phép thay đổi hoàn toàn mỗi chương).",
+          "- 'relationships': CHỈ liệt kê những mối quan hệ (với NV khác, không phải nhân vật chính) có diễn biến/xuất hiện RÕ trong chương này — 'notes' ghi diễn biến MỚI, không lặp lại toàn bộ lịch sử quan hệ cũ. Quan hệ phải tiến triển theo sự kiện, không tự nhiên quay về trạng thái cũ nếu truyện không có lý do.",
+          "- 'chapterEvent': 1 câu ngắn nêu sự kiện quan trọng nhất của nhân vật này trong chương (để lưu vào lịch sử/dòng thời gian nhân vật).",
+          "- Liệt kê MỌI nhân vật thực sự xuất hiện/được nhắc tới có ý nghĩa trong chương, kể cả nhân vật phụ chỉ xuất hiện thoáng qua — đừng bỏ sót. Nhân vật phụ vẫn có mục tiêu/cuộc sống riêng, không chỉ tồn tại để phục vụ nhân vật chính.",
+          "",
+          'Trả DUY NHẤT JSON, không thêm lời dẫn: [{"name":"","tier":"supporting","role":"","relevanceToMC":"","appearance":"","personality":"","goals":"","secret":"","weakness":"","fear":"","knowledge":"","currentLocation":"","physicalState":"","mentalState":"","chapterEvent":"","relationships":[{"withName":"","stage":"","trust":"","notes":""}],"isDead":false}]'
         ].join("\n")
       }],
-      maxTokens: 2000,
+      maxTokens: 4500,
       temperature: 0.2
     });
 
@@ -376,19 +442,49 @@ async function updateCharacters(job, chapter, chapterNumber, state) {
       const n = normalizeName(u.name);
       let char = state.characters.find(c => normalizeName(c.name) === n);
       if (!char) {
-        state.characters.push({
+        char = {
           id: genId(), name: u.name, tier: u.tier || "supporting",
+          role: u.role || "", relevanceToMC: u.relevanceToMC || "",
           appearance: u.appearance || "", personality: u.personality || "",
-          currentLocation: u.currentLocation || "",
+          goals: u.goals || "", secret: u.secret || "", weakness: u.weakness || "", fear: u.fear || "",
+          knowledge: u.knowledge || "",
+          currentLocation: u.currentLocation || "", physicalState: u.physicalState || "", mentalState: u.mentalState || "",
           firstAppearance: chapterNumber, lastAppearance: chapterNumber,
-          locked: false, dead: false, history: []
-        });
+          locked: false, dead: !!u.isDead, deathChapter: u.isDead ? chapterNumber : null,
+          relationships: [], history: []
+        };
+        state.characters.push(char);
       } else {
-        if (u.appearance) char.appearance = u.appearance;
-        if (u.personality) char.personality = u.personality;
+        // Trường mô tả tích lũy: chỉ ghi đè nếu bản mới không NGẮN HƠN ĐÁNG KỂ bản cũ
+        // — phòng model lỡ trả bản rút gọn, tránh làm mất thông tin đã tích lũy.
+        ["appearance", "personality", "goals", "secret", "weakness", "fear", "knowledge"].forEach(f => {
+          if (u[f] && (!char[f] || u[f].length >= char[f].length * 0.8)) char[f] = u[f];
+        });
+        // Trường phân loại: chỉ cập nhật khi có giá trị mới, không xóa giá trị cũ bằng rỗng
+        if (u.role) char.role = u.role;
+        if (u.relevanceToMC) char.relevanceToMC = u.relevanceToMC;
+        // Trường trạng thái tạm thời: luôn theo giá trị mới nhất
         if (u.currentLocation) char.currentLocation = u.currentLocation;
+        if (u.physicalState) char.physicalState = u.physicalState;
+        if (u.mentalState) char.mentalState = u.mentalState;
+        if (u.tier && (!char.tier || char.tier === "supporting")) char.tier = u.tier;
+        if (u.isDead && !char.dead) { char.dead = true; char.deathChapter = chapterNumber; }
         char.lastAppearance = chapterNumber;
       }
+
+      if (!Array.isArray(char.relationships)) char.relationships = [];
+      if (Array.isArray(u.relationships)) {
+        u.relationships.forEach(ru => {
+          if (!ru || !ru.withName) return;
+          let rel = char.relationships.find(r => normalizeName(r.withName) === normalizeName(ru.withName));
+          if (!rel) { rel = { withName: ru.withName, trust: "", stage: "", notes: "", history: [] }; char.relationships.push(rel); }
+          if (ru.stage) rel.stage = ru.stage;
+          if (ru.trust) rel.trust = ru.trust;
+          if (ru.notes) rel.notes = ru.notes;
+        });
+      }
+      if (!Array.isArray(char.history)) char.history = [];
+      if (u.chapterEvent) char.history.push({ chapter: chapterNumber, event: u.chapterEvent });
     });
     return { ok: true };
   } catch (e) {
@@ -398,8 +494,9 @@ async function updateCharacters(job, chapter, chapterNumber, state) {
 
 async function updateWorld(job, chapter, chapterNumber, state) {
   try {
+    // Không cắt giữa chương — lý do giống updateCharacters ở trên.
     let body = chapter.text;
-    if (body.length > 22000) body = body.slice(0, 9000) + "\n\n[...]\n\n" + body.slice(-10000);
+    if (body.length > 60000) body = body.slice(0, 30000) + "\n\n[...]\n\n" + body.slice(-25000);
     const { text: raw } = await callOpenRouter({
       endpoint: job.apiEndpoint,
       apiKey: job.apiKey,
