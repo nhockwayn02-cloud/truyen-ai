@@ -83,14 +83,22 @@ exports.handler = async (event) => {
 
     await store.setJSON(jobId, job);
 
-    // Kích hoạt background
+    // Kích hoạt background — PHẢI await, không được "fire-and-forget":
+    // Lambda có thể đóng băng/kết thúc tiến trình ngay khi handler return,
+    // khiến request kích hoạt chưa kịp gửi đi thì đã bị huỷ giữa chừng.
     const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || "";
     if (siteUrl) {
-      fetch(siteUrl + "/.netlify/functions/write-chapter-background", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId })
-      }).catch(err => console.error("Background trigger error:", err.message));
+      try {
+        await fetch(siteUrl + "/.netlify/functions/write-chapter-background", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId })
+        });
+      } catch (err) {
+        console.error("Background trigger error:", err.message);
+      }
+    } else {
+      console.error("Không xác định được site URL để kích hoạt background function (thiếu URL/DEPLOY_PRIME_URL/DEPLOY_URL).");
     }
 
     return {
