@@ -85,6 +85,40 @@ function safeJsonParse(raw) {
   try { return JSON.parse(cleaned); } catch (e) { return null; }
 }
 
+// Khi model bị cắt giữa chừng (hết maxTokens) trước khi đóng dấu "]" của mảng,
+// safeJsonParse() phía trên trả về null và TOÀN BỘ cập nhật bị mất — kể cả những
+// nhân vật đã được model viết xong đầy đủ ở phần đầu response. Hàm này "cứu"
+// lại các object {...} đã hoàn chỉnh, chỉ bỏ đúng phần tử cuối bị cắt dở.
+function repairTruncatedArray(raw) {
+  if (!raw) return null;
+  let cleaned = String(raw).replace(/```json/gi, "```").replace(/```/g, "").trim();
+  const start = cleaned.indexOf("[");
+  if (start === -1) return null;
+  const objs = [];
+  let i = start + 1;
+  while (i < cleaned.length) {
+    while (i < cleaned.length && /[\s,]/.test(cleaned[i])) i++;
+    if (cleaned[i] !== "{") break;
+    let depth = 0, inStr = false, esc = false, j = i;
+    for (; j < cleaned.length; j++) {
+      const c = cleaned[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === "\\") esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; continue; }
+      if (c === "{") depth++;
+      else if (c === "}") { depth--; if (depth === 0) { j++; break; } }
+    }
+    if (depth !== 0) break; // object bị cắt dở giữa chừng — dừng, không cố parse rác
+    try { objs.push(JSON.parse(cleaned.slice(i, j))); } catch (e) {}
+    i = j;
+  }
+  return objs.length ? objs : null;
+}
+
 function buildContext(state) {
   const parts = [];
   if (state.mainPlot) parts.push("CỐT TRUYỆN CHÍNH:\n" + state.mainPlot);
@@ -429,12 +463,14 @@ async function updateCharacters(job, chapter, chapterNumber, state) {
           'Trả DUY NHẤT JSON, không thêm lời dẫn: [{"name":"","tier":"supporting","role":"","relevanceToMC":"","appearance":"","personality":"","goals":"","secret":"","weakness":"","fear":"","knowledge":"","currentLocation":"","physicalState":"","mentalState":"","chapterEvent":"","relationships":[{"withName":"","stage":"","trust":"","notes":""}],"isDead":false}]'
         ].join("\n")
       }],
-      maxTokens: 4500,
+      maxTokens: 6500,
       temperature: 0.2
     });
 
-    const arr = safeJsonParse(raw);
-    if (!Array.isArray(arr)) return { ok: false };
+    let arr = safeJsonParse(raw);
+    let wasRepaired = false;
+    if (!Array.isArray(arr)) { arr = repairTruncatedArray(raw); wasRepaired = Array.isArray(arr); }
+    if (!Array.isArray(arr)) return { ok: false, reason: "Không đọc được JSON trả về (có thể model trả sai định dạng)" };
     if (!Array.isArray(state.characters)) state.characters = [];
 
     arr.forEach(u => {
@@ -486,9 +522,11 @@ async function updateCharacters(job, chapter, chapterNumber, state) {
       if (!Array.isArray(char.history)) char.history = [];
       if (u.chapterEvent) char.history.push({ chapter: chapterNumber, event: u.chapterEvent });
     });
-    return { ok: true };
+    return wasRepaired
+      ? { ok: true, reason: `JSON bị cắt giữa chừng (hết token) — đã cứu được ${arr.length} NV, có thể sót vài NV cuối danh sách` }
+      : { ok: true };
   } catch (e) {
-    return { ok: false };
+    return { ok: false, reason: "Lỗi gọi API: " + (e.message || "").slice(0, 150) };
   }
 }
 
@@ -696,7 +734,8 @@ exports.handler = async (event) => {
     job.progress = "Đang cập nhật nhân vật...";
     await store.setJSON(jobId, job);
     const rChar = await updateCharacters(job, chapter, chapterNumber, newState);
-    if (!rChar.ok) chapter.autoUpdateIssues.push("NV");
+    if (!rChar.ok) chapter.autoUpdateIssues.push("NV lỗi: " + (rChar.reason || "không rõ nguyên nhân"));
+    else if (rChar.reason) chapter.autoUpdateIssues.push("NV: " + rChar.reason);
 
     job.progress = "Đang cập nhật thế giới...";
     await store.setJSON(jobId, job);
