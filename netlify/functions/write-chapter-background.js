@@ -234,21 +234,26 @@ async function generateOneChapter(job) {
   let wordCount = countWords(text);
   let truncated = finishReason === "length";
 
-  // Auto-continue tối đa 1 lần (tiết kiệm thời gian)
-  // Lưu ý: viết tiếp NGAY CẢ KHI bị cắt do hết token (truncated=true) —
+  // Auto-continue LẶP LẠI cho tới khi đủ từ (tối đa 4 lần viết-tiếp,
+  // để tránh chạy vô hạn/tốn phí nếu model cứ viết ngắn hoài).
+  // Viết tiếp NGAY CẢ KHI bị cắt do hết token (truncated=true) —
   // đó chính là lúc cần viết tiếp nhất, không phải lúc để bỏ qua.
   const issues = [];
-  if (wordCount < minWords * 0.8) {
+  const MAX_CONTINUE_ATTEMPTS = 4;
+  let attempt = 0;
+  while (wordCount < minWords * 0.85 && attempt < MAX_CONTINUE_ATTEMPTS) {
+    attempt++;
+    const remaining = minWords - wordCount;
     const tail = text.slice(-1800);
     const contPrompt = [
       "BẮT BUỘC: 100% TIẾNG VIỆT CÓ DẤU.",
-      `VIẾT TIẾP chương ${chapterNumber} (không mở chương mới). Hiện ${wordCount} từ, cần tối thiểu ${minWords} từ.`,
+      `VIẾT TIẾP chương ${chapterNumber} (không mở chương mới, không lặp lại nội dung cũ). Hiện ${wordCount} từ, cần tối thiểu ${minWords} từ (còn thiếu khoảng ${remaining} từ).`,
       "",
       "===== ĐOẠN CUỐI (PHẢI TIẾP NỐI) =====",
       tail,
       "===== HẾT =====",
       "",
-      "Viết tiếp 1500-2500 từ. Bắt đầu ngay từ câu tiếp theo.",
+      `Viết tiếp ít nhất ${Math.min(Math.max(remaining, 1200), 2500)} từ. Bắt đầu ngay từ câu tiếp theo, không tóm tắt, không kết thúc chương vội nếu chưa đủ từ.`,
       isNsfw ? ("MỨC 18+: " + (EXPLICIT_PROMPTS[explicitLevel] || "")) : ""
     ].join("\n");
 
@@ -266,20 +271,29 @@ async function generateOneChapter(job) {
       });
       if (contRes.text && contRes.text.length > 100) {
         text = text.replace(/\s+$/, "") + "\n\n" + contRes.text.trim();
-        wordCount = countWords(text);
+        const newWordCount = countWords(text);
         truncated = contRes.finishReason === "length";
+        if (newWordCount <= wordCount + 30) {
+          // Model gần như không thêm được từ nào mới — dừng lặp để tránh vòng vô ích
+          issues.push(`Lần viết-tiếp #${attempt} không thêm được nội dung mới, dừng lại`);
+          wordCount = newWordCount;
+          break;
+        }
+        wordCount = newWordCount;
       } else {
-        issues.push("Viết-tiếp trả về rỗng/quá ngắn");
+        issues.push(`Viết-tiếp lần #${attempt} trả về rỗng/quá ngắn`);
+        break;
       }
     } catch (e) {
       console.warn("Auto-continue failed:", e.message);
-      issues.push("Viết-tiếp lỗi API: " + (e.message || "").slice(0, 120));
+      issues.push(`Viết-tiếp lần #${attempt} lỗi API: ` + (e.message || "").slice(0, 120));
+      break;
     }
+  }
 
-    // Vẫn thiếu từ sau khi đã thử viết tiếp — ghi lại để hiện cảnh báo trên UI
-    if (wordCount < minWords * 0.8) {
-      issues.push(`Chỉ đạt ${wordCount}/${minWords} từ mục tiêu`);
-    }
+  // Vẫn thiếu từ sau khi đã thử hết số lần cho phép — ghi lại để hiện cảnh báo trên UI
+  if (wordCount < minWords * 0.85) {
+    issues.push(`Chỉ đạt ${wordCount}/${minWords} từ mục tiêu sau ${attempt} lần viết-tiếp`);
   }
 
   return {
