@@ -921,23 +921,97 @@ function repairTruncatedArray(raw){
       if(inStr){ if(esc) esc=false; else if(c==='\\') esc=true; else if(c==='"') inStr=false; continue; }
       if(c==='"'){ inStr=true; continue; }
       if(c==='{') depth++;
-      else if(c==='}'){ depth--; if(depth===0){ try{ out.push(JSON.parse(s.slice(st,i+1))); }catch(e){} i++; break; } }
+      else if(c==='}'){ depth--; if(depth===0){ const t=jsonTryParse(s.slice(st,i+1)); if(t.ok && t.value && typeof t.value==="object") out.push(t.value); i++; break; } }
     }
     if(depth!==0) break;
   }
   return out;
 }
+/* v9.3: parser JSON chống lỗi (đồng bộ với worker).
+   - Sửa xuống dòng thô/dấu phẩy thừa/dấu " lồng trong chuỗi.
+   - Không đổi “ ” toàn cục; không "rơi" vào mảng/object con khi phần ngoài bị hỏng/cắt.
+   - JSON bị cắt: đóng ngoặc tại dấu phẩy hợp lệ gần nhất. */
+function jsonFixSyntax(s, heal){
+  let out="", inStr=false, esc=false;
+  const nextSig=(k)=>{ while(k<s.length && /\s/.test(s[k])) k++; return s[k]; };
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(inStr){
+      if(esc){ out+=c; esc=false; continue; }
+      if(c==="\\"){ out+=c; esc=true; continue; }
+      if(c==='"'){
+        if(heal){ const nx=nextSig(i+1); if(!(nx===undefined||nx===","||nx===":"||nx==="}"||nx==="]")){ out+='\\"'; continue; } }
+        inStr=false; out+=c; continue;
+      }
+      if(c==="\n"){ out+="\\n"; continue; }
+      if(c==="\r") continue;
+      if(c==="\t"){ out+="\\t"; continue; }
+      if(c.charCodeAt(0)<32) continue;
+      out+=c; continue;
+    }
+    if(c==='"'){ inStr=true; out+=c; continue; }
+    if(c==="}"||c==="]") out=out.replace(/,\s*$/,"");
+    out+=c;
+  }
+  return out;
+}
+function jsonTryParse(s){
+  try{ return {ok:true,value:JSON.parse(s)}; }catch(e){}
+  try{ return {ok:true,value:JSON.parse(jsonFixSyntax(s,false))}; }catch(e){}
+  try{ return {ok:true,value:JSON.parse(jsonFixSyntax(s,true))}; }catch(e){}
+  try{ return {ok:true,value:JSON.parse(jsonFixSyntax(s.replace(/[“”]/g,'"'),true))}; }catch(e){}
+  return {ok:false};
+}
+function jsonScanTop(s){
+  const res=[]; let i=0;
+  while(i<s.length){
+    let st=-1;
+    for(let k=i;k<s.length;k++){ if(s[k]==="["||s[k]==="{"){ st=k; break; } }
+    if(st<0) break;
+    const open=s[st], close=open==="["?"]":"}";
+    let depth=0,inStr=false,esc=false,end=-1;
+    for(let j=st;j<s.length;j++){
+      const c=s[j];
+      if(inStr){ if(esc) esc=false; else if(c==="\\") esc=true; else if(c==='"') inStr=false; continue; }
+      if(c==='"'){ inStr=true; continue; }
+      if(c===open) depth++;
+      else if(c===close){ depth--; if(depth===0){ end=j; break; } }
+    }
+    if(end<0){ res.push({text:s.slice(st),complete:false}); break; }
+    res.push({text:s.slice(st,end+1),complete:true}); i=end+1;
+  }
+  return res;
+}
+function jsonSalvageTruncated(text){
+  const stack=[]; let inStr=false, esc=false; const pts=[];
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inStr){ if(esc) esc=false; else if(c==="\\") esc=true; else if(c==='"') inStr=false; continue; }
+    if(c==='"'){ inStr=true; continue; }
+    if(c==="{") stack.push("}"); else if(c==="[") stack.push("]");
+    else if(c==="}"||c==="]") stack.pop();
+    else if(c===","&&stack.length) pts.push({pos:i,closers:stack.slice().reverse().join("")});
+  }
+  for(let k=pts.length-1;k>=Math.max(0,pts.length-300);k--){
+    const t=jsonTryParse(text.slice(0,pts[k].pos)+pts[k].closers);
+    if(t.ok) return t.value;
+  }
+  return null;
+}
 function safeJsonParse(raw){
   const cleaned = stripCodeFences(raw || "");
-  const balanced = extractBalancedJson(cleaned);
-  if(balanced){ try{return JSON.parse(balanced);}catch(e){} }
+  if(!cleaned) return null;
+  const whole = jsonTryParse(cleaned);
+  if(whole.ok && whole.value!==null && typeof whole.value==="object") return whole.value;
+  let truncated = "";
+  for(const c of jsonScanTop(cleaned)){
+    if(c.complete){ const t=jsonTryParse(c.text); if(t.ok && t.value!==null && typeof t.value==="object") return t.value; }
+    else truncated = c.text;
+  }
+  if(truncated){ const sv=jsonSalvageTruncated(truncated); if(sv && typeof sv==="object") return sv; }
   const repaired = repairTruncatedArray(cleaned);
   if(repaired.length) return repaired;
-  try{
-    const idxArr = cleaned.indexOf('['), idxObj = cleaned.indexOf('{');
-    let start = idxArr<0 ? idxObj : (idxObj<0 ? idxArr : Math.min(idxArr,idxObj));
-    return JSON.parse(start>=0 ? cleaned.slice(start) : cleaned);
-  }catch(e){ try{return JSON.parse(raw);}catch(e2){return null;} }
+  return null;
 }
 function detectNonVietnamese(text){
   if(!text) return false;
@@ -1595,8 +1669,9 @@ async function callAI(prompt, opts){
     ],
     temperature: opts.temperature != null ? opts.temperature : 0.9,
     max_tokens: opts.maxTokens || 2048,
-    frequency_penalty: opts.frequency_penalty != null ? opts.frequency_penalty : 0.45,
-    presence_penalty: opts.presence_penalty != null ? opts.presence_penalty : 0.35
+    /* v9.3: gọi trích xuất JSON (temperature thấp) KHÔNG dùng penalty — penalty làm model né lặp key/dấu ngoặc nên JSON hỏng. */
+    frequency_penalty: opts.frequency_penalty != null ? opts.frequency_penalty : ((opts.temperature != null && opts.temperature <= 0.3) ? 0 : 0.45),
+    presence_penalty: opts.presence_penalty != null ? opts.presence_penalty : ((opts.temperature != null && opts.temperature <= 0.3) ? 0 : 0.35)
   };
   if(streaming) body.stream = true;
 
@@ -3248,8 +3323,11 @@ function renderSnapshotView(idx){
   const issueBanner = (ch.autoUpdateIssues && ch.autoUpdateIssues.length)
     ? '<div class="snap-stale-badge">⚠ Chương này còn mục cập nhật lỗi: '+escapeHtml(ch.autoUpdateIssues.join(", "))+'. Bấm "🔄 Rescan từ chương này" (mục 6) để chạy lại.</div>'
     : '';
+  const diagBanner = (ch.updateDiagnostics && ch.updateDiagnostics.length)
+    ? '<details class="snap-stale-badge" style="background:transparent;border:1px dashed #666"><summary>🔍 Chi tiết cập nhật nền (chẩn đoán)</summary><div style="white-space:pre-wrap;font-size:12px;margin-top:6px">'+escapeHtml(ch.updateDiagnostics.join("\n"))+'</div></details>'
+    : '';
   if(!snap){
-    box.innerHTML = issueBanner + '<div class="snap-stale-badge">⚠ Chương này chưa có snapshot lịch sử (được viết trước khi có tính năng này, hoặc chưa chạy xong cập nhật nền). Dùng nút "🔄 Rescan từ chương này" hoặc "Quét toàn truyện" ở các mục NV/Địa điểm/Status để tạo lại lịch sử cho các chương cũ.</div>';
+    box.innerHTML = issueBanner + diagBanner + '<div class="snap-stale-badge">⚠ Chương này chưa có snapshot lịch sử (được viết trước khi có tính năng này, hoặc chưa chạy xong cập nhật nền). Dùng nút "🔄 Rescan từ chương này" hoặc "Quét toàn truyện" ở các mục NV/Địa điểm/Status để tạo lại lịch sử cho các chương cũ.</div>';
     return;
   }
   const chars = (snap.characters||[]).filter(c=> (c.lastAppearance||0) <= (idx+1) && (c.firstAppearance==null || c.firstAppearance <= (idx+1)));
@@ -3269,7 +3347,7 @@ function renderSnapshotView(idx){
   const itemsHtml = (snap.items||[]).length ? snap.items.map(it=>
     '<div class="snap-card"><b>'+escapeHtml(it.name)+'</b> <span class="snap-meta">'+escapeHtml(it.status||"")+(it.owner?(' · '+escapeHtml(it.owner)):'')+'</span></div>'
   ).join("") : '<div class="empty-note">Chưa có.</div>';
-  box.innerHTML = issueBanner +
+  box.innerHTML = issueBanner + diagBanner +
     '<div class="snap-group-title">🕐 Thời điểm</div><div class="snap-card">'+escapeHtml(snap.storyClock || "(chưa đặt)")+'</div>'
     + '<div class="snap-group-title">📋 Current Status</div><div class="status-box" style="max-height:160px;">'+escapeHtml(snap.currentStatus || "(chưa có)")+'</div>'
     + '<div class="snap-group-title">👤 Nhân vật</div>' + charsHtml
@@ -5232,8 +5310,14 @@ async function mergeBackgroundChapter(statusData,record){
   if(incoming.statusState)state.statusState=incoming.statusState;
   state.lastStatusChapter=incoming.lastStatusChapter||state.lastStatusChapter;
   state.chaptersSinceBackup=incoming.chaptersSinceBackup!=null?incoming.chaptersSinceBackup:state.chaptersSinceBackup;
+  /* v9.3: trước đây Timeline / Foreshadowing / Knowledge Ledger KHÔNG được hợp nhất từ job nền nên không bao giờ hiện. */
+  state.timeline=mergeArrayByIdOrName(state.timeline,incoming.timeline||[],"id").slice(-250);
+  state.foreshadowing=mergeArrayByIdOrName(state.foreshadowing,incoming.foreshadowing||[],"id").slice(-150);
+  state.knowledgeLedger=mergeArrayByIdOrName(state.knowledgeLedger,incoming.knowledgeLedger||[],"id").slice(-500);
+  state.memoryEvents=mergeArrayByIdOrName(state.memoryEvents,incoming.memoryEvents||[],"id");
   state.lastMemorySyncChapter=incoming.lastMemorySyncChapter||state.lastMemorySyncChapter||0;
   persist();renderAll();
+  try{ captureChapterSnapshot(state.chapters.length); }catch(e){}
   const last=state.chapters[state.chapters.length-1];
   setStatus("☁ Đã đồng bộ: "+(last?last.title:"")+" ("+(last?last.wordCount:0)+" từ). NV/World/Status/Scene đã hợp nhất.",false);
 }

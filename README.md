@@ -180,3 +180,13 @@ API key không được xuất nếu `includeKeyOnExport` đang tắt.
 - Gọi model bằng **streaming** + idle-timeout (60s không có token mới mới ngắt) thay vì abort cứng sau 170s.
 - Nếu bị ngắt giữa chừng nhưng đã có >800 ký tự, giữ phần đã viết và để vòng "viết tiếp" nối tiếp.
 - Lỗi mạng/abort được retry đúng cách (bản cũ retry sai điều kiện).
+
+## v9.3 — Sửa gốc lỗi "không cập nhật NV/Thế giới/Status/Memory"
+1. **Penalty làm hỏng JSON**: `frequency_penalty/presence_penalty` bị gửi cả khi trích xuất JSON → model né lặp key/ngoặc. Nay chỉ dùng khi viết văn (worker + `callAI` ở client với temperature ≤ 0.3).
+2. **Đổi “ ” thành " toàn cục** làm hỏng JSON hợp lệ có thoại → bỏ; chỉ dùng làm phương án cuối.
+3. **Parser rơi vào mảng/object con** khi phần ngoài bị hỏng/cắt (vd. trả `relationships:[]` và coi là thành công) → chỉ xét ứng viên ngoài cùng.
+4. **Không kiểm tra cấu trúc** → JSON đúng cú pháp nhưng sai khóa bị coi là thành công (không cập nhật gì, không báo). Nay bắt buộc có khóa mong đợi.
+5. Sửa lỗi cú pháp nhẹ (xuống dòng thô, phẩy thừa, dấu " lồng nhau) + cứu JSON bị cắt bằng cách đóng ngoặc.
+6. **Client không hợp nhất Timeline/Foreshadowing/Knowledge Ledger** từ job nền → nay đã hợp nhất, và chụp snapshot chương.
+7. Có ngân sách thời gian 13,5 phút (giới hạn 15 phút của Netlify): bước nào không kịp sẽ báo rõ thay vì treo job.
+8. Mỗi chương nền lưu `updateDiagnostics` (finish_reason, cách parse, số NV/địa điểm/... thêm được) — xem trong mục "Snapshot chương" → "🔍 Chi tiết cập nhật nền".
