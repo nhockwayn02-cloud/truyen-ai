@@ -3542,7 +3542,7 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
       "Mỗi object ngắn gọn. Không cần lặp lại hồ sơ cũ nếu phần này không làm thay đổi nó."
     ].filter(Boolean).join("\n\n");
     try{
-      const r=await callAI(prompt,{maxTokens:3200,temperature:0.2});
+      const r=await callAI(prompt,{maxTokens:8000,temperature:0.2});
       let arr=safeJsonParse(r.text), wasRepair=false;
       if(!Array.isArray(arr)){ const repaired=repairTruncatedArray(r.text); if(repaired.length){arr=repaired;wasRepair=true;} }
       if(!Array.isArray(arr)){
@@ -3686,10 +3686,10 @@ async function updateCurrentStatusIncremental(text, chapterNumber, silent){
     'Trả DUY NHẤT JSON: {"time":"","mainEvent":"","location":"","mc":"","relationships":"","powerItems":"","openConflict":"","nextGoal":"","longTermSecrets":"","rulesPromises":"","risks":"","drama":""}. Không markdown.'
   ].join("\n");
   try{
-    const r=await callAI(prompt,{maxTokens:2200,temperature:0.15});
+    const r=await callAI(prompt,{maxTokens:6000,temperature:0.15});
     let obj=safeJsonParse(r.text);
     if(!obj||Array.isArray(obj)||typeof obj!=="object"){
-      const retry=await callAI("CHỈ TRẢ JSON OBJECT ĐÚNG ĐỊNH DẠNG.\n"+prompt,{maxTokens:1800,temperature:0.1});
+      const retry=await callAI("CHỈ TRẢ JSON OBJECT ĐÚNG ĐỊNH DẠNG.\n"+prompt,{maxTokens:5000,temperature:0.1});
       obj=safeJsonParse(retry.text);
     }
     if(!obj||Array.isArray(obj)||typeof obj!=="object"){
@@ -3781,7 +3781,7 @@ $ID("integrityScanBtn").addEventListener("click", async ()=>{
      chương cũ) như các chỗ khác đã dùng. */
   const prompt = ["Story Bible:", buildStoryBibleSummary(), "", "Nhân vật:", characterSummaryForPrompt(state.characters), "", "TRUYỆN (chương cũ đã tóm tắt để đỡ quá tải):", fullStoryTextCompressed(), "", CONTINUITY_JSON_HINT].join("\n");
   try{
-    const { text: raw } = await callAI(prompt, {maxTokens:2500, temperature:0.2});
+    const { text: raw } = await callAI(prompt, {maxTokens:4000, temperature:0.2});
     const arr = safeJsonParse(raw);
     const warnings = Array.isArray(arr) ? arr : [];
     renderContinuityWarnings(warnings);
@@ -5168,9 +5168,9 @@ async function updateLongMemoryIncremental(text, chapterNumber, silent){
   const source=(state.chapters[chapterNumber-1]?.summary||"")+"\n\n"+text.slice(0,3500)+"\n\n[ĐOẠN CUỐI]\n"+text.slice(-7500);
   const prompt=["CẬP NHẬT LONG-TERM MEMORY SAU CHƯƠNG "+chapterNumber,"Chỉ ghi điều có bằng chứng. Không bịa.","FORESHADOWING MỞ:",(state.foreshadowing||[]).filter(x=>!['paid_off','abandoned','resolved'].includes(x.status)).slice(-20).map(x=>x.description+" ["+x.status+"]").join("\n"),"NỘI DUNG:",source,'Trả DUY NHẤT JSON: {"events":[{"type":"event|consequence|reveal|death|power_change","summary":"","causes":"","consequences":""}],"foreshadowing":[{"description":"","status":"seeded|developing|paid_off|abandoned","match":"","characters":""}],"knowledge":[{"character":"","fact":"","confidence":"direct|inferred|reported"}]}'].join("\n\n");
   try{
-    const r=await callAI(prompt,{maxTokens:2200,temperature:0.15});
+    const r=await callAI(prompt,{maxTokens:6000,temperature:0.15});
     let obj=safeJsonParse(r.text);
-    if(!obj||Array.isArray(obj)){const rr=await callAI("CHỈ TRẢ JSON OBJECT. "+prompt,{maxTokens:1800,temperature:0.1});obj=safeJsonParse(rr.text);}
+    if(!obj||Array.isArray(obj)){const rr=await callAI("CHỈ TRẢ JSON OBJECT. "+prompt,{maxTokens:5000,temperature:0.1});obj=safeJsonParse(rr.text);}
     if(!obj||Array.isArray(obj))return {ok:false,reason:"parse"};
     if(!Array.isArray(state.timeline))state.timeline=[]; if(!Array.isArray(state.foreshadowing))state.foreshadowing=[]; if(!Array.isArray(state.knowledgeLedger))state.knowledgeLedger=[];
     (obj.events||[]).forEach(e=>{if(e&&e.summary)state.timeline.push({id:genId(),chapter:chapterNumber,type:e.type||"event",summary:e.summary,causes:e.causes||"",consequences:e.consequences||""});});

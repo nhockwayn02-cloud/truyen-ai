@@ -190,3 +190,8 @@ API key không được xuất nếu `includeKeyOnExport` đang tắt.
 6. **Client không hợp nhất Timeline/Foreshadowing/Knowledge Ledger** từ job nền → nay đã hợp nhất, và chụp snapshot chương.
 7. Có ngân sách thời gian 13,5 phút (giới hạn 15 phút của Netlify): bước nào không kịp sẽ báo rõ thay vì treo job.
 8. Mỗi chương nền lưu `updateDiagnostics` (finish_reason, cách parse, số NV/địa điểm/... thêm được) — xem trong mục "Snapshot chương" → "🔍 Chi tiết cập nhật nền".
+
+## v9.4 — Tăng ngân sách token cho bước trích xuất
+- NV 10000, Thế giới 8000, Memory 8000, Status 5000, Scene 4000, Tóm tắt 2500, sửa JSON 6000-7000 token.
+- Nếu output rỗng hoặc bị cắt (`finish=length`) → tự gọi lại 1 lần với ngân sách gấp đôi (tối đa 16000).
+- Client (Rescan/viết thủ công): NV 8000, Thế giới/Memory 6000, retry 5000, mục 2500→4000.
