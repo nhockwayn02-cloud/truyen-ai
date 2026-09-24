@@ -195,3 +195,6 @@ API key không được xuất nếu `includeKeyOnExport` đang tắt.
 - NV 10000, Thế giới 8000, Memory 8000, Status 5000, Scene 4000, Tóm tắt 2500, sửa JSON 6000-7000 token.
 - Nếu output rỗng hoặc bị cắt (`finish=length`) → tự gọi lại 1 lần với ngân sách gấp đôi (tối đa 16000).
 - Client (Rescan/viết thủ công): NV 8000, Thế giới/Memory 6000, retry 5000, mục 2500→4000.
+
+## v9.4.1 — Nâng thêm ~15% token trích xuất
+Worker: NV 11500, Thế giới/Memory 9200, Status 5750, Scene 4600, Tóm tắt 2900, sửa JSON 6900-8000. Client tăng tương ứng.
