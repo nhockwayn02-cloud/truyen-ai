@@ -175,3 +175,8 @@ API key không được xuất nếu `includeKeyOnExport` đang tắt.
 - Có lớp AI JSON repair khi model trả JSON lỗi/markdown/truncated.
 - `[]` hợp lệ được coi là kết quả thành công (không còn báo lỗi giả cho Scene/NV).
 - NV/Thế giới/Status/Memory/Scene đều dùng cùng lớp parse + repair.
+
+## v9.2 — Sửa lỗi "This operation was aborted"
+- Gọi model bằng **streaming** + idle-timeout (60s không có token mới mới ngắt) thay vì abort cứng sau 170s.
+- Nếu bị ngắt giữa chừng nhưng đã có >800 ký tự, giữ phần đã viết và để vòng "viết tiếp" nối tiếp.
+- Lỗi mạng/abort được retry đúng cách (bản cũ retry sai điều kiện).
