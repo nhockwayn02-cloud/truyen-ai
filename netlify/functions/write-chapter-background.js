@@ -217,9 +217,19 @@ const EXPLICIT_PROMPTS = {
   wild: "Cảnh trưởng thành ở mức rất mạnh theo thiết lập người dùng."
 };
 
-async function callOpenRouter({ endpoint, apiKey, model, messages, maxTokens = 4000, temperature = 0.3 }) {
+// v9.2: dùng streaming + idle-timeout thay vì abort cứng sau 170s.
+// Chương dài (5000+ từ, ~12-16k token) thường chạy >170s nên bản cũ bị "This operation was aborted".
+// Nếu bị ngắt giữa chừng nhưng đã có nội dung, trả phần đã nhận (finishReason="length") để vòng "viết tiếp" xử lý.
+async function callOpenRouter({ endpoint, apiKey, model, messages, maxTokens = 4000, temperature = 0.3, totalMs = 400000, firstTokenMs = 150000, idleMs = 60000 }) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 170000);
+  const startedAt = Date.now();
+  let timer = null, abortReason = "";
+  const arm = (ms, reason) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { abortReason = reason; controller.abort(); }, ms);
+  };
+  arm(firstTokenMs, `Model không phản hồi sau ${Math.round(firstTokenMs / 1000)}s`);
+  let text = "", finishReason = null, gotAny = false;
   try {
     const res = await fetch(endpoint || DEFAULT_ENDPOINT, {
       method: "POST",
@@ -229,7 +239,7 @@ async function callOpenRouter({ endpoint, apiKey, model, messages, maxTokens = 4
         "HTTP-Referer": process.env.URL || "https://xuong-truyen-ai.netlify.app",
         "X-Title": "Xuong Truyen AI v9"
       },
-      body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature, frequency_penalty: 0.35, presence_penalty: 0.25 }),
+      body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature, frequency_penalty: 0.35, presence_penalty: 0.25, stream: true }),
       signal: controller.signal
     });
     if (!res.ok) {
@@ -238,9 +248,53 @@ async function callOpenRouter({ endpoint, apiKey, model, messages, maxTokens = 4
       e.status = res.status;
       throw e;
     }
-    const data = await res.json();
-    const choice = data.choices?.[0];
-    return { text: choice?.message?.content || choice?.text || "", finishReason: choice?.finish_reason || null };
+    const ctype = res.headers.get("content-type") || "";
+    if (!ctype.includes("text/event-stream")) {
+      // Provider không hỗ trợ stream -> đọc JSON thường
+      const data = await res.json();
+      const choice = data.choices?.[0];
+      return { text: choice?.message?.content || choice?.text || "", finishReason: choice?.finish_reason || null };
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      gotAny = true;
+      if (Date.now() - startedAt > totalMs) { abortReason = `Quá ${Math.round(totalMs / 1000)}s cho một lần gọi`; controller.abort(); break; }
+      arm(idleMs, `Model đứng im ${Math.round(idleMs / 1000)}s giữa chừng`);
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (!line || line.startsWith(":") || !line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        try {
+          const j = JSON.parse(payload);
+          if (j.error) { const e = new Error(`API stream: ${String(j.error.message || JSON.stringify(j.error)).slice(0, 300)}`); e.status = j.error.code; throw e; }
+          const ch = j.choices?.[0];
+          const piece = ch?.delta?.content ?? ch?.text ?? "";
+          if (piece) text += piece;
+          if (ch?.finish_reason) finishReason = ch.finish_reason;
+        } catch (e) { if (e.status) throw e; /* dòng JSON dở dang: bỏ qua */ }
+      }
+    }
+    return { text, finishReason };
+  } catch (e) {
+    const aborted = e.name === "AbortError" || /aborted/i.test(e.message || "");
+    if (aborted) {
+      // Có nội dung đủ dài -> giữ lại, coi như bị cắt để vòng viết tiếp nối tiếp
+      if (text.trim().length > 800) return { text, finishReason: "length", partial: true, partialReason: abortReason };
+      const err = new Error(abortReason || "Kết nối tới model bị ngắt");
+      err.retryable = true;
+      throw err;
+    }
+    if (!e.status && gotAny && text.trim().length > 800) return { text, finishReason: "length", partial: true, partialReason: e.message };
+    if (!e.status) e.retryable = true; // lỗi mạng
+    throw e;
   } finally { clearTimeout(timer); }
 }
 
@@ -250,8 +304,9 @@ async function callWithRetry(args, tries = 3) {
     try { return await callOpenRouter(args); }
     catch (e) {
       last = e;
-      if (![408, 425, 429, 500, 502, 503, 504, 524].includes(e.status) && i > 0) break;
-      await new Promise(r => setTimeout(r, Math.min(8000, 900 * Math.pow(2, i))));
+      const retryable = e.retryable || [408, 425, 429, 500, 502, 503, 504, 524].includes(e.status);
+      if (!retryable) break;
+      if (i < tries - 1) await new Promise(r => setTimeout(r, Math.min(8000, 900 * Math.pow(2, i))));
     }
   }
   throw last || new Error("API thất bại");
@@ -346,7 +401,7 @@ async function generateOneChapter(job) {
     "Định dạng cuối: TIÊU ĐỀ: <tên>\nNỘI DUNG:\n<văn xuôi>"
   ].filter(Boolean).join("\n\n");
 
-  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 16000, temperature: isNsfw ? 1 : 0.95 });
+  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 16000, temperature: isNsfw ? 1 : 0.95, totalMs: 420000 }, 2);
   const titleMatch = result.text.match(/TIÊU ĐỀ\s*:\s*(.+)/i);
   const bodyMatch = result.text.match(/NỘI DUNG\s*:\s*([\s\S]*)/i);
   const title = (titleMatch?.[1] || "Chương mới").replace(/^chương\s*\d+\s*[:\-–—.]*/i, "").trim() || "Chương mới";
