@@ -426,7 +426,7 @@ async function callExtract(args, tries = 2) {
 }
 function fin(r) { return `finish=${r.finishReason || "?"}, ${String(r.text || "").length} ký tự${r.reasoningLen ? `, reasoning ${r.reasoningLen}` : ""}`; }
 
-async function repairJsonWithAI(job, raw, shape, keys, maxTokens = 6000) {
+async function repairJsonWithAI(job, raw, shape, keys, maxTokens = 6900) {
   const clipped = String(raw || "").slice(0, 24000);
   if (!clipped.trim()) return "";
   const instruction = shape === "array"
@@ -448,7 +448,7 @@ async function repairJsonWithAI(job, raw, shape, keys, maxTokens = 6000) {
 async function parseArrayWithRepair(job, raw) {
   const p = parseArray(raw);
   if (p.valid) return { ...p, repairedByAI: false };
-  const fixed = await repairJsonWithAI(job, raw, "array", null, 7000);
+  const fixed = await repairJsonWithAI(job, raw, "array", null, 8000);
   const again = parseArray(fixed);
   return { ...again, repairedByAI: again.valid, method: again.valid ? "AI-repair" : "" };
 }
@@ -456,7 +456,7 @@ async function parseArrayWithRepair(job, raw) {
 async function parseObjectWithRepair(job, raw, keys) {
   const p = parseObjectDetailed(raw, keys);
   if (p.obj) return { obj: p.obj, method: p.method, repairedByAI: false };
-  const fixed = await repairJsonWithAI(job, raw, "object", keys, 6000);
+  const fixed = await repairJsonWithAI(job, raw, "object", keys, 6900);
   const again = parseObjectDetailed(fixed, keys);
   return { obj: again.obj, method: again.obj ? "AI-repair" : "", repairedByAI: !!again.obj };
 }
@@ -554,7 +554,7 @@ async function generateOneChapter(job) {
 async function generateSummary(job, chapter, n) {
   try {
     const body = representativeText(chapter.text, 30000);
-    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: `Tóm tắt CHƯƠNG ${n} bằng 5-8 câu tiếng Việt. Bắt buộc bao quát đầu, giữa, cuối; nhân vật; thay đổi trạng thái; quan hệ; vật phẩm/địa điểm; hệ quả và việc chưa giải quyết.\n\n${body}` }], maxTokens: 2500, temperature: 0.25 }, 2);
+    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: `Tóm tắt CHƯƠNG ${n} bằng 5-8 câu tiếng Việt. Bắt buộc bao quát đầu, giữa, cuối; nhân vật; thay đổi trạng thái; quan hệ; vật phẩm/địa điểm; hệ quả và việc chưa giải quyết.\n\n${body}` }], maxTokens: 2900, temperature: 0.25 }, 2);
     return (r.text || "").trim();
   } catch (_) { return ""; }
 }
@@ -626,7 +626,7 @@ async function updateCharacters(job, chapter, n, state) {
       'JSON: [{"name":"","tier":"background|minor|supporting|important|major","role":"","relevanceToMC":"","appearance":"","personality":"","occupation":"","faction":"","goals":"","secret":"","weakness":"","fear":"","knowledge":"","currentLocation":"","physicalState":"","mentalState":"","chapterEvent":"","relationships":[{"withName":"","stage":"","trust":"","notes":""}],"isDead":false}]'
     ].join("\n\n");
     try {
-      const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "system", content: "Bạn là bộ máy trích xuất dữ liệu nhân vật. Không được viết văn xuôi. Chỉ trả JSON hợp lệ." }, { role: "user", content: prompt }], maxTokens: 10000, temperature: 0.15 }, 2);
+      const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "system", content: "Bạn là bộ máy trích xuất dữ liệu nhân vật. Không được viết văn xuôi. Chỉ trả JSON hợp lệ." }, { role: "user", content: prompt }], maxTokens: 11500, temperature: 0.15 }, 2);
       const parsed = await parseArrayWithRepair(job, r.text);
       if (!parsed.valid) {
         res.failed++;
@@ -703,7 +703,7 @@ async function updateWorld(job, chapter, n, state) {
       'JSON: {"locations":[{"name":"","description":"","status":"active|destroyed|abandoned|locked"}],"items":[{"name":"","description":"","owner":"","status":"active|lost|destroyed|stored"}],"threads":[{"type":"open_thread|foreshadowing|consequence","desc":"","status":"seeded|developing|paid_off|abandoned","matchExistingDesc":""}]}'
     ].join("\n\n");
     try {
-      const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "system", content: "Bạn là bộ máy trích xuất world state. Chỉ trả JSON hợp lệ." }, { role: "user", content: prompt }], maxTokens: 8000, temperature: 0.15 }, 2);
+      const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "system", content: "Bạn là bộ máy trích xuất world state. Chỉ trả JSON hợp lệ." }, { role: "user", content: prompt }], maxTokens: 9200, temperature: 0.15 }, 2);
       const parsed = await parseObjectWithRepair(job, r.text, keys);
       if (!parsed.obj) { res.failed++; res.notes.push(`${tag}: KHÔNG đọc được JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`); continue; }
       const before = [state.locations.length, state.items.length, state.threads.length];
@@ -739,7 +739,7 @@ async function updateCurrentStatus(job, chapter, n, state) {
       `Cập nhật CURRENT STATUS sau chương ${n}. Chỉ thay đổi những gì chương chứng minh. Không xóa thông tin cũ chỉ vì không nhắc lại. Mỗi trường là MỘT chuỗi văn bản ngắn (không dùng mảng), không dùng dấu " bên trong chuỗi.`,
       source,
       'Trả DUY NHẤT JSON: {"currentSituation":"","mainCharacter":"","characters":"","locations":"","power":"","relationships":"","knowledge":"","unresolved":"","nextHooks":""}'
-    ].join("\n\n") }], maxTokens: 5000, temperature: 0.15 }, 2);
+    ].join("\n\n") }], maxTokens: 5750, temperature: 0.15 }, 2);
     const parsed = await parseObjectWithRepair(job, r.text, keys);
     const obj = parsed.obj;
     if (!obj) { res.notes.push(`Status: KHÔNG đọc được JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`); res.problems.push("Status: không đọc được JSON; Status cũ được giữ nguyên"); return res; }
@@ -777,7 +777,7 @@ async function updateLongMemory(job, chapter, n, state) {
       "Chỉ ghi sự kiện có bằng chứng. Không bịa. Mỗi mục ngắn gọn (tối đa 30 từ). Không dùng dấu \" bên trong chuỗi.",
       source,
       'Trả DUY NHẤT JSON: {"events":[{"type":"event|consequence|reveal|death|power_change","summary":"","causes":"","consequences":""}],"foreshadowing":[{"description":"","status":"seeded|developing|paid_off|abandoned","match":"","characters":""}],"knowledge":[{"character":"","fact":"","confidence":"direct|inferred|reported"}]}'
-    ].join("\n\n") }], maxTokens: 8000, temperature: 0.15 }, 2);
+    ].join("\n\n") }], maxTokens: 9200, temperature: 0.15 }, 2);
     const parsed = await parseObjectWithRepair(job, r.text, keys);
     const obj = parsed.obj;
     if (!obj) { res.notes.push(`Memory: KHÔNG đọc được JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`); res.problems.push("Memory: không đọc được JSON; dữ liệu cũ được giữ"); return res; }
@@ -818,7 +818,7 @@ async function scanScenes(job, chapter, n, state) {
   if (timeLeft() < 60000) { res.ok = false; res.notes.push("Scene: BỎ QUA vì sắp hết thời gian job"); res.problems.push("Scene: bỏ qua vì hết thời gian"); return res; }
   const source = representativeText(chapter.text, 24000);
   try {
-    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: `Nếu chương có cảnh trưởng thành, trích xuất ngắn gọn (mô tả tối đa 30 từ, không dùng dấu " trong chuỗi). Nếu không có trả []. Chỉ JSON array.\n${source}\n[{"intensity":1,"participants":[],"description":"","structure":"kiss|foreplay|sex|other"}]` }], maxTokens: 4000, temperature: 0.1 }, 2);
+    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: `Nếu chương có cảnh trưởng thành, trích xuất ngắn gọn (mô tả tối đa 30 từ, không dùng dấu " trong chuỗi). Nếu không có trả []. Chỉ JSON array.\n${source}\n[{"intensity":1,"participants":[],"description":"","structure":"kiss|foreplay|sex|other"}]` }], maxTokens: 4600, temperature: 0.1 }, 2);
     const parsed = await parseArrayWithRepair(job, r.text);
     if (!parsed.valid) { res.ok = false; res.notes.push(`Scene: KHÔNG đọc được JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`); res.problems.push("Scene: không đọc được dữ liệu cảnh"); return res; }
     if (!Array.isArray(state.scenes)) state.scenes = [];
