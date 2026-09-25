@@ -1,4 +1,4 @@
-# Xưởng Truyện AI Pro Max v9 — GitHub + Netlify + iPhone
+# Xưởng Truyện AI Pro Max v10.2 — GitHub + Netlify + iPhone
 
 Bản v9 giữ nguyên kiến trúc **1 file HTML + 3 Netlify Functions**, không cần React/Docker/PostgreSQL, phù hợp chạy bằng GitHub Pages/Netlify và sử dụng trên iPhone.
 
@@ -198,3 +198,41 @@ API key không được xuất nếu `includeKeyOnExport` đang tắt.
 
 ## v9.4.1 — Nâng thêm ~15% token trích xuất
 Worker: NV 11500, Thế giới/Memory 9200, Status 5750, Scene 4600, Tóm tắt 2900, sửa JSON 6900-8000. Client tăng tương ứng.
+
+
+## v10 — Lorebook (Dynamic Context Engine)
+- Thẻ tri thức (tên, từ khóa, nội dung, priority 1–100, bật/tắt, "luôn bật") — CRUD + Export/Import JSON + tìm kiếm.
+- Quét từ khóa khớp **nguyên từ**, không phân biệt hoa/thường, hỗ trợ `/regex/`; quét ~3.000 từ gần nhất + Mệnh lệnh + Status.
+- Sắp theo priority, cắt theo ngân sách token (mặc định 2.000); thẻ bị bỏ được báo trong panel và thanh trạng thái (📖 Lore).
+- Dùng chung logic ở chế độ viết trên trình duyệt **và** background worker.
+- Dữ liệu cũ tương thích: không đổi khóa localStorage; lorebook nằm trong backup JSON của truyện.
+
+## v10.1 — Giao diện 2 cột, gọn nhẹ
+- Desktop: 2 cột cuộn độc lập (Thiết lập | Viết). Điện thoại: 2 tab dưới cùng "✍ Viết" / "📚 Thiết lập" thay vì một cột dài.
+- Ẩn Scene Tracker, Vật phẩm, Lịch sử theo chương, Consent Log, Continuity, Độ khó (giữ id, dữ liệu cũ không mất; Lorebook thay cho Vật phẩm).
+- Tắt các tác vụ nền tốn API nhưng không cần để viết: quét Scene, Continuity, Checkpoint, Pacing (cả client và worker). Còn lại: Tóm tắt, Nhân vật, Thế giới, Status, Memory.
+
+
+## v10.2 — IndexedDB + iOS Writer Architecture
+
+Bản v10.2 tái cấu trúc giao diện và lưu trữ:
+
+- Layout 2 cột: cột thiết lập giữ các phần trước **5. Công Cụ Sáng Tác**; cột Viết giữ **Công Cụ Sáng Tác và toàn bộ phần bên dưới**.
+- State khi lưu được chuẩn hóa thành hai khối chính trong IndexedDB: `StoryMetaData` và `ChapterData`.
+- `apiSettings` gom Endpoint, API key, model chính, model NSFW và cấu hình NSFW.
+- Auto-save dùng debounce khoảng 1.75 giây, không ghi `localStorage` theo từng ký tự.
+- Snapshot giữ tối đa 5–10 bản mới nhất/chương, mặc định 7.
+- Lorebook và thẻ nhân vật được giới hạn tối đa 5 thẻ/prompt.
+- Sliding Window ưu tiên khoảng 1.500 từ gần nhất; chương cũ dùng summary.
+- Summary tự động 2–3 câu sau khi hoàn thành chương.
+- Có Glossary Lock, Ban Words/Anti-AI tropes, quét từ lặp, làm sạch văn bản.
+- Streaming tiếp tục hiển thị từng chunk; draft chunk được lưu vào IndexedDB để có thể khôi phục khi request bị ngắt.
+- Có Token/chi phí dự tính, Backup JSON 1-click và Wake Lock cho iOS.
+- Tương thích dữ liệu cũ: dữ liệu `localStorage` được dùng như nguồn migration/fallback, dữ liệu mới ghi vào IndexedDB.
+
+> Lưu ý: iOS có thể đóng băng tab khi người dùng chủ động chuyển ứng dụng; Wake Lock chỉ giúp giảm trường hợp màn hình tự ngủ. Streaming + draft buffer giảm rủi ro mất phần văn bản đã nhận.
+
+
+## v10.2.1 Layout
+- Cột Viết: Công Cụ Sáng Tác, Quản Lý Dữ Liệu, điều hướng chương, toolbar tách/gộp/chèn/tóm tắt/viết lại, editor và hậu kỳ iOS.
+- Cột Thiết lập: API/Model và toàn bộ Bible/nhân vật/địa điểm/status/memory/lorebook/chỉ đạo/quy tắc/18+.

@@ -1,13 +1,14 @@
 <!DOCTYPE html>
+
 <html lang="vi">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0e0f13">
-<title>Xưởng Truyện AI Pro Max v9</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
+<meta content="yes" name="apple-mobile-web-app-capable"/>
+<meta content="#0e0f13" name="theme-color"/>
+<title>Xưởng Truyện AI Pro Max v10</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
 <style>
 :root{--bg:#0e0f13;--panel:#171922;--panel-2:#1e2129;--line:#2a2e3a;--ink:#e8e8ec;--ink-dim:#9a9dab;--gold:#d9a441;--gold-dim:#8a6b2c;--purple:#9d6bf0;--blue:#4d8bf5;--green:#3fae72;--red:#e2584d;--amber:#e0a83f;--teal:#3fb8ae;--pink:#e86b9a;--radius:10px;}
 *{box-sizing:border-box;}
@@ -44,7 +45,17 @@ a{color:inherit;}
 .checkpoint-banner{background:rgba(157,107,240,.12);border-bottom:1px solid rgba(157,107,240,.4);color:var(--purple);}
 .pacing-banner{background:rgba(232,107,154,.12);border-bottom:1px solid rgba(232,107,154,.4);color:var(--pink);}
 .banner .cp-actions{display:flex;gap:6px;flex-wrap:wrap;}
-.layout{display:grid;grid-template-columns:430px 1fr;min-height:calc(100vh - 130px);}
+.layout{display:grid;grid-template-columns:minmax(320px,380px) minmax(0,1fr);min-height:calc(100vh - 130px);align-items:start;}
+.sidebar{min-width:0;padding-bottom:18px}.settings-stack{display:flex;flex-direction:column;gap:0}.settings-stack>.section{margin-top:10px}
+.main{min-width:0;}
+.authoring-stack{display:flex;flex-direction:column;gap:0;min-width:0;}
+.authoring-stack>.section{margin-bottom:10px}
+@media (min-width:901px){.layout{grid-template-columns:minmax(0,1.18fr) minmax(330px,420px)}.main{grid-column:1;grid-row:1}.sidebar{grid-column:2;grid-row:1;border-right:0;border-left:1px solid var(--line);}.authoring-stack{order:0}.editor-toolbar{order:1}.chapter-strip{order:2}.editor-panel{order:3}}
+.authoring-stack>.section{margin-top:10px;}
+.authoring-stack>.section:first-child{margin-top:0;}
+@media (max-width:1100px){.layout{grid-template-columns:minmax(280px,340px) minmax(0,1fr);}}
+@media (max-width:820px){.layout{display:block}.sidebar{width:100%}.main{width:100%}.authoring-stack{padding-bottom:calc(18px + env(safe-area-inset-bottom));}}
+
 @media (max-width:900px){.layout{grid-template-columns:1fr;}}
 .sidebar{border-right:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 130px);overflow-y:auto;}
 @media (max-width:900px){.sidebar{max-height:none;}}
@@ -200,6 +211,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 .plan-box.show,.summary-box.show,.scene-box.show{display:block;}
 .editor-text{flex:1;font-family:'Lora',serif;font-size:16px;line-height:1.85;color:#dcdce2;white-space:pre-wrap;outline:none;min-height:340px;}
 .editor-text.streaming:after{content:"▍";color:var(--gold);animation:blink 1s infinite;}
+.audit-hit{background:rgba(226,88,77,.25);color:#ff9b93;border-bottom:2px solid var(--red);padding:0 1px;}
 @keyframes blink{50%{opacity:.2;}}
 .floating-rewrite{position:fixed;z-index:9000;background:var(--purple);color:#1c1030;padding:6px 10px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.4);display:none;}
 .floating-rewrite:hover{filter:brightness(1.1);}
@@ -231,554 +243,597 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 ::-webkit-scrollbar{width:8px;height:8px;}
 ::-webkit-scrollbar-thumb{background:#2f3340;border-radius:8px;}
 ::-webkit-scrollbar-track{background:transparent;}
+
+/* v10.1: 2 cột */
+#legacyHidden{display:none!important}
+.layout{grid-template-columns:clamp(360px,32vw,460px) 1fr;height:calc(100vh - 130px);min-height:0}
+.main{overflow-y:auto;max-height:calc(100vh - 130px);min-width:0;contain:layout paint}
+.sidebar{contain:layout paint}
+.pane-tabs{display:none}
+@media (max-width:900px){
+  .layout{display:block;height:auto}
+  .main{max-height:none;overflow:visible;contain:none}
+  body[data-pane="main"] .sidebar{display:none}
+  body[data-pane="side"] .main{display:none}
+  body{padding-bottom:calc(60px + env(safe-area-inset-bottom,0px))}
+  .pane-tabs{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:60;background:var(--panel-2,#1b1b22);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+  .pane-tabs button{flex:1;padding:14px 0;font-size:15px;font-weight:600;background:none;border:0;color:var(--ink);opacity:.6}
+  .pane-tabs button.on{opacity:1;box-shadow:inset 0 3px 0 var(--gold,#d9a441)}
+}
+
+/* v10.2 — iOS writer layout + performance */
+.writer-tools-note{font-size:11px;color:var(--ink-dim);margin:6px 0 10px;line-height:1.45}
+.token-estimator{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 10px;background:rgba(77,139,245,.08);border:1px solid rgba(77,139,245,.25);border-radius:8px;font-size:11px;color:var(--ink-dim)}
+.token-estimator b{color:var(--ink)}
+.clean-highlight{background:rgba(226,88,77,.22);border-bottom:1px dashed var(--red)}
+#chapterText.streaming{caret-color:var(--gold)}
+/* v10.2 column labels */
+.column-heading{
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.12em;
+  color:var(--ink-dim);
+  padding:2px 2px 6px;
+  text-transform:uppercase;
+}
+.writer-column-heading{margin:0 2px;}
+.settings-column-heading{margin:0 0 2px;}
+
+/* v10.2 explicit two-column writer/settings layout */
+@media (min-width:901px){
+  .layout{
+    grid-template-columns:minmax(0,1fr) minmax(330px,420px);
+    align-items:stretch;
+    min-height:calc(100vh - 130px);
+  }
+  .main{grid-column:1;grid-row:1;min-width:0;}
+  .sidebar{
+    grid-column:2;grid-row:1;
+    min-width:0;
+    max-height:calc(100vh - 130px);
+    overflow-y:auto;
+    border-right:0;
+    border-left:1px solid var(--line);
+  }
+  .authoring-stack{min-width:0;}
+}
+
+@media (max-width:900px){
+  .layout{display:block;}
+  .main,.sidebar{width:100%;}
+  .sidebar{border-left:0;border-right:0;max-height:none;}
+}
+
+.authoring-stack .section-body{max-height:none}
+@supports (-webkit-touch-callout:none){body{-webkit-text-size-adjust:100%}.btn,.icon-btn,input,textarea,select{font-size:16px}.btn-sm{font-size:13px}}
 </style>
 </head>
 <body>
-
 <div class="topbar">
-  <div class="brand">
-    <div class="brand-mark"></div>
-    <div>
-      <div class="brand-name">Xưởng Truyện AI Pro Max</div>
-      <div class="brand-sub">v9 · Memory Engine · Background Safe · Continuity Guard</div>
-    </div>
-  </div>
-  <div class="topbar-actions">
-    <button class="icon-btn" id="promptPreviewBtn" title="Xem prompt cuối">👁</button>
-    <button class="icon-btn" id="costBtn" title="Chi phí">💰</button>
-    <button class="icon-btn" id="newStoryBtn" title="Truyện mới">＋</button>
-    <button class="icon-btn" id="helpBtn" title="Trợ giúp">?</button>
-  </div>
+<div class="brand">
+<div class="brand-mark"></div>
+<div>
+<div class="brand-name">Xưởng Truyện AI Pro Max</div>
+<div class="brand-sub">v10.2.1 · 2 cột · Lorebook · Memory</div>
 </div>
-
+</div>
+<div class="topbar-actions">
+<button class="icon-btn" id="promptPreviewBtn" title="Xem prompt cuối">👁</button>
+<button class="icon-btn" id="costBtn" title="Chi phí">💰</button>
+<button class="icon-btn" id="newStoryBtn" title="Truyện mới">＋</button>
+<button class="icon-btn" id="helpBtn" title="Trợ giúp">?</button>
+</div>
+</div>
 <div class="story-tabs" id="storyTabsBar">
-  <div class="story-tab-list" id="storyTabList"></div>
-  <button class="story-tab-add" id="storyTabAdd" title="Tạo truyện mới">＋</button>
+<div class="story-tab-list" id="storyTabList"></div>
+<button class="story-tab-add" id="storyTabAdd" title="Tạo truyện mới">＋</button>
 </div>
-
 <div class="status-bar">
-  <div class="item">📚 <b id="statChaptersBar">0</b> chương · <b id="statWordsBar">0</b> từ</div>
-  <div class="item">🎬 <b id="statScenesBar">0</b> cảnh 18+</div>
-  <div class="item">💰 <b id="statCostBar">$0.00</b></div>
-  <div class="item">📊 <b id="statCallsBar">0</b> API</div>
-  <div class="item save-ind" id="saveIndicator">✓ Đã lưu</div>
+<div class="item">📚 <b id="statChaptersBar">0</b> chương · <b id="statWordsBar">0</b> từ</div>
+<div class="item">🎬 <b id="statScenesBar">0</b> cảnh 18+</div>
+<div class="item">💰 <b id="statCostBar">$0.00</b></div>
+<div class="item">📊 <b id="statCallsBar">0</b> API</div>
+<div class="item">📖 <b id="statLoreBar">0</b> Lore</div>
+<div class="item save-ind" id="saveIndicator">✓ Đã lưu</div>
 </div>
-
 <div class="backup-banner banner" id="backupBanner">
-  <span id="backupBannerText"></span>
-  <button class="btn btn-amber btn-sm" id="backupNowBtn" style="width:auto;">Sao lưu ngay</button>
+<span id="backupBannerText"></span>
+<button class="btn btn-amber btn-sm" id="backupNowBtn" style="width:auto;">Sao lưu ngay</button>
 </div>
-
 <div class="checkpoint-banner banner" id="checkpointBanner">
-  <span id="checkpointBannerText"></span>
-  <div class="cp-actions" id="checkpointActions"></div>
+<span id="checkpointBannerText"></span>
+<div class="cp-actions" id="checkpointActions"></div>
 </div>
-
 <div class="pacing-banner banner" id="pacingBanner">
-  <span id="pacingBannerText"></span>
-  <div class="cp-actions" id="pacingActions"></div>
+<span id="pacingBannerText"></span>
+<div class="cp-actions" id="pacingActions"></div>
+</div>
+<nav class="pane-tabs" id="paneTabs"><button data-pane="main">✍ Viết</button><button data-pane="side">📚 Thiết lập</button></nav>
+<div class="layout">
+<div class="sidebar" data-column="settings">
+<div aria-label="Cột thiết lập" class="column-heading settings-column-heading">⚙ CỘT THIẾT LẬP</div>
+<div class="api-card">
+<label for="apiEndpoint">Endpoint</label>
+<input id="apiEndpoint" type="text" value="https://openrouter.ai/api/v1/chat/completions"/>
+<div style="margin-top:8px;">
+<label for="apiKey">API Key</label>
+<div class="api-row">
+<input id="apiKey" placeholder="Dán API key" type="password"/>
+<button class="icon-btn" id="toggleKeyVis">👁</button>
+</div>
+</div>
+<div style="margin-top:8px;">
+<label for="modelSelect">🤖 Model chính (cảnh thường)</label>
+<input id="modelSelect" type="text" value="deepseek/deepseek-v3.2"/>
+</div>
+<div style="margin-top:8px;">
+<label for="modelNsfwSelect">🔥 Model NSFW (cảnh nóng)</label>
+<input class="nsfw-input" id="modelNsfwSelect" type="text" value="aion-labs/aion-2.0"/>
+</div>
+<div style="margin-top:8px;">
+<label for="nsfwModeSelect">Khi nào dùng NSFW</label>
+<select id="nsfwModeSelect">
+<option selected="" value="auto">🤖 Tự động theo cảnh (khuyến nghị)</option>
+<option value="mature_only">Chỉ khi bật 18+</option>
+<option value="always">Luôn dùng</option>
+<option value="never">Không bao giờ</option>
+</select>
+</div>
+<div id="nsfwAutoOpts" style="margin-top:8px;">
+<label for="nsfwAutoThreshold">Ngưỡng nhiệt độ (3-9)</label>
+<input id="nsfwAutoThreshold" max="9" min="3" step="1" type="number" value="6"/>
+<div class="hint" style="margin-top:4px;">4-5 nhạy · 6-7 cân bằng · 8-9 chỉ cảnh rõ</div>
+</div>
+<button class="btn btn-ghost" id="saveKeyBtn" style="margin-top:8px;">Lưu &amp; kiểm tra</button>
+<div class="api-status" id="apiStatus">Chưa kiểm tra.</div>
+</div>
+<div class="section tone-purple settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>0.0. Style Bible</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="row2">
+<div class="field"><label>Ngôi kể</label>
+<select id="povSelect">
+<option selected="" value="third_limited">3 — giới hạn</option>
+<option value="third_omniscient">3 — toàn tri</option>
+<option value="first">1 — "tôi"</option>
+</select>
+</div>
+<div class="field"><label>Thì</label>
+<select id="tenseSelect">
+<option selected="" value="past">Quá khứ</option>
+<option value="present">Hiện tại</option>
+</select>
+</div>
+</div>
+<div class="field"><label>Tông / Không khí</label><input id="toneInput" placeholder="VD: dark romance u ám" type="text"/></div>
+<div class="field"><label>Đoạn văn mẫu</label><textarea id="sampleStyleInput" placeholder="Dán 1-2 đoạn văn bạn muốn AI bắt chước" rows="3"></textarea></div>
+<div class="field"><label>Quy tắc văn phong bổ sung</label><textarea id="styleExtraInput" rows="2"></textarea></div>
+<button class="btn btn-purple" id="saveStyleBibleBtn">💾 Lưu Style Bible</button>
+</div>
+</div><div class="section tone-gold settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>0.1. Story Bible</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="field"><label>Cốt Truyện Chính</label><textarea id="mainPlot" rows="3"></textarea></div>
+<div class="field"><label>Thể Loại</label><input id="genre" type="text"/></div>
+<div class="field"><label>Thế Giới</label><textarea id="worldSetting" rows="2"></textarea></div>
+<div class="field"><label>Quy Tắc Thế Giới</label><textarea id="worldRules" rows="2"></textarea></div>
+<div class="field"><label>Quy Tắc Khác</label><textarea id="antagonist" rows="2"></textarea></div>
+<div class="field"><label style="color:var(--amber);">🗣️ Quy Tắc Xưng Hô</label><textarea id="pronounRules" rows="3"></textarea></div>
+<div class="field"><label style="color:var(--purple);">🎨 Miêu tả thế giới / không khí</label><textarea id="worldDescription" placeholder="Màu sắc, mùi, âm thanh, kiến trúc..." rows="3"></textarea></div>
+<div class="toggle-row"><span>🔒 Khóa Story Bible</span><label class="switch"><input id="storyBibleLock" type="checkbox"/><span class="slider-tg"></span></label></div>
+<button class="btn btn-gold" id="saveSettingsBtn">💾 Lưu Story Bible</button>
+</div>
+</div><div class="section tone-pink settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>📚 Vocabulary Library</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="field"><label>Mức độ explicit</label>
+<select id="explicitLevelSelect">
+<option value="subtle">Nhẹ nhàng (fade-to-black)</option>
+<option value="sensual">Gợi cảm (cảm xúc, ít mô tả cơ thể)</option>
+<option value="explicit">Rõ ràng (mô tả cơ thể, hành động)</option>
+<option selected="" value="strong">Mạnh (táo bạo, chi tiết cao)</option>
+<option value="wild">Cực mạnh (không né tránh gì)</option>
+</select>
+</div>
+<div class="field"><label>Từ muốn dùng (mỗi dòng 1 từ/cụm)</label><textarea id="vocabPreferred" placeholder="VD: cậu ấy, em, nàng, đôi mắt sâu thẳm..." rows="3"></textarea></div>
+<div class="field"><label>Từ muốn tránh</label><textarea id="vocabBanned" placeholder="VD: từ y khoa, từ thô tục, các từ sáo rỗng..." rows="3"></textarea></div>
+<div class="field"><label>Cụm đã dùng nhiều (AI tránh lặp)</label><textarea id="vocabOverused" placeholder="Tự động cập nhật sau mỗi chương" rows="2"></textarea></div>
+<div class="field"><label>Cách gọi bộ phận (nếu cần)</label><textarea id="vocabAnatomy" placeholder="VD: dùng 'ngực', tránh từ quá thô" rows="2"></textarea></div>
+<button class="btn btn-pink" id="saveVocabBtn">💾 Lưu Vocabulary</button>
+<button class="btn btn-ghost" id="autoDetectOverusedBtn">🔍 Tự động tìm cụm lặp</button>
+</div>
+</div><div class="section tone-amber settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>0.2. Nhân Vật Chính</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="row2"><input id="mcNameInput" placeholder="Tên" type="text"/><input id="mcAgeInput" placeholder="Tuổi" type="text"/></div>
+<div class="row2"><input id="mcGenderInput" placeholder="Giới tính" type="text"/><input id="mcOccupationInput" placeholder="Nghề" type="text"/></div>
+<input id="mcLocationInput" placeholder="Đang ở đâu" type="text"/>
+<textarea id="mcAppearanceInput" placeholder="Ngoại hình tổng quát" rows="2"></textarea>
+<div class="hint" style="color:var(--purple);margin-top:4px;">🎨 Miêu tả chi tiết</div>
+<div class="row2">
+<input id="mcHeightInput" placeholder="Chiều cao" type="text"/>
+<input id="mcBodyTypeInput" placeholder="Dáng người" type="text"/>
+</div>
+<div class="row2">
+<input id="mcHairInput" placeholder="Tóc" type="text"/>
+<input id="mcEyesInput" placeholder="Mắt" type="text"/>
+</div>
+<div class="row2">
+<input id="mcSkinInput" placeholder="Da" type="text"/>
+<input id="mcVoiceInput" placeholder="Giọng nói" type="text"/>
+</div>
+<input id="mcScentInput" placeholder="Mùi hương đặc trưng" type="text"/>
+<input id="mcStyleInput" placeholder="Phong cách ăn mặc" type="text"/>
+<input id="mcScarsInput" placeholder="Sẹo / dấu đặc biệt" type="text"/>
+<input id="mcTattoosInput" placeholder="Hình xăm" type="text"/>
+<textarea id="mcPersonalityInput" placeholder="Tính cách" rows="2"></textarea>
+<textarea id="mcSpeechInput" placeholder="Cách nói riêng (từ hay dùng, ngữ điệu)" rows="2"></textarea>
+<textarea id="mcGoalsInput" placeholder="Mục tiêu" rows="2"></textarea>
+<textarea id="mcSkillsInput" placeholder="Kỹ năng" rows="2"></textarea>
+<textarea id="mcPhysicalInput" placeholder="Thể trạng" rows="2"></textarea>
+<textarea id="mcMentalInput" placeholder="Tâm lý" rows="2"></textarea>
+<textarea id="mcSecretInput" placeholder="Bí mật" rows="2"></textarea>
+<div class="hint" style="color:var(--red);margin-top:4px;">🔥 18+</div>
+<textarea id="mcSexualExpInput" placeholder="Kinh nghiệm 18+" rows="2"></textarea>
+<textarea id="mcBoundariesInput" placeholder="Ranh giới / consent" rows="2"></textarea>
+<textarea id="mcPreferencesInput" placeholder="Sở thích / kink" rows="2"></textarea>
+<button class="btn btn-amber" id="saveMainCharBtn">💾 Lưu</button>
+<button class="btn btn-ghost" id="rescanMainCharBtn">🔄 AI cập nhật</button>
+</div>
+</div><div class="section tone-purple settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>0.3. Character Database</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="char-summary-row">
+<div class="stat"><b id="statTotal">0</b>Tổng</div>
+<div class="stat"><b id="statMajor">0</b>Chính</div>
+<div class="stat"><b id="statStale">0</b>Vắng</div>
+<div class="stat"><b id="statDead">0</b>Chết</div>
+</div>
+<div class="char-list" id="charList"><div class="empty-note">Chưa có.</div></div>
+<button class="btn btn-ghost" id="charGraphBtn" style="margin-top:6px;">🕸️ Sơ đồ quan hệ nhân vật</button>
+<button class="btn btn-ghost" id="autoTierBtn" style="margin-top:6px;">⚙️ Tự động xếp hạng tất cả NV</button>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<input id="npcNameInput" placeholder="Tên" style="margin-bottom:6px;" type="text"/>
+<textarea id="npcDescInput" placeholder="Ngoại hình" rows="2" style="margin-bottom:6px;"></textarea>
+<div class="row2" style="margin-bottom:6px;">
+<input id="npcPersonalityInput" placeholder="Tính cách" type="text"/>
+<input id="npcAgeInput" placeholder="Tuổi" type="text"/>
+</div>
+<div class="row2" style="margin-bottom:6px;">
+<input id="npcPositionInput" placeholder="Vị trí" type="text"/>
+<select id="npcTierInput" title="Chỉ là xếp hạng ban đầu — dùng nút '⚙️ Tự động xếp hạng' bên dưới để AI tự tính lại sau này">
+<option value="minor">Minor</option>
+<option selected="" value="supporting">Supporting</option>
+<option value="important">Important</option>
+<option value="major">Major</option>
+<option value="background">Background</option>
+</select>
+</div>
+<div class="hint" style="margin-top:-2px;margin-bottom:6px;">Tier chỉ là gợi ý ban đầu (ảnh hưởng NV nào được AI "nhớ" khi viết chương) — không cần đoán chuẩn ngay, dùng nút ⚙️ bên dưới để tự tính lại sau vài chương.</div>
+</div>
+<button class="btn btn-ghost" id="npcAddBtn">＋ Thêm NV</button>
+<button class="btn btn-purple" id="npcUpdateBtn">👤 Quét toàn truyện</button>
+</div>
+</div><div class="section tone-teal settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>0.4. Địa Điểm</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div id="locationList"><div class="empty-note">Chưa có.</div></div>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<input id="locNameInput" placeholder="Tên" style="margin-bottom:6px;" type="text"/>
+<textarea id="locDescInput" placeholder="Mô tả" rows="2" style="margin-bottom:6px;"></textarea>
+<select id="locStatusInput">
+<option value="active">Active</option><option value="destroyed">Destroyed</option>
+<option value="abandoned">Abandoned</option><option value="locked">Locked</option>
+</select>
+</div>
+<button class="btn btn-teal" id="locAddBtn">＋ Thêm</button>
+</div>
+</div><div class="section tone-amber settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>0.5. Vật Phẩm</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div id="itemList"><div class="empty-note">Chưa có.</div></div>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<input id="itemNameInput" placeholder="Tên" style="margin-bottom:6px;" type="text"/>
+<textarea id="itemDescInput" placeholder="Mô tả" rows="2" style="margin-bottom:6px;"></textarea>
+<div class="row2" style="margin-bottom:6px;">
+<input id="itemOwnerInput" placeholder="Chủ" type="text"/>
+<select id="itemStatusInput">
+<option value="active">Đang dùng</option><option value="lost">Mất</option>
+<option value="destroyed">Hỏng</option><option value="stored">Cất giữ</option>
+</select>
+</div>
+</div>
+<button class="btn btn-amber" id="itemAddBtn">＋ Thêm</button>
+</div>
+</div><div class="section tone-green settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>0.6. Chapter Outline</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div id="outlineList"><div class="empty-note">Chưa có.</div></div>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<div class="row2" style="margin-bottom:6px;">
+<input id="outlineFromInput" placeholder="Từ ch" type="number"/>
+<input id="outlineToInput" placeholder="Đến ch" type="number"/>
+</div>
+<input id="outlineNameInput" placeholder="Tên giai đoạn" style="margin-bottom:6px;" type="text"/>
+<textarea id="outlineContentInput" placeholder="Mô tả" rows="4"></textarea>
+</div>
+<button class="btn btn-green" id="outlineAddBtn">＋ Thêm</button>
+<button class="btn btn-ghost" id="outlineAIGenerateBtn">🤖 AI đề xuất</button>
+</div>
+</div><div class="section tone-blue settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>0.7. Arc Manager</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div id="arcList"><div class="empty-note">Chưa có.</div></div>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<input id="arcNameInput" placeholder="Tên Arc" style="margin-bottom:6px;" type="text"/>
+<div class="row2" style="margin-bottom:6px;">
+<input id="arcStartInput" placeholder="Ch đầu" type="number"/>
+<input id="arcEndInput" placeholder="Ch cuối" type="number"/>
+</div>
+<textarea id="arcGoalInput" placeholder="Mục tiêu" rows="2"></textarea>
+</div>
+<button class="btn btn-blue" id="arcAddBtn">＋ Thêm Arc</button>
+</div>
+</div><div class="section tone-blue settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>1. Current Status</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="status-box" id="statusBox">Chưa có.</div>
+<div class="field"><label>🕐 Thời điểm hiện tại (Story Clock)</label>
+<div class="api-row">
+<input id="storyClock" placeholder="VD: Ngày 3, buổi tối / 2 tuần sau khi gặp" type="text"/>
+<button class="btn btn-ghost btn-sm" id="saveClockBtn" style="width:auto;flex:none;">Lưu</button>
+</div>
+</div>
+<textarea id="statusEdit" rows="6" style="display:none;"></textarea>
+<button class="btn btn-blue" id="statusFullRescanBtn">🕘 Quét toàn bộ</button>
+<button class="btn btn-ghost" id="statusEditToggle" style="font-size:11.5px;">✎ Sửa</button>
+</div>
+</div><div class="section tone-purple settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>1.6. Memory Engine v9</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="hint">Bộ nhớ dài hạn: Timeline, Foreshadowing và Knowledge Ledger. Đây là dữ liệu phụ trợ để AI không quên diễn biến/kiến thức của từng nhân vật.</div>
+<div class="status-box" id="memoryStats" style="max-height:180px;">Chưa có.</div>
+<button class="btn btn-purple" id="memoryRescanBtn">🧠 Quét lại Memory toàn truyện</button>
+</div>
+</div><div class="section tone-amber settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>1.7. Lorebook v10</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="hint">Thẻ tri thức tự bật khi từ khóa xuất hiện trong ~3.000 từ gần nhất, Mệnh lệnh hoặc Status. Từ khóa cách nhau bằng dấu phẩy; dùng <code>/regex/</code> nếu cần. Thẻ ưu tiên cao được giữ lại khi hết ngân sách.</div>
+<input id="loreSearch" placeholder="🔎 Tìm thẻ..." type="search"/>
+<div id="loreList"></div>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<input id="loreName" placeholder="Tên (VD: Linh Nhi)"/>
+<input id="loreKeys" placeholder="Từ khóa: Linh Nhi, sư muội, /tiểu\s*sư\s*muội/"/>
+<textarea id="loreContent" placeholder="Ngoại hình, tính cách, xưng hô, quy tắc..." rows="4"></textarea>
+<div class="row2">
+<input id="lorePriority" max="100" min="1" title="Độ ưu tiên 1-100" type="number" value="50"/>
+<label><input id="loreAlways" type="checkbox"/> Luôn bật</label>
+</div>
+<div class="row2">
+<button class="btn btn-green" id="loreSaveBtn">💾 Thêm thẻ</button>
+<button class="btn" id="loreCancelBtn">Hủy</button>
+</div>
+</div>
+<label class="hint">Ngân sách Lorebook (token): <input id="loreBudget" max="20000" min="200" step="100" type="number" value="2000"/></label>
+<div class="status-box" id="loreStatus" style="max-height:120px;white-space:pre-wrap;">Chưa có lượt viết nào.</div>
+<div class="row2">
+<button class="btn" id="loreExportBtn">⬇ Export JSON</button>
+<button class="btn" id="loreImportBtn">⬆ Import JSON</button>
+</div>
+<input accept="application/json,.json" hidden="" id="loreImportFile" type="file"/>
+</div>
+</div><div class="section tone-teal settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>1.5. Threads</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div id="threadList"><div class="empty-note">Chưa có.</div></div>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<div class="row2" style="margin-bottom:6px;">
+<select id="threadTypeInput">
+<option value="open_thread">Open Thread</option>
+<option value="foreshadowing">Foreshadowing</option>
+<option value="consequence">Consequence</option>
+</select>
+<select id="threadStatusInput">
+<option value="seeded">Seeded</option><option value="developing">Developing</option>
+<option value="paid_off">Paid off</option><option value="abandoned">Abandoned</option>
+</select>
+</div>
+<textarea id="threadDescInput" placeholder="Mô tả" rows="2"></textarea>
+</div>
+<button class="btn btn-ghost" id="threadAddBtn">＋ Thêm</button>
+</div>
+</div><div class="section tone-green settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>2. Chỉ Đạo</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="field"><label>Mệnh lệnh chương tới</label><textarea id="directive" rows="3"></textarea></div>
+</div>
+</div><div class="section tone-green settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>2.5. Quy Tắc Nâng Cao</span><span class="chev">▾</span></div>
+<div class="section-body">
+<textarea id="advancedRules" rows="10"></textarea>
+<button class="btn btn-green" id="saveAdvancedRulesBtn">💾 Lưu</button>
+</div>
+</div><div class="section tone-red settings-only-section" data-column="settings" data-section="">
+<div class="section-head" data-toggle=""><span>4. Nội Dung 18+</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="toggle-row"><span>🔥 Cho phép trưởng thành</span><label class="switch"><input id="matureToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="hint" id="nsfwHint"></div>
+<div class="warn-box">Không hỗ trợ nội dung khiêu dâm trẻ em.</div>
+</div>
+</div></div>
+<div class="main" data-column="writer">
+<div aria-label="Cột viết" class="column-heading writer-column-heading">✍ CỘT VIẾT</div>
+<div aria-label="Công cụ viết và hậu kỳ" class="authoring-stack" data-column="writer-tools" id="authoringStack"><div class="section tone-plain open writer-only-section" data-column="writer" data-section="">
+<div class="section-head" data-toggle=""><span>5. Công Cụ Sáng Tác</span><span class="chev">▾</span></div>
+<div class="section-body">
+<button class="btn btn-blue" id="writeChapterBtn">✨ Tạo Chương Mới</button>
+<button class="btn btn-ghost" id="continueChapterBtn">➕ Viết Tiếp</button>
+<button class="btn btn-stop" id="stopBtn" style="display:none;">⏹ Dừng</button>
+<button class="btn btn-teal" id="bgWriteBtn" title="Gửi job lên server, bạn có thể tắt máy">☁ Viết chương nền (tắt máy được)</button>
+<div id="bgJobStatus" style="font-size:12px;color:var(--ink-dim);margin-top:6px;display:none;"></div>
+<div class="field"><label>Chế độ viết lại</label>
+<select id="regenModeSelect">
+<option value="full">Viết lại toàn bộ</option>
+<option value="continuity">Sửa continuity</option>
+<option value="depth">Tăng tâm lý</option>
+<option value="describe">Tăng miêu tả</option>
+<option value="world">Tăng world-building</option>
+<option value="pacing">Cải thiện nhịp</option>
+</select>
+</div>
+<div class="field"><label>Độ dài tối thiểu (từ)</label><input id="minWordsInput" min="500" step="500" type="number" value="5000"/></div>
+<div class="field"><label>Auto-continue tối đa</label><input id="autoContinueMaxInput" max="8" min="0" type="number" value="4"/></div>
+<div class="field"><label>🎨 Mức độ miêu tả</label>
+<select id="descriptionLevelSelect">
+<option value="light">Nhẹ (đủ hiểu)</option>
+<option selected="" value="balanced">Cân bằng</option>
+<option value="rich">Phong phú (nhiều chi tiết)</option>
+<option value="deep">Sâu đậm (tả kỹ mọi thứ)</option>
+</select>
+</div>
+<div class="toggle-row"><span>📝 Rà chính tả + xưng hô</span><label class="switch"><input checked="" id="spellCheckToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>🔄 Auto-continue</span><label class="switch"><input checked="" id="autoContinueToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>📄 Auto summary</span><label class="switch"><input checked="" id="autoSummaryToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>🎬 Auto scene detection</span><label class="switch"><input checked="" id="autoSceneToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>⚠ Check trùng</span><label class="switch"><input checked="" id="dupCheckToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>🌊 Streaming</span><label class="switch"><input checked="" id="streamingToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>🚦 Queue tuần tự</span><label class="switch"><input checked="" id="queueToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>⚡ Parallel post-process</span><label class="switch"><input checked="" id="parallelToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>🎯 Checkpoints tự động</span><label class="switch"><input checked="" id="checkpointToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="toggle-row"><span>Tự động tạo</span><label class="switch"><input id="autoToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="field"><label>Khoảng cách (s)</label><input id="autoIntervalInput" min="30" step="10" type="number" value="180"/></div>
+</div>
+</div><div class="section tone-plain writer-only-section" data-column="writer" data-section="">
+<div class="section-head" data-toggle=""><span>6. Quản Lý Dữ Liệu</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="field"><label>💾 Dung lượng đã dùng</label>
+<div class="storage-bar"><div class="storage-fill" id="storageFill" style="width:0%;"></div></div>
+<div class="hint" id="storageText">Đang tính...</div>
+</div>
+<button class="btn btn-amber" id="compressOldBtn" title="Nén chương cũ thành summary, giữ 15 chương gần">🗜️ Nén chương cũ</button>
+<div class="toggle-row"><span>Kèm API key khi xuất</span><label class="switch"><input id="includeKeyToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div class="btn-row">
+<button class="btn btn-green" id="uploadJsonBtn">⇧ Lên JSON</button>
+<button class="btn btn-green" id="downloadJsonBtn">⇩ Xuống JSON</button>
+</div>
+<input accept="application/json" class="file-hidden" id="jsonFileInput" type="file"/>
+<button class="btn btn-ghost" id="duplicateStoryBtn">📋 Nhân bản truyện này</button>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<label>🔍 Tìm &amp; Thay thế toàn truyện</label>
+<div class="row2" style="margin-bottom:6px;">
+<input id="srFindInput" placeholder="Tìm..." type="text"/>
+<input id="srReplaceInput" placeholder="Thay bằng..." type="text"/>
+</div>
+<div class="row2" style="margin-bottom:6px;">
+<button class="btn btn-ghost btn-sm" id="srFindBtn">🔍 Đếm kết quả</button>
+<button class="btn btn-outline-red btn-sm" id="srReplaceAllBtn">↔ Thay tất cả</button>
+</div>
+<div class="search-replace-panel" id="srResultPanel"><div class="sr-result" id="srResult"></div></div>
+</div>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<label>Xuất Toàn Bộ</label>
+<div class="btn-row">
+<button class="btn btn-ghost btn-sm" id="exportTxtBtn">.txt</button>
+<button class="btn btn-ghost btn-sm" id="exportMdBtn">.md</button>
+<button class="btn btn-ghost btn-sm" id="exportDocBtn">.doc</button>
+</div>
+</div>
+<div class="section tone-plain" data-section="">
+<div class="section-head" data-toggle=""><span style="font-size:12px;">Xóa Chương</span><span class="chev">▾</span></div>
+<div class="section-body">
+<select id="deleteChapterSelect"></select>
+<div class="toggle-row"><span>🧹 Xoá kèm bộ nhớ</span><label class="switch"><input checked="" id="deleteWipeMemoryToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<button class="btn btn-outline-red" id="deleteChapterBtn">🗑 Xóa</button>
+</div>
+</div>
+</div>
+</div></div>
+<div class="editor-toolbar">
+<div class="toolbar-left">
+<select class="quick-jump" id="quickJumpSelect" title="Nhảy nhanh"><option>-- Nhảy tới chương --</option></select>
+<div class="search-wrap"><input id="chapterSearch" placeholder="Tìm trong tiêu đề + nội dung..." type="text"/></div>
+</div>
+<div class="toolbar-right">
+<button class="btn btn-ghost" id="splitChapterBtn" title="Tách chương">✂ Tách</button>
+<button class="btn btn-ghost" id="mergeChapterBtn" title="Gộp chương">⊕ Gộp</button>
+<button class="btn btn-ghost" id="insertChapterBtn" title="Chèn chương trống">＋ Chèn</button>
+<button class="btn btn-ghost" id="rescanFromBtn" title="Rescan từ chương này">🔄 Rescan</button>
+<button class="btn btn-ghost" id="regenSummaryBtn" title="Tạo lại tóm tắt">📄 Tóm tắt</button>
+<button class="btn btn-pink" id="splitScenesBtn" title="Tách cảnh để rewrite riêng">🎬 Cảnh</button>
+<button class="btn btn-ghost" id="versionsBtn" title="Lịch sử">🕐</button>
+<button class="btn btn-ghost" id="regenBtn">↻ Viết lại</button>
+<button class="btn btn-nsfw" id="regenNsfwBtn">🔥 NSFW</button>
+</div>
+</div>
+<div class="chapter-strip" id="chapterStrip"></div>
+<div class="editor-panel">
+<h2 class="editor-title" id="chapterTitle">Truyện của bạn bắt đầu ở đây</h2>
+<div class="editor-badges" id="editorBadges"></div>
+<div class="summary-box" id="summaryBox"></div>
+<div class="plan-box" id="planBox"></div>
+<div class="scene-box" id="sceneBox"></div>
+<div class="editor-text" contenteditable="true" data-placeholder="Điền Story Bible, nhân vật ở sidebar rồi nhấn 'Tạo Chương Mới'..." id="chapterText"></div>
+<div class="status-line" id="statusLine"></div>
+</div>
+</div>
+</div>
+<div hidden="" id="legacyHidden">
+<div class="section tone-pink open" data-section="">
+<div class="section-head" data-toggle=""><span>🎬 Scene Tracker</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="char-summary-row">
+<div class="stat"><b id="statSceneTotal">0</b>Tổng cảnh</div>
+<div class="stat"><b id="statSceneRecent">0</b>10ch gần</div>
+<div class="stat"><b id="statSceneLastCh">–</b>Chương cuối</div>
+</div>
+<div class="hint" id="pacingHint">Pacing: chưa đủ dữ liệu.</div>
+<div id="sceneList" style="max-height:260px;overflow-y:auto;"><div class="empty-note">Chưa có cảnh 18+ nào.</div></div>
+<button class="btn btn-pink" id="rescanScenesBtn">🎬 Quét lại scene</button>
+<button class="btn btn-ghost" id="showScenesInPromptBtn" title="Bật/tắt gửi danh sách scene vào prompt">👁 Toggle gửi vào prompt</button>
+</div>
 </div>
 
-<div class="layout">
-  <div class="sidebar">
-
-    <div class="api-card">
-      <label for="apiEndpoint">Endpoint</label>
-      <input type="text" id="apiEndpoint" value="https://openrouter.ai/api/v1/chat/completions">
-      <div style="margin-top:8px;">
-        <label for="apiKey">API Key</label>
-        <div class="api-row">
-          <input type="password" id="apiKey" placeholder="Dán API key">
-          <button class="icon-btn" id="toggleKeyVis">👁</button>
-        </div>
-      </div>
-      <div style="margin-top:8px;">
-        <label for="modelSelect">🤖 Model chính (cảnh thường)</label>
-        <input type="text" id="modelSelect" value="deepseek/deepseek-v3.2">
-      </div>
-      <div style="margin-top:8px;">
-        <label for="modelNsfwSelect">🔥 Model NSFW (cảnh nóng)</label>
-        <input type="text" id="modelNsfwSelect" class="nsfw-input" value="aion-labs/aion-2.0">
-      </div>
-      <div style="margin-top:8px;">
-        <label for="nsfwModeSelect">Khi nào dùng NSFW</label>
-        <select id="nsfwModeSelect">
-          <option value="auto" selected>🤖 Tự động theo cảnh (khuyến nghị)</option>
-          <option value="mature_only">Chỉ khi bật 18+</option>
-          <option value="always">Luôn dùng</option>
-          <option value="never">Không bao giờ</option>
-        </select>
-      </div>
-      <div style="margin-top:8px;" id="nsfwAutoOpts">
-        <label for="nsfwAutoThreshold">Ngưỡng nhiệt độ (3-9)</label>
-        <input type="number" id="nsfwAutoThreshold" min="3" max="9" step="1" value="6">
-        <div class="hint" style="margin-top:4px;">4-5 nhạy · 6-7 cân bằng · 8-9 chỉ cảnh rõ</div>
-      </div>
-      <button class="btn btn-ghost" id="saveKeyBtn" style="margin-top:8px;">Lưu &amp; kiểm tra</button>
-      <div class="api-status" id="apiStatus">Chưa kiểm tra.</div>
-    </div>
-
-    <div class="section tone-pink open" data-section>
-      <div class="section-head" data-toggle><span>🎬 Scene Tracker</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="char-summary-row">
-          <div class="stat"><b id="statSceneTotal">0</b>Tổng cảnh</div>
-          <div class="stat"><b id="statSceneRecent">0</b>10ch gần</div>
-          <div class="stat"><b id="statSceneLastCh">–</b>Chương cuối</div>
-        </div>
-        <div class="hint" id="pacingHint">Pacing: chưa đủ dữ liệu.</div>
-        <div id="sceneList" style="max-height:260px;overflow-y:auto;"><div class="empty-note">Chưa có cảnh 18+ nào.</div></div>
-        <button class="btn btn-pink" id="rescanScenesBtn">🎬 Quét lại scene</button>
-        <button class="btn btn-ghost" id="showScenesInPromptBtn" title="Bật/tắt gửi danh sách scene vào prompt">👁 Toggle gửi vào prompt</button>
-      </div>
-    </div>
-
-    </div>
-
-    <div class="section tone-purple" data-section>
-      <div class="section-head" data-toggle><span>0.0. Style Bible</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="row2">
-          <div class="field"><label>Ngôi kể</label>
-            <select id="povSelect">
-              <option value="third_limited" selected>3 — giới hạn</option>
-              <option value="third_omniscient">3 — toàn tri</option>
-              <option value="first">1 — "tôi"</option>
-            </select>
-          </div>
-          <div class="field"><label>Thì</label>
-            <select id="tenseSelect">
-              <option value="past" selected>Quá khứ</option>
-              <option value="present">Hiện tại</option>
-            </select>
-          </div>
-        </div>
-        <div class="field"><label>Tông / Không khí</label><input type="text" id="toneInput" placeholder="VD: dark romance u ám"></div>
-        <div class="field"><label>Đoạn văn mẫu</label><textarea id="sampleStyleInput" rows="3" placeholder="Dán 1-2 đoạn văn bạn muốn AI bắt chước"></textarea></div>
-        <div class="field"><label>Quy tắc văn phong bổ sung</label><textarea id="styleExtraInput" rows="2"></textarea></div>
-        <button class="btn btn-purple" id="saveStyleBibleBtn">💾 Lưu Style Bible</button>
-      </div>
-    </div>
-
-    <div class="section tone-gold" data-section>
-      <div class="section-head" data-toggle><span>0.1. Story Bible</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="field"><label>Cốt Truyện Chính</label><textarea id="mainPlot" rows="3"></textarea></div>
-        <div class="field"><label>Thể Loại</label><input type="text" id="genre"></div>
-        <div class="field"><label>Thế Giới</label><textarea id="worldSetting" rows="2"></textarea></div>
-        <div class="field"><label>Quy Tắc Thế Giới</label><textarea id="worldRules" rows="2"></textarea></div>
-        <div class="field"><label>Quy Tắc Khác</label><textarea id="antagonist" rows="2"></textarea></div>
-        <div class="field"><label style="color:var(--amber);">🗣️ Quy Tắc Xưng Hô</label><textarea id="pronounRules" rows="3"></textarea></div>
-        <div class="field"><label style="color:var(--purple);">🎨 Miêu tả thế giới / không khí</label><textarea id="worldDescription" rows="3" placeholder="Màu sắc, mùi, âm thanh, kiến trúc..."></textarea></div>
-        <div class="toggle-row"><span>🔒 Khóa Story Bible</span><label class="switch"><input type="checkbox" id="storyBibleLock"><span class="slider-tg"></span></label></div>
-        <button class="btn btn-gold" id="saveSettingsBtn">💾 Lưu Story Bible</button>
-      </div>
-    </div>
-
-    <div class="section tone-pink" data-section>
-      <div class="section-head" data-toggle><span>📚 Vocabulary Library</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="field"><label>Mức độ explicit</label>
-          <select id="explicitLevelSelect">
-            <option value="subtle">Nhẹ nhàng (fade-to-black)</option>
-            <option value="sensual">Gợi cảm (cảm xúc, ít mô tả cơ thể)</option>
-            <option value="explicit">Rõ ràng (mô tả cơ thể, hành động)</option>
-            <option value="strong" selected>Mạnh (táo bạo, chi tiết cao)</option>
-            <option value="wild">Cực mạnh (không né tránh gì)</option>
-          </select>
-        </div>
-        <div class="field"><label>Từ muốn dùng (mỗi dòng 1 từ/cụm)</label><textarea id="vocabPreferred" rows="3" placeholder="VD: cậu ấy, em, nàng, đôi mắt sâu thẳm..."></textarea></div>
-        <div class="field"><label>Từ muốn tránh</label><textarea id="vocabBanned" rows="3" placeholder="VD: từ y khoa, từ thô tục, các từ sáo rỗng..."></textarea></div>
-        <div class="field"><label>Cụm đã dùng nhiều (AI tránh lặp)</label><textarea id="vocabOverused" rows="2" placeholder="Tự động cập nhật sau mỗi chương"></textarea></div>
-        <div class="field"><label>Cách gọi bộ phận (nếu cần)</label><textarea id="vocabAnatomy" rows="2" placeholder="VD: dùng 'ngực', tránh từ quá thô"></textarea></div>
-        <button class="btn btn-pink" id="saveVocabBtn">💾 Lưu Vocabulary</button>
-        <button class="btn btn-ghost" id="autoDetectOverusedBtn">🔍 Tự động tìm cụm lặp</button>
-      </div>
-    </div>
-
-    <div class="section tone-amber" data-section>
-      <div class="section-head" data-toggle><span>0.2. Nhân Vật Chính</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="row2"><input type="text" id="mcNameInput" placeholder="Tên"><input type="text" id="mcAgeInput" placeholder="Tuổi"></div>
-        <div class="row2"><input type="text" id="mcGenderInput" placeholder="Giới tính"><input type="text" id="mcOccupationInput" placeholder="Nghề"></div>
-        <input type="text" id="mcLocationInput" placeholder="Đang ở đâu">
-        <textarea id="mcAppearanceInput" rows="2" placeholder="Ngoại hình tổng quát"></textarea>
-        <div class="hint" style="color:var(--purple);margin-top:4px;">🎨 Miêu tả chi tiết</div>
-        <div class="row2">
-          <input type="text" id="mcHeightInput" placeholder="Chiều cao">
-          <input type="text" id="mcBodyTypeInput" placeholder="Dáng người">
-        </div>
-        <div class="row2">
-          <input type="text" id="mcHairInput" placeholder="Tóc">
-          <input type="text" id="mcEyesInput" placeholder="Mắt">
-        </div>
-        <div class="row2">
-          <input type="text" id="mcSkinInput" placeholder="Da">
-          <input type="text" id="mcVoiceInput" placeholder="Giọng nói">
-        </div>
-        <input type="text" id="mcScentInput" placeholder="Mùi hương đặc trưng">
-        <input type="text" id="mcStyleInput" placeholder="Phong cách ăn mặc">
-        <input type="text" id="mcScarsInput" placeholder="Sẹo / dấu đặc biệt">
-        <input type="text" id="mcTattoosInput" placeholder="Hình xăm">
-        <textarea id="mcPersonalityInput" rows="2" placeholder="Tính cách"></textarea>
-        <textarea id="mcSpeechInput" rows="2" placeholder="Cách nói riêng (từ hay dùng, ngữ điệu)"></textarea>
-        <textarea id="mcGoalsInput" rows="2" placeholder="Mục tiêu"></textarea>
-        <textarea id="mcSkillsInput" rows="2" placeholder="Kỹ năng"></textarea>
-        <textarea id="mcPhysicalInput" rows="2" placeholder="Thể trạng"></textarea>
-        <textarea id="mcMentalInput" rows="2" placeholder="Tâm lý"></textarea>
-        <textarea id="mcSecretInput" rows="2" placeholder="Bí mật"></textarea>
-        <div class="hint" style="color:var(--red);margin-top:4px;">🔥 18+</div>
-        <textarea id="mcSexualExpInput" rows="2" placeholder="Kinh nghiệm 18+"></textarea>
-        <textarea id="mcBoundariesInput" rows="2" placeholder="Ranh giới / consent"></textarea>
-        <textarea id="mcPreferencesInput" rows="2" placeholder="Sở thích / kink"></textarea>
-        <button class="btn btn-amber" id="saveMainCharBtn">💾 Lưu</button>
-        <button class="btn btn-ghost" id="rescanMainCharBtn">🔄 AI cập nhật</button>
-      </div>
-    </div>
-
-    <div class="section tone-purple" data-section>
-      <div class="section-head" data-toggle><span>0.3. Character Database</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="char-summary-row">
-          <div class="stat"><b id="statTotal">0</b>Tổng</div>
-          <div class="stat"><b id="statMajor">0</b>Chính</div>
-          <div class="stat"><b id="statStale">0</b>Vắng</div>
-          <div class="stat"><b id="statDead">0</b>Chết</div>
-        </div>
-        <div class="char-list" id="charList"><div class="empty-note">Chưa có.</div></div>
-        <button class="btn btn-ghost" id="charGraphBtn" style="margin-top:6px;">🕸️ Sơ đồ quan hệ nhân vật</button>
-        <button class="btn btn-ghost" id="autoTierBtn" style="margin-top:6px;">⚙️ Tự động xếp hạng tất cả NV</button>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <input type="text" id="npcNameInput" placeholder="Tên" style="margin-bottom:6px;">
-          <textarea id="npcDescInput" rows="2" placeholder="Ngoại hình" style="margin-bottom:6px;"></textarea>
-          <div class="row2" style="margin-bottom:6px;">
-            <input type="text" id="npcPersonalityInput" placeholder="Tính cách">
-            <input type="text" id="npcAgeInput" placeholder="Tuổi">
-          </div>
-          <div class="row2" style="margin-bottom:6px;">
-            <input type="text" id="npcPositionInput" placeholder="Vị trí">
-            <select id="npcTierInput" title="Chỉ là xếp hạng ban đầu — dùng nút '⚙️ Tự động xếp hạng' bên dưới để AI tự tính lại sau này">
-              <option value="minor">Minor</option>
-              <option value="supporting" selected>Supporting</option>
-              <option value="important">Important</option>
-              <option value="major">Major</option>
-              <option value="background">Background</option>
-            </select>
-          </div>
-          <div class="hint" style="margin-top:-2px;margin-bottom:6px;">Tier chỉ là gợi ý ban đầu (ảnh hưởng NV nào được AI "nhớ" khi viết chương) — không cần đoán chuẩn ngay, dùng nút ⚙️ bên dưới để tự tính lại sau vài chương.</div>
-        </div>
-        <button class="btn btn-ghost" id="npcAddBtn">＋ Thêm NV</button>
-        <button class="btn btn-purple" id="npcUpdateBtn">👤 Quét toàn truyện</button>
-      </div>
-    </div>
-
-    <div class="section tone-teal" data-section>
-      <div class="section-head" data-toggle><span>0.4. Địa Điểm</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div id="locationList"><div class="empty-note">Chưa có.</div></div>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <input type="text" id="locNameInput" placeholder="Tên" style="margin-bottom:6px;">
-          <textarea id="locDescInput" rows="2" placeholder="Mô tả" style="margin-bottom:6px;"></textarea>
-          <select id="locStatusInput">
-            <option value="active">Active</option><option value="destroyed">Destroyed</option>
-            <option value="abandoned">Abandoned</option><option value="locked">Locked</option>
-          </select>
-        </div>
-        <button class="btn btn-teal" id="locAddBtn">＋ Thêm</button>
-      </div>
-    </div>
-
-    <div class="section tone-amber" data-section>
-      <div class="section-head" data-toggle><span>0.5. Vật Phẩm</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div id="itemList"><div class="empty-note">Chưa có.</div></div>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <input type="text" id="itemNameInput" placeholder="Tên" style="margin-bottom:6px;">
-          <textarea id="itemDescInput" rows="2" placeholder="Mô tả" style="margin-bottom:6px;"></textarea>
-          <div class="row2" style="margin-bottom:6px;">
-            <input type="text" id="itemOwnerInput" placeholder="Chủ">
-            <select id="itemStatusInput">
-              <option value="active">Đang dùng</option><option value="lost">Mất</option>
-              <option value="destroyed">Hỏng</option><option value="stored">Cất giữ</option>
-            </select>
-          </div>
-        </div>
-        <button class="btn btn-amber" id="itemAddBtn">＋ Thêm</button>
-      </div>
-    </div>
-
-    <div class="section tone-green" data-section>
-      <div class="section-head" data-toggle><span>0.6. Chapter Outline</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div id="outlineList"><div class="empty-note">Chưa có.</div></div>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <div class="row2" style="margin-bottom:6px;">
-            <input type="number" id="outlineFromInput" placeholder="Từ ch">
-            <input type="number" id="outlineToInput" placeholder="Đến ch">
-          </div>
-          <input type="text" id="outlineNameInput" placeholder="Tên giai đoạn" style="margin-bottom:6px;">
-          <textarea id="outlineContentInput" rows="4" placeholder="Mô tả"></textarea>
-        </div>
-        <button class="btn btn-green" id="outlineAddBtn">＋ Thêm</button>
-        <button class="btn btn-ghost" id="outlineAIGenerateBtn">🤖 AI đề xuất</button>
-      </div>
-    </div>
-
-    <div class="section tone-blue" data-section>
-      <div class="section-head" data-toggle><span>0.7. Arc Manager</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div id="arcList"><div class="empty-note">Chưa có.</div></div>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <input type="text" id="arcNameInput" placeholder="Tên Arc" style="margin-bottom:6px;">
-          <div class="row2" style="margin-bottom:6px;">
-            <input type="number" id="arcStartInput" placeholder="Ch đầu">
-            <input type="number" id="arcEndInput" placeholder="Ch cuối">
-          </div>
-          <textarea id="arcGoalInput" rows="2" placeholder="Mục tiêu"></textarea>
-        </div>
-        <button class="btn btn-blue" id="arcAddBtn">＋ Thêm Arc</button>
-      </div>
-    </div>
-
-    <div class="section tone-blue" data-section>
-      <div class="section-head" data-toggle><span>1. Current Status</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="status-box" id="statusBox">Chưa có.</div>
-        <div class="field"><label>🕐 Thời điểm hiện tại (Story Clock)</label>
-          <div class="api-row">
-            <input type="text" id="storyClock" placeholder="VD: Ngày 3, buổi tối / 2 tuần sau khi gặp">
-            <button class="btn btn-ghost btn-sm" id="saveClockBtn" style="width:auto;flex:none;">Lưu</button>
-          </div>
-        </div>
-
-        <textarea id="statusEdit" rows="6" style="display:none;"></textarea>
-        <button class="btn btn-blue" id="statusFullRescanBtn">🕘 Quét toàn bộ</button>
-        <button class="btn btn-ghost" id="statusEditToggle" style="font-size:11.5px;">✎ Sửa</button>
-      </div>
-    </div>
-
-    <div class="section tone-purple" data-section>
-      <div class="section-head" data-toggle><span>1.4. Lịch Sử Theo Chương</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="hint">Sau khi một chương viết xong, AI tự cập nhật NV / địa điểm / vật phẩm / status — và một bản "ảnh chụp" (snapshot) trạng thái tại thời điểm đó được lưu lại. Chọn chương bên dưới để xem lại đúng trạng thái lúc ấy.</div>
-        <select id="snapshotChapterSelect"><option value="">-- Chọn chương để xem lịch sử --</option></select>
-        <div id="snapshotBox"><div class="empty-note">Chọn một chương ở trên để xem trạng thái tại thời điểm đó.</div></div>
-      </div>
-    </div>
-
-    <div class="section tone-purple" data-section>
-      <div class="section-head" data-toggle><span>1.6. Memory Engine v9</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="hint">Bộ nhớ dài hạn: Timeline, Foreshadowing và Knowledge Ledger. Đây là dữ liệu phụ trợ để AI không quên diễn biến/kiến thức của từng nhân vật.</div>
-        <div id="memoryStats" class="status-box" style="max-height:180px;">Chưa có.</div>
-        <button class="btn btn-purple" id="memoryRescanBtn">🧠 Quét lại Memory toàn truyện</button>
-      </div>
-    </div>
-
-    <div class="section tone-teal" data-section>
-      <div class="section-head" data-toggle><span>1.5. Threads</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div id="threadList"><div class="empty-note">Chưa có.</div></div>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <div class="row2" style="margin-bottom:6px;">
-            <select id="threadTypeInput">
-              <option value="open_thread">Open Thread</option>
-              <option value="foreshadowing">Foreshadowing</option>
-              <option value="consequence">Consequence</option>
-            </select>
-            <select id="threadStatusInput">
-              <option value="seeded">Seeded</option><option value="developing">Developing</option>
-              <option value="paid_off">Paid off</option><option value="abandoned">Abandoned</option>
-            </select>
-          </div>
-          <textarea id="threadDescInput" rows="2" placeholder="Mô tả"></textarea>
-        </div>
-        <button class="btn btn-ghost" id="threadAddBtn">＋ Thêm</button>
-      </div>
-    </div>
-
-    <div class="section tone-pink" data-section>
-      <div class="section-head" data-toggle><span>1.6. Consent Log</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div id="consentList"><div class="empty-note">Chưa có log.</div></div>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <div class="row2" style="margin-bottom:6px;">
-            <input type="text" id="consentCharAInput" placeholder="Nhân vật A">
-            <input type="text" id="consentCharBInput" placeholder="Nhân vật B">
-          </div>
-          <input type="number" id="consentChInput" placeholder="Chương" style="margin-bottom:6px;">
-          <textarea id="consentActionInput" rows="2" placeholder="Đã đồng ý làm gì" style="margin-bottom:6px;"></textarea>
-          <textarea id="consentBoundaryInput" rows="2" placeholder="Ranh giới vẫn giữ / thay đổi"></textarea>
-        </div>
-        <button class="btn btn-pink" id="consentAddBtn">＋ Thêm log</button>
-      </div>
-    </div>
-
-    <div class="section tone-red" data-section>
-      <div class="section-head" data-toggle><span>1.7. Continuity</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div id="continuityList"><div class="empty-note">Chưa có cảnh báo.</div></div>
-        <button class="btn btn-outline-red" id="integrityScanBtn">🔍 Integrity Scan</button>
-      </div>
-    </div>
-
-    <div class="section tone-green" data-section>
-      <div class="section-head" data-toggle><span>2. Chỉ Đạo</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="field"><label>Mệnh lệnh chương tới</label><textarea id="directive" rows="3"></textarea></div>
-      </div>
-    </div>
-
-    <div class="section tone-green" data-section>
-      <div class="section-head" data-toggle><span>2.5. Quy Tắc Nâng Cao</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <textarea id="advancedRules" rows="10"></textarea>
-        <button class="btn btn-green" id="saveAdvancedRulesBtn">💾 Lưu</button>
-      </div>
-    </div>
-
-    <div class="section tone-plain" data-section>
-      <div class="section-head" data-toggle><span>3. Độ Khó</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <select id="difficulty">
-          <option value="de">Dễ thở</option><option value="vua" selected>Vừa phải</option>
-          <option value="kho">Khó</option><option value="tan_khoc">Tàn khốc</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="section tone-red" data-section>
-      <div class="section-head" data-toggle><span>4. Nội Dung 18+</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="toggle-row"><span>🔥 Cho phép trưởng thành</span><label class="switch"><input type="checkbox" id="matureToggle"><span class="slider-tg"></span></label></div>
-        <div class="hint" id="nsfwHint"></div>
-        <div class="warn-box">Không hỗ trợ nội dung khiêu dâm trẻ em.</div>
-      </div>
-    </div>
-
-    <div class="section tone-plain open" data-section>
-      <div class="section-head" data-toggle><span>5. Công Cụ Sáng Tác</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <button class="btn btn-blue" id="writeChapterBtn">✨ Tạo Chương Mới</button>
-        <button class="btn btn-ghost" id="continueChapterBtn">➕ Viết Tiếp</button>
-        <button class="btn btn-stop" id="stopBtn" style="display:none;">⏹ Dừng</button>
-        <button class="btn btn-teal" id="bgWriteBtn" title="Gửi job lên server, bạn có thể tắt máy">☁ Viết chương nền (tắt máy được)</button>
-        <div id="bgJobStatus" style="font-size:12px;color:var(--ink-dim);margin-top:6px;display:none;"></div>
-        <div class="field"><label>Chế độ viết lại</label>
-          <select id="regenModeSelect">
-            <option value="full">Viết lại toàn bộ</option>
-            <option value="continuity">Sửa continuity</option>
-            <option value="depth">Tăng tâm lý</option>
-            <option value="describe">Tăng miêu tả</option>
-            <option value="world">Tăng world-building</option>
-            <option value="pacing">Cải thiện nhịp</option>
-          </select>
-        </div>
-        <div class="field"><label>Độ dài tối thiểu (từ)</label><input type="number" id="minWordsInput" min="500" step="500" value="5000"></div>
-        <div class="field"><label>Auto-continue tối đa</label><input type="number" id="autoContinueMaxInput" min="0" max="8" value="4"></div>
-        <div class="field"><label>🎨 Mức độ miêu tả</label>
-          <select id="descriptionLevelSelect">
-            <option value="light">Nhẹ (đủ hiểu)</option>
-            <option value="balanced" selected>Cân bằng</option>
-            <option value="rich">Phong phú (nhiều chi tiết)</option>
-            <option value="deep">Sâu đậm (tả kỹ mọi thứ)</option>
-          </select>
-        </div>
-        <div class="toggle-row"><span>📝 Rà chính tả + xưng hô</span><label class="switch"><input type="checkbox" id="spellCheckToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>🔄 Auto-continue</span><label class="switch"><input type="checkbox" id="autoContinueToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>📄 Auto summary</span><label class="switch"><input type="checkbox" id="autoSummaryToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>🎬 Auto scene detection</span><label class="switch"><input type="checkbox" id="autoSceneToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>⚠ Check trùng</span><label class="switch"><input type="checkbox" id="dupCheckToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>🌊 Streaming</span><label class="switch"><input type="checkbox" id="streamingToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>🚦 Queue tuần tự</span><label class="switch"><input type="checkbox" id="queueToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>⚡ Parallel post-process</span><label class="switch"><input type="checkbox" id="parallelToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>🎯 Checkpoints tự động</span><label class="switch"><input type="checkbox" id="checkpointToggle" checked><span class="slider-tg"></span></label></div>
-        <div class="toggle-row"><span>Tự động tạo</span><label class="switch"><input type="checkbox" id="autoToggle"><span class="slider-tg"></span></label></div>
-        <div class="field"><label>Khoảng cách (s)</label><input type="number" id="autoIntervalInput" min="30" step="10" value="180"></div>
-      </div>
-    </div>
-
-    <div class="section tone-plain" data-section>
-      <div class="section-head" data-toggle><span>6. Quản Lý Dữ Liệu</span><span class="chev">▾</span></div>
-      <div class="section-body">
-        <div class="field"><label>💾 Dung lượng đã dùng</label>
-          <div class="storage-bar"><div class="storage-fill" id="storageFill" style="width:0%;"></div></div>
-          <div class="hint" id="storageText">Đang tính...</div>
-        </div>
-        <button class="btn btn-amber" id="compressOldBtn" title="Nén chương cũ thành summary, giữ 15 chương gần">🗜️ Nén chương cũ</button>
-        <div class="toggle-row"><span>Kèm API key khi xuất</span><label class="switch"><input type="checkbox" id="includeKeyToggle"><span class="slider-tg"></span></label></div>
-        <div class="btn-row">
-          <button class="btn btn-green" id="uploadJsonBtn">⇧ Lên JSON</button>
-          <button class="btn btn-green" id="downloadJsonBtn">⇩ Xuống JSON</button>
-        </div>
-        <input type="file" id="jsonFileInput" class="file-hidden" accept="application/json">
-        <button class="btn btn-ghost" id="duplicateStoryBtn">📋 Nhân bản truyện này</button>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <label>🔍 Tìm & Thay thế toàn truyện</label>
-          <div class="row2" style="margin-bottom:6px;">
-            <input type="text" id="srFindInput" placeholder="Tìm...">
-            <input type="text" id="srReplaceInput" placeholder="Thay bằng...">
-          </div>
-          <div class="row2" style="margin-bottom:6px;">
-            <button class="btn btn-ghost btn-sm" id="srFindBtn">🔍 Đếm kết quả</button>
-            <button class="btn btn-outline-red btn-sm" id="srReplaceAllBtn">↔ Thay tất cả</button>
-          </div>
-          <div class="search-replace-panel" id="srResultPanel"><div class="sr-result" id="srResult"></div></div>
-        </div>
-        <div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
-          <label>Xuất Toàn Bộ</label>
-          <div class="btn-row">
-            <button class="btn btn-ghost btn-sm" id="exportTxtBtn">.txt</button>
-            <button class="btn btn-ghost btn-sm" id="exportMdBtn">.md</button>
-            <button class="btn btn-ghost btn-sm" id="exportDocBtn">.doc</button>
-          </div>
-        </div>
-        <div class="section tone-plain" data-section>
-          <div class="section-head" data-toggle><span style="font-size:12px;">Xóa Chương</span><span class="chev">▾</span></div>
-          <div class="section-body">
-            <select id="deleteChapterSelect"></select>
-            <div class="toggle-row"><span>🧹 Xoá kèm bộ nhớ</span><label class="switch"><input type="checkbox" id="deleteWipeMemoryToggle" checked><span class="slider-tg"></span></label></div>
-            <button class="btn btn-outline-red" id="deleteChapterBtn">🗑 Xóa</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </div>
-
-  <div class="main">
-    <div class="editor-toolbar">
-      <div class="toolbar-left">
-        <select class="quick-jump" id="quickJumpSelect" title="Nhảy nhanh"><option>-- Nhảy tới chương --</option></select>
-        <div class="search-wrap"><input type="text" id="chapterSearch" placeholder="Tìm trong tiêu đề + nội dung..."></div>
-      </div>
-      <div class="toolbar-right">
-        <button class="btn btn-ghost" id="splitChapterBtn" title="Tách chương">✂ Tách</button>
-        <button class="btn btn-ghost" id="mergeChapterBtn" title="Gộp chương">⊕ Gộp</button>
-        <button class="btn btn-ghost" id="insertChapterBtn" title="Chèn chương trống">＋ Chèn</button>
-        <button class="btn btn-ghost" id="rescanFromBtn" title="Rescan từ chương này">🔄 Rescan</button>
-        <button class="btn btn-ghost" id="regenSummaryBtn" title="Tạo lại tóm tắt">📄 Tóm tắt</button>
-        <button class="btn btn-pink" id="splitScenesBtn" title="Tách cảnh để rewrite riêng">🎬 Cảnh</button>
-        <button class="btn btn-ghost" id="versionsBtn" title="Lịch sử">🕐</button>
-        <button class="btn btn-ghost" id="regenBtn">↻ Viết lại</button>
-        <button class="btn btn-nsfw" id="regenNsfwBtn">🔥 NSFW</button>
-      </div>
-    </div>
-
-    <div class="chapter-strip" id="chapterStrip"></div>
-
-    <div class="editor-panel">
-      <h2 class="editor-title" id="chapterTitle">Truyện của bạn bắt đầu ở đây</h2>
-      <div class="editor-badges" id="editorBadges"></div>
-      <div class="summary-box" id="summaryBox"></div>
-      <div class="plan-box" id="planBox"></div>
-      <div class="scene-box" id="sceneBox"></div>
-      <div class="editor-text" id="chapterText" contenteditable="true"
-           data-placeholder="Điền Story Bible, nhân vật ở sidebar rồi nhấn 'Tạo Chương Mới'..."></div>
-      <div class="status-line" id="statusLine"></div>
-    </div>
-  </div>
-
+<div class="section tone-purple" data-section="">
+<div class="section-head" data-toggle=""><span>1.4. Lịch Sử Theo Chương</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div class="hint">Sau khi một chương viết xong, AI tự cập nhật NV / địa điểm / vật phẩm / status — và một bản "ảnh chụp" (snapshot) trạng thái tại thời điểm đó được lưu lại. Chọn chương bên dưới để xem lại đúng trạng thái lúc ấy.</div>
+<select id="snapshotChapterSelect"><option value="">-- Chọn chương để xem lịch sử --</option></select>
+<div id="snapshotBox"><div class="empty-note">Chọn một chương ở trên để xem trạng thái tại thời điểm đó.</div></div>
+</div>
+</div>
+<div class="section tone-pink" data-section="">
+<div class="section-head" data-toggle=""><span>1.6. Consent Log</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div id="consentList"><div class="empty-note">Chưa có log.</div></div>
+<div class="field" style="border-top:1px solid var(--line);padding-top:10px;">
+<div class="row2" style="margin-bottom:6px;">
+<input id="consentCharAInput" placeholder="Nhân vật A" type="text"/>
+<input id="consentCharBInput" placeholder="Nhân vật B" type="text"/>
+</div>
+<input id="consentChInput" placeholder="Chương" style="margin-bottom:6px;" type="number"/>
+<textarea id="consentActionInput" placeholder="Đã đồng ý làm gì" rows="2" style="margin-bottom:6px;"></textarea>
+<textarea id="consentBoundaryInput" placeholder="Ranh giới vẫn giữ / thay đổi" rows="2"></textarea>
+</div>
+<button class="btn btn-pink" id="consentAddBtn">＋ Thêm log</button>
+</div>
+</div>
+<div class="section tone-red" data-section="">
+<div class="section-head" data-toggle=""><span>1.7. Continuity</span><span class="chev">▾</span></div>
+<div class="section-body">
+<div id="continuityList"><div class="empty-note">Chưa có cảnh báo.</div></div>
+<button class="btn btn-outline-red" id="integrityScanBtn">🔍 Integrity Scan</button>
+</div>
+</div>
+<div class="section tone-plain" data-section="">
+<div class="section-head" data-toggle=""><span>3. Độ Khó</span><span class="chev">▾</span></div>
+<div class="section-body">
+<select id="difficulty">
+<option value="de">Dễ thở</option><option selected="" value="vua">Vừa phải</option>
+<option value="kho">Khó</option><option value="tan_khoc">Tàn khốc</option>
+</select>
+</div>
+</div>
+</div>
 <div class="floating-rewrite" id="floatingRewrite">✨ Viết lại đoạn này</div>
 <script>
 (function(){
@@ -863,6 +918,8 @@ const DEFAULT_ADVANCED_RULES = [
   "QUY TẮC GHI NHỚ QUAN HỆ: Ghi nhớ trạng thái quan hệ, ranh giới, mức hấp dẫn hiện tại của từng nhân vật.",
   "QUY TẮC TÂM LÝ: Mọi thay đổi tính cách / dục vọng có nguyên nhân rõ.",
   "QUY TẮC CHỐNG NHÀM & CHỐNG LẶP: Mỗi chương có ít nhất một yếu tố mới. Không lặp sự kiện, cách giải quyết, cấu trúc chương, câu chữ, hình ảnh đã dùng.",
+  "QUY TẮC NHỊP CHƯƠNG: Mỗi chương CHỈ tập trung 1–3 SỰ KIỆN CHÍNH có liên quan nhân-quả. Không nhồi quá nhiều biến cố, tuyến phụ hay bước ngoặt trong một chương. Các beat nhỏ chỉ được dùng để triển khai 1–3 sự kiện đó, không biến thành sự kiện mới.",
+  "QUY TẮC NHÂN VẬT PHỤ: Không tùy tiện tạo nhân vật quan trọng mới. Chỉ tạo nhân vật mới khi câu chuyện thực sự cần; mỗi nhân vật xuất hiện phải có lý do rõ ràng, vai trò cụ thể và liên hệ với sự kiện đang diễn ra. Ưu tiên tái sử dụng nhân vật đã có. Nếu không cần, không thêm người mới chỉ để lấp cảnh.",
   "QUY TẮC XUNG ĐỘT LIÊN TỤC: Mỗi chương có ít nhất một xung đột ảnh hưởng về sau.",
   "QUY TẮC KẾT CHƯƠNG: Để lại câu hỏi, hậu quả, phát hiện, hoặc thay đổi quan hệ.",
   "QUY TẮC HẬU QUẢ: Hành động lớn đều để lại hậu quả.",
@@ -1057,15 +1114,194 @@ function priceForModel(m){
   }catch(e){ return MODEL_PRICING._default; }
 }
 
-/* ========== STORY STORAGE ========== */
+
+/* ========== STORY STORAGE — IndexedDB v10.2 ========== */
 let storiesIndex = [];
 let currentStoryId = null;
-function saveStoriesIndex(){ try{ localStorage.setItem(STORIES_INDEX_KEY, JSON.stringify(storiesIndex)); }catch(e){} }
-function loadStoriesIndex(){ try{ const raw = localStorage.getItem(STORIES_INDEX_KEY); if(raw){ storiesIndex = JSON.parse(raw) || []; return; } }catch(e){} storiesIndex = []; }
-function saveStoryStateToDisk(id, s){ try{ localStorage.setItem(STORY_KEY_PREFIX + id, JSON.stringify(s)); }catch(e){ console.warn(e); showSaveInd("⚠ lỗi lưu", "warn"); } }
-function loadStoryStateFromDisk(id){ try{ const raw = localStorage.getItem(STORY_KEY_PREFIX + id); if(raw) return JSON.parse(raw); }catch(e){} return null; }
-function removeStoryFromDisk(id){ try{ localStorage.removeItem(STORY_KEY_PREFIX + id); }catch(e){} }
+const IDB_NAME = "XuongTruyenAI_v10";
+const IDB_VERSION = 2;
+const IDB_STORY_STORE = "stories";
+const IDB_INDEX_STORE = "meta";
+const IDB_DRAFT_STORE = "drafts";
+let idb = null;
+let idbReady = null;
+const idbStoryCache = new Map();
+let persistTimer = null;
 
+function openStoryDB(){
+  if(idbReady) return idbReady;
+  idbReady = new Promise((resolve,reject)=>{
+    if(!("indexedDB" in window)){ reject(new Error("Trình duyệt không hỗ trợ IndexedDB.")); return; }
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = e=>{
+      const db=e.target.result;
+      if(!db.objectStoreNames.contains(IDB_STORY_STORE)) db.createObjectStore(IDB_STORY_STORE);
+      if(!db.objectStoreNames.contains(IDB_INDEX_STORE)) db.createObjectStore(IDB_INDEX_STORE);
+      if(!db.objectStoreNames.contains(IDB_DRAFT_STORE)) db.createObjectStore(IDB_DRAFT_STORE);
+    };
+    req.onsuccess=e=>{ idb=e.target.result; resolve(idb); };
+    req.onerror=()=>reject(req.error||new Error("Không mở được IndexedDB."));
+  });
+  return idbReady;
+}
+function idbPut(store,key,value){
+  return openStoryDB().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(store,"readwrite"); tx.objectStore(store).put(value,key);
+    tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+  }));
+}
+function idbGet(store,key){
+  return openStoryDB().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(store,"readonly"); const req=tx.objectStore(store).get(key);
+    req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error);
+  }));
+}
+function idbDelete(store,key){
+  return openStoryDB().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(store,"readwrite"); tx.objectStore(store).delete(key);
+    tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+  }));
+}
+function idbGetAll(store){
+  return openStoryDB().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(store,"readonly"); const req=tx.objectStore(store).getAll();
+    req.onsuccess=()=>resolve(req.result||[]); req.onerror=()=>reject(req.error);
+  }));
+}
+
+function saveStoriesIndex(){
+  const copy = JSON.parse(JSON.stringify(storiesIndex||[]));
+  try{ localStorage.setItem(STORIES_INDEX_KEY, JSON.stringify(copy)); }catch(e){}
+  idbPut(IDB_INDEX_STORE,"storiesIndex",copy).catch(()=>{});
+}
+function loadStoriesIndex(){
+  try{
+    const raw=localStorage.getItem(STORIES_INDEX_KEY);
+    if(raw){ storiesIndex=JSON.parse(raw)||[]; return; }
+  }catch(e){}
+  storiesIndex=[];
+}
+async function loadStoriesIndexAsync(){
+  try{
+    const v=await idbGet(IDB_INDEX_STORE,"storiesIndex");
+    if(Array.isArray(v)&&v.length) storiesIndex=v;
+  }catch(e){}
+}
+function buildStoryMetaData(source){
+  const s=source||state;
+  const meta={};
+  Object.keys(s).forEach(k=>{
+    if(k==="chapters" || k==="scenes" || k==="storyMetaData" || k==="apiSettings") return;
+    meta[k]=s[k];
+  });
+  meta.apiSettings = {
+    endpoint:s.apiEndpoint||s.apiSettings?.endpoint||"",
+    key:s.apiKey||s.apiSettings?.key||"",
+    primaryModel:s.model||s.apiSettings?.primaryModel||"",
+    nsfwModel:s.modelNsfw||s.apiSettings?.nsfwModel||"",
+    nsfwMode:s.nsfwMode||s.apiSettings?.nsfwMode||"auto",
+    nsfwThreshold:Number(s.nsfwAutoThreshold||s.apiSettings?.nsfwThreshold||6)
+  };
+  meta.styleBible=s.styleBible||{};
+  meta.storyBible={
+    mainPlot:s.mainPlot||"", genre:s.genre||"", worldSetting:s.worldSetting||"",
+    worldRules:s.worldRules||"", antagonist:s.antagonist||"", pronounRules:s.pronounRules||"",
+    worldDescription:s.worldDescription||"", storyBibleLocked:!!s.storyBibleLocked,
+    mainCharProfile:s.mainCharProfile||null
+  };
+  meta.lorebook=s.lorebook||[];
+  meta.vocabulary=s.vocabulary||{};
+  return meta;
+}
+function buildChapterData(source){
+  const s=source||state;
+  return {
+    chapters:s.chapters||[],
+    scenes:s.scenes||[],
+    knowledgeLedger:s.knowledgeLedger||[],
+    chapterSnapshots:(s.chapters||[]).map(c=>({id:c.id||null,chapter:c.chapter||null,stateSnapshot:c.stateSnapshot||null,stateSnapshots:c.stateSnapshots||[]})),
+    characterStateTracker:s.characterStateTracker||{},
+    plotArchive:s.plotArchive||[],
+    version:2
+  };
+}
+function serializeStoryRecord(source){
+  return { schemaVersion:10, storyId:source.storyId, updatedAt:Date.now(),
+    StoryMetaData:buildStoryMetaData(source),
+    ChapterData:buildChapterData(source)
+  };
+}
+function hydrateFromRecord(record){
+  if(!record) return null;
+  if(record.StoryMetaData && record.ChapterData){
+    const meta=record.StoryMetaData, ch=record.ChapterData;
+    const out=Object.assign({},meta);
+    if(meta.apiSettings){
+      out.apiSettings=meta.apiSettings;
+      out.apiEndpoint=meta.apiSettings.endpoint||out.apiEndpoint;
+      out.apiKey=meta.apiSettings.key||out.apiKey||"";
+      out.model=meta.apiSettings.primaryModel||out.model;
+      out.modelNsfw=meta.apiSettings.nsfwModel||out.modelNsfw;
+      out.nsfwMode=meta.apiSettings.nsfwMode||out.nsfwMode;
+      out.nsfwAutoThreshold=meta.apiSettings.nsfwThreshold||out.nsfwAutoThreshold;
+    }
+    if(meta.storyBible){
+      Object.assign(out,meta.storyBible);
+      if(meta.storyBible.mainCharProfile) out.mainCharProfile=meta.storyBible.mainCharProfile;
+    }
+    out.chapters=ch.chapters||[];
+    out.scenes=ch.scenes||out.scenes||[];
+    out.knowledgeLedger=ch.knowledgeLedger||out.knowledgeLedger||[];
+    out.characterStateTracker=ch.characterStateTracker||out.characterStateTracker||{};
+    out.plotArchive=ch.plotArchive||out.plotArchive||[];
+    out.storyMetaData=meta;
+    return out;
+  }
+  /* legacy flat record */
+  return record;
+}
+function saveStoryStateToDisk(id,s){
+  if(!id) return;
+  try{ idbStoryCache.set(id,JSON.parse(JSON.stringify(s))); }catch(e){}
+  const record=serializeStoryRecord(Object.assign({},s,{storyId:id}));
+  idbPut(IDB_STORY_STORE,id,record).catch(e=>{
+    console.warn("[IndexedDB]",e);
+    showSaveInd("⚠ lỗi IndexedDB","warn");
+  });
+}
+async function loadStoryStateFromDiskAsync(id){
+  if(!id) return null;
+  if(idbStoryCache.has(id)) return idbStoryCache.get(id);
+  try{
+    const record=await idbGet(IDB_STORY_STORE,id);
+    const s=hydrateFromRecord(record);
+    if(s){ idbStoryCache.set(id,s); return JSON.parse(JSON.stringify(s)); }
+  }catch(e){ console.warn("[IndexedDB read]",e); }
+  /* Chỉ dùng localStorage như migration fallback; dữ liệu mới không ghi vào đây. */
+  try{
+    const raw=localStorage.getItem(STORY_KEY_PREFIX+id);
+    if(raw){ const s=JSON.parse(raw); saveStoryStateToDisk(id,s); return s; }
+  }catch(e){}
+  return null;
+}
+function loadStoryStateFromDisk(id){ return idbStoryCache.get(id)||null; }
+function removeStoryFromDisk(id){
+  idbStoryCache.delete(id); idbDelete(IDB_STORY_STORE,id).catch(()=>{});
+  try{ localStorage.removeItem(STORY_KEY_PREFIX+id); }catch(e){}
+}
+async function initIndexedDBStorage(){
+  try{
+    await openStoryDB();
+    await loadStoriesIndexAsync();
+    for(const item of storiesIndex){
+      try{
+        const record=await idbGet(IDB_STORY_STORE,item.id);
+        const s=hydrateFromRecord(record);
+        if(s) idbStoryCache.set(item.id,s);
+      }catch(e){}
+    }
+  }catch(e){ console.warn("[IndexedDB init]",e); }
+}
 /* ========== STATE ========== */
 const state = {
   schemaVersion: 9,
@@ -1097,7 +1333,19 @@ const state = {
   statusState: {}, timeline: [], foreshadowing: [], knowledgeLedger: [], memoryEvents: [], lastMemorySyncChapter: 0,
   triggeredCheckpoints: [],
   lastPacingWarnChapter: 0,
-  includeScenesInPrompt: true
+  includeScenesInPrompt: true,
+  /* v10.2 normalized architecture */
+  apiSettings: { endpoint:"https://openrouter.ai/api/v1/chat/completions", key:"", primaryModel:"deepseek/deepseek-v3.2", nsfwModel:"aion-labs/aion-2.0", nsfwMode:"auto", nsfwThreshold:6 },
+  storyMetaData: { styleBible:{}, storyBible:{}, worldRules:"", lorebook:[], vocabulary:{}, apiSettings:{} },
+  characterCards: [],
+  banWords: [],
+  glossaryLock: [],
+  characterStateTracker: {},
+  plotArchive: [],
+  tokenCapPerPrompt: 5,
+  snapshotLimit: 7,
+  wakeLockEnabled: true,
+  slidingWindowWords: 1500
 };
 
 function newMainCharProfile(){
@@ -1111,7 +1359,7 @@ function newMainCharProfile(){
 }
 function newStoryState(name){
   return {
-    schemaVersion: 9, storyId: newStoryId(), storyName: name || ("Truyện " + (storiesIndex.length + 1)),
+    schemaVersion: 10, lorebook: [], loreBudgetTokens: 2000, storyId: newStoryId(), storyName: name || ("Truyện " + (storiesIndex.length + 1)),
     styleBible: { pov:"third_limited", tense:"past", tone:"", sample:"", extra:"" },
     mainPlot:"", genre:"", worldSetting:"", worldRules:"", antagonist:"",
     pronounRules:"", worldDescription:"", storyBibleLocked:false,
@@ -1124,7 +1372,11 @@ function newStoryState(name){
     chapters:[], currentChapterIndex:-1, chaptersSinceBackup:0,
     triggeredCheckpoints: [], lastPacingWarnChapter: 0,
     statusState: {}, timeline: [], foreshadowing: [], knowledgeLedger: [], memoryEvents: [],
-    lastMemorySyncChapter: 0
+    lastMemorySyncChapter: 0,
+    apiSettings: { endpoint:"https://openrouter.ai/api/v1/chat/completions", key:"", primaryModel:"deepseek/deepseek-v3.2", nsfwModel:"aion-labs/aion-2.0", nsfwMode:"auto", nsfwThreshold:6 },
+    storyMetaData: { styleBible:{}, storyBible:{}, worldRules:"", lorebook:[], vocabulary:{}, apiSettings:{} },
+    characterCards: [], banWords: [], glossaryLock: [], characterStateTracker:{}, plotArchive:[],
+    tokenCapPerPrompt:5, snapshotLimit:7, wakeLockEnabled:true, slidingWindowWords:1500
   };
 }
 
@@ -1282,28 +1534,32 @@ function showSaveInd(text, kind){
   if(kind === "saved") setTimeout(()=>{ el.textContent = "✓ Đã lưu"; el.className = "item save-ind"; }, 2000);
 }
 
-function persist(){
+
+function persistNow(){
   showSaveInd("💾 đang lưu...", "saving");
   if(state.storyId){
-    const blob = {};
-    Object.keys(state).forEach(k=>{ if(!GLOBAL_KEYS.includes(k)) blob[k] = state[k]; });
-    saveStoryStateToDisk(state.storyId, blob);
-    const idx = storiesIndex.findIndex(x=>x.id===state.storyId);
-    if(idx >= 0){
-      storiesIndex[idx].name = state.storyName || storiesIndex[idx].name;
-      storiesIndex[idx].updatedAt = Date.now();
+    const blob={};
+    Object.keys(state).forEach(k=>{ blob[k]=state[k]; });
+    GLOBAL_KEYS.forEach(k=>{ blob[k]=state[k]; });
+    blob.apiSettings=state.apiSettings;
+    blob.storyMetaData=buildStoryMetaData(state);
+    saveStoryStateToDisk(state.storyId,blob);
+    const idx=storiesIndex.findIndex(x=>x.id===state.storyId);
+    if(idx>=0){
+      storiesIndex[idx].name=state.storyName||storiesIndex[idx].name;
+      storiesIndex[idx].updatedAt=Date.now();
       saveStoriesIndex();
     }
   }
-  try{
-    const g = {};
-    GLOBAL_KEYS.forEach(k=> g[k] = state[k]);
-    localStorage.setItem(GLOBAL_KEY, JSON.stringify(g));
-  }catch(e){}
-  showSaveInd("✓ Đã lưu", "saved");
+  /* Cấu hình toàn cục vẫn đồng bộ trong runtime; không auto-write localStorage. */
   updateStorageBar();
+  showSaveInd("✓ Đã lưu","saved");
 }
-
+function persist(){
+  showSaveInd("⏳ chờ lưu...","saving");
+  clearTimeout(persistTimer);
+  persistTimer=setTimeout(()=>persistNow(),1750);
+}
 function loadGlobalSettings(){
   try{
     const raw = localStorage.getItem(GLOBAL_KEY);
@@ -1313,9 +1569,9 @@ function loadGlobalSettings(){
   }catch(e){}
 }
 
-function loadCurrentStoryIntoState(){
+async function loadCurrentStoryIntoState(){
   loadGlobalSettings();
-  const s = loadStoryStateFromDisk(currentStoryId);
+  const s = await loadStoryStateFromDiskAsync(currentStoryId);
   if(!s){
     const fresh = newStoryState();
     const keep = {}; GLOBAL_KEYS.forEach(k=> keep[k] = state[k]);
@@ -1350,7 +1606,24 @@ function loadCurrentStoryIntoState(){
   if(!Array.isArray(state.knowledgeLedger)) state.knowledgeLedger = [];
   if(!Array.isArray(state.memoryEvents)) state.memoryEvents = [];
   if(!Number.isFinite(Number(state.lastMemorySyncChapter))) state.lastMemorySyncChapter = 0;
-  state.schemaVersion = 9;
+  /* v10.2 normalize merged metadata objects */
+  if(!state.apiSettings || typeof state.apiSettings!=="object") state.apiSettings={};
+  state.apiSettings.endpoint=state.apiEndpoint||state.apiSettings.endpoint||"https://openrouter.ai/api/v1/chat/completions";
+  state.apiSettings.key=state.apiKey||state.apiSettings.key||"";
+  state.apiSettings.primaryModel=state.model||state.apiSettings.primaryModel||"deepseek/deepseek-v3.2";
+  state.apiSettings.nsfwModel=state.modelNsfw||state.apiSettings.nsfwModel||"aion-labs/aion-2.0";
+  state.apiSettings.nsfwMode=state.nsfwMode||state.apiSettings.nsfwMode||"auto";
+  state.apiSettings.nsfwThreshold=Number(state.nsfwAutoThreshold||state.apiSettings.nsfwThreshold||6);
+  state.storyMetaData=buildStoryMetaData(state);
+  if(!Array.isArray(state.characterCards)) state.characterCards=[];
+  if(!Array.isArray(state.banWords)) state.banWords=[];
+  if(!Array.isArray(state.glossaryLock)) state.glossaryLock=[];
+  if(!state.characterStateTracker||typeof state.characterStateTracker!=="object") state.characterStateTracker={};
+  if(!Number.isFinite(Number(state.tokenCapPerPrompt))) state.tokenCapPerPrompt=5;
+  if(!Number.isFinite(Number(state.snapshotLimit))) state.snapshotLimit=7;
+  if(state.wakeLockEnabled==null) state.wakeLockEnabled=true;
+  if(!Number.isFinite(Number(state.slidingWindowWords))) state.slidingWindowWords=1500;
+  state.schemaVersion = 10;
 }
 
 /* ========== DOM REFS ========== */
@@ -1679,7 +1952,7 @@ async function callAI(prompt, opts){
   const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + key };
   if(isOpenRouter){
     headers["HTTP-Referer"] = location.protocol === "file:" ? "https://localhost" : location.origin;
-    headers["X-Title"] = "Xuong Truyen AI Pro Max v9";
+    headers["X-Title"] = "Xuong Truyen AI Pro Max v10";
   }
 
   let lastErr = null;
@@ -1788,6 +2061,7 @@ const taskQueue = [];
 let queueRunning = false;
 function enqueueTask(fn, label, opts){
   opts=opts||{};
+  if(SKIPPED_TASKS.has(label)) return Promise.resolve();
   return new Promise((resolve, reject)=>{
     taskQueue.push({ fn, label, serial:!!opts.serial, resolve, reject });
     runQueue();
@@ -2298,6 +2572,7 @@ function buildContextBlock(){
   /* Story bible — ngắn */
   const bible = buildStoryBibleSummary();
   if(bible) lines.push(clip(bible, 1800));
+  const loreTxt = loreForPrompt(); if(loreTxt) lines.push(loreTxt);
 
   const style = buildStyleBlock();
   if(style) lines.push("STYLE:\n" + clip(style, 900));
@@ -2327,9 +2602,9 @@ function buildContextBlock(){
     lines.push("⚠ Status mới tới ch" + state.lastStatusChapter + " — thiếu " + (state.chapters.length - state.lastStatusChapter) + " ch.");
   }
 
-  /* NV: 8–10 là đủ cho 1 chương */
-  const relChars = relevantCharacters(10);
-  if(relChars.length) lines.push("NHÂN VẬT (bám ngoại hình/số đo hồ sơ):\n" + clip(characterSummaryForPrompt(relChars), 3200));
+  /* NV: bóc thẻ tự động, tối đa 5 thẻ cho mỗi prompt */
+  const cardText = characterCardsForPromptV102((state.chapters.slice(-1)[0]?.text||"") + "\n" + (state.directive||""));
+  if(cardText) lines.push("THẺ NHÂN VẬT KÍCH HOẠT (tối đa 5):\n" + clip(cardText, 2400));
 
   if(state.mainCharProfile && state.mainCharProfile.name){
     const mc = state.mainCharProfile;
@@ -2367,6 +2642,10 @@ function buildContextBlock(){
   if(state.currentStatus){
     lines.push("CURRENT STATUS:\n" + clip(state.currentStatus, 2200));
   }
+  const trackers=Object.values(state.characterStateTracker||{}).slice(-20);
+  if(trackers.length) lines.push("CHARACTER STATE TRACKER:\n"+trackers.map(x=>"- "+x.name+" | Ch"+x.chapter+" | cấp:"+(x.powerLevel||"?")+" | vị trí:"+(x.location||"?")+" | sức khỏe:"+(x.health||"?")+" | vật phẩm:"+(x.itemsHeld||"?")+" | "+(x.dead?"đã chết":"còn sống")).join("\n"));
+  if((state.glossaryLock||[]).length) lines.push("GLOSSARY LOCK:\n"+state.glossaryLock.map(x=>"- "+x).join("\n"));
+  if((state.banWords||[]).length) lines.push("CẤM TỪ / ANTI-AI TROPES:\n"+state.banWords.slice(0,80).map(x=>"- "+x).join("\n"));
   if(state.directive) lines.push("MỆNH LỆNH: " + clip(state.directive, 500));
   if(state.advancedRules) lines.push("QUY TẮC:\n" + clip(state.advancedRules, 1200));
 
@@ -2542,9 +2821,9 @@ autoContinueMaxInput.addEventListener("change", ()=>{
   state.autoContinueMax = Math.max(0, Math.min(8, parseInt(autoContinueMaxInput.value,10) || 4));
   autoContinueMaxInput.value = state.autoContinueMax; persist();
 });
-modelNsfwSelect.addEventListener("change", ()=>{ state.modelNsfw = modelNsfwSelect.value.trim(); persist(); updateNsfwHint(); });
-modelSelect.addEventListener("change", ()=>{ state.model = modelSelect.value.trim(); persist(); });
-nsfwModeSelect.addEventListener("change", ()=>{ state.nsfwMode = nsfwModeSelect.value; persist(); updateNsfwHint(); toggleAutoOpts(); });
+modelNsfwSelect.addEventListener("change", ()=>{ state.modelNsfw = modelNsfwSelect.value.trim(); syncApiSettingsV102(); persist(); updateNsfwHint(); });
+modelSelect.addEventListener("change", ()=>{ state.model = modelSelect.value.trim(); syncApiSettingsV102(); persist(); });
+nsfwModeSelect.addEventListener("change", ()=>{ state.nsfwMode = nsfwModeSelect.value; syncApiSettingsV102(); persist(); updateNsfwHint(); toggleAutoOpts(); });
 nsfwAutoThresholdInput.addEventListener("change", ()=>{
   state.nsfwAutoThreshold = Math.max(3, Math.min(9, parseInt(nsfwAutoThresholdInput.value,10) || 6));
   nsfwAutoThresholdInput.value = state.nsfwAutoThreshold; persist();
@@ -2568,7 +2847,8 @@ $ID("saveKeyBtn").addEventListener("click", async ()=>{
   state.modelNsfw = (modelNsfwSelect.value || "").trim();
   state.nsfwMode = nsfwModeSelect.value || "auto";
   state.nsfwAutoThreshold = Math.max(3, Math.min(9, parseInt(nsfwAutoThresholdInput.value,10) || 6));
-  persist();
+  syncApiSettingsV102();
+  persistNow();
   apiStatus.textContent = "Đang kiểm tra...";
   apiStatus.className = "api-status";
   if(!state.apiEndpoint || !state.apiKey){
@@ -2582,7 +2862,7 @@ $ID("saveKeyBtn").addEventListener("click", async ()=>{
     const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + state.apiKey };
     if(isOpenRouter){
       headers["HTTP-Referer"] = location.protocol === "file:" ? "https://localhost" : location.origin;
-      headers["X-Title"] = "Xuong Truyen AI Pro Max v9";
+      headers["X-Title"] = "Xuong Truyen AI Pro Max v10";
     }
     // Lightweight probe: request 1 token
     const body = {
@@ -3288,7 +3568,7 @@ function captureChapterSnapshot(chapterNumber){
     const idx = chapterNumber - 1;
     const ch = state.chapters[idx];
     if(!ch) return;
-    ch.stateSnapshot = {
+    const snapshot = {
       capturedAt: Date.now(),
       currentStatus: state.currentStatus || "",
       storyClock: state.storyClock || "",
@@ -3298,6 +3578,11 @@ function captureChapterSnapshot(chapterNumber){
       items: JSON.parse(JSON.stringify(state.items || [])),
       threads: JSON.parse(JSON.stringify(state.threads || []))
     };
+    if(!Array.isArray(ch.stateSnapshots)) ch.stateSnapshots=[];
+    ch.stateSnapshots.unshift(snapshot);
+    const cap=Math.min(10,Math.max(5,Number(state.snapshotLimit)||7));
+    ch.stateSnapshots=ch.stateSnapshots.slice(0,cap);
+    ch.stateSnapshot=ch.stateSnapshots[0]||snapshot;
     persist();
     renderSnapshotChapterSelect();
     const sel = $ID("snapshotChapterSelect");
@@ -3364,6 +3649,33 @@ function renderSnapshotView(idx){
 })();
 
 /* ========== CHARACTER UPDATE ========== */
+
+function extractCharacterCardsV102(text){
+  const hay=normalizeName(text||"");
+  const chars=state.characters||[];
+  const scored=chars.map(c=>{
+    const name=normalizeName(c.name);
+    if(!name) return {c,score:-999};
+    let score=0;
+    if(hay.includes(name)) score+=20;
+    if(c.tier==="major")score+=7; else if(c.tier==="important")score+=5; else if(c.tier==="supporting")score+=2;
+    if(c.lastAppearance!=null && state.chapters.length-c.lastAppearance<=2)score+=5;
+    return {c,score};
+  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,Math.min(5,Number(state.tokenCapPerPrompt)||5));
+  const cards=scored.map(({c})=>({
+    id:c.id,name:c.name,keys:[c.name,c.alias,c.role,c.faction,c.currentLocation].filter(Boolean).join(", "),
+    state:{location:c.currentLocation||"",physical:c.physicalState||"",mental:c.mentalState||"",dead:!!c.dead},
+    profile:{appearance:c.appearance||"",personality:c.personality||"",goals:c.goals||""},
+    updatedAt:Date.now()
+  }));
+  state.characterCards=cards;
+  return cards;
+}
+function characterCardsForPromptV102(text){
+  const cards=extractCharacterCardsV102(text);
+  return cards.map(c=>"- "+c.name+" | vị trí:"+ (c.state.location||"?") +" | thể trạng:"+ (c.state.physical||"?")
+    +" | tâm lý:"+ (c.state.mental||"?") +" | "+String(c.profile.appearance||"").slice(0,180)).join("\n");
+}
 function relevantCharacters(limit){
   limit = limit || 22;
   const recentText = normalizeName(state.chapters.slice(-4).map(c=> (c.text||"") + " " + (c.summary||"")).join(" "));
@@ -3487,6 +3799,17 @@ function mergeCharacterUpdate(update, chapterNumber){
     });
   }
   if(update.chapterEvent) c.history.push({chapter: chapterNumber, event: update.chapterEvent});
+  // Continuity Engine: keep only the latest dynamic state per character.
+  const trackerKey=normalizeName(c.name);
+  const prevTracker=state.characterStateTracker[trackerKey]||{};
+  state.characterStateTracker[trackerKey]={
+    chapter:chapterNumber, name:c.name,
+    powerLevel:update.powerLevel||update.realm||update.level||prevTracker.powerLevel||"",
+    location:update.currentLocation||prevTracker.location||"",
+    health:update.healthStatus||update.physicalState||prevTracker.health||"",
+    itemsHeld:update.itemsHeld||update.heldItems||prevTracker.itemsHeld||"",
+    dead:!!c.dead
+  };
   return { name: c.name, isNewChar };
 }
 // Định dạng JSON mà AI phải trả về khi cập nhật nhân vật — bao gồm phân loại
@@ -3507,6 +3830,7 @@ const CHAR_JSON_FORMAT_HINT = [
   '  "weakness": "", "fear": "",',
   '  "currentLocation": "", "physicalState": "", "mentalState": "",',
   '  "knowledge": "những gì NV này BIẾT/NGHI NGỜ tính đến hết chương này — chỉ ghi điều họ thực sự đã chứng kiến/được kể/suy luận hợp lý, KHÔNG được gán kiến thức của người đọc cho nhân vật",',
+  '  "powerLevel": "cấp/cảnh giới hiện tại nếu có bằng chứng", "healthStatus": "tình trạng sức khỏe/vết thương hiện tại", "itemsHeld": "vật phẩm đang giữ",',
   '  "chapterEvent": "1 câu ngắn mô tả sự kiện quan trọng nhất liên quan tới NV này trong chương (để lưu vào lịch sử)",',
   '  "relationshipWithMain": {"trust":"","affection":"","tension":"","stage":"","notes":""},',
   '  "relationships": [{"withName": "tên NV khác", "stage": "", "trust": "", "notes": "diễn biến quan hệ MỚI trong chương này, không lặp lại thông tin cũ"}],',
@@ -3791,22 +4115,24 @@ $ID("integrityScanBtn").addEventListener("click", async ()=>{
 function fullStoryText(){
   return state.chapters.map((c,i)=>"Chương "+(i+1)+": "+c.title+"\n"+c.text).join("\n\n");
 }
-function fullStoryTextCompressed(){
-  /* Nếu > 30 chương, chỉ lấy 10 chương gần + summary chương cũ */
-  if(state.chapters.length <= 12) return fullStoryText();
-  const keep = 6;
-  const old = state.chapters.slice(0, -keep);
-  const recent = state.chapters.slice(-keep);
-  const oldPart = old.map((c,i)=> "Chương " + (i+1) + " (" + c.title + "): " + (c.summary || "(chưa tóm tắt)")).join("\n");
-  const recentPart = recent.map((c,i)=>"Chương "+(old.length+i+1)+": "+c.title+"\n"+c.text).join("\n\n");
-  return "=== TÓM TẮT CHƯƠNG CŨ ===\n" + oldPart + "\n\n=== TOÀN VĂN CHƯƠNG GẦN ===\n" + recentPart;
-}
 
+function fullStoryTextCompressed(){
+  /* v10.2 Sliding Window: 1 chương gần nhất, tối đa ~1.500 từ; cũ hơn chỉ summary. */
+  if(!state.chapters.length) return "";
+  const keepWords=Math.max(500,Number(state.slidingWindowWords)||1500);
+  const old=state.chapters.slice(0,-1);
+  const last=state.chapters[state.chapters.length-1];
+  const oldPart=old.map((c,i)=>"Chương "+(i+1)+": "+(c.summary||"(chưa tóm tắt)").slice(0,240)).join("\n");
+  const words=(last.text||"").trim().split(/\s+/);
+  const recent=words.length>keepWords ? words.slice(-keepWords).join(" ") : (last.text||"");
+  return (oldPart ? "=== TÓM TẮT CHƯƠNG CŨ ===\n"+oldPart+"\n\n" : "")
+    +"=== CỬA SỔ CHƯƠNG GẦN ===\nChương "+state.chapters.length+" ("+(last.title||"")+")\n"+recent;
+}
 /* ========== SUMMARY ========== */
 async function generateChapterSummary(text, chapterNumber, silent){
   if(!text) return "";
   const prompt = [
-    "Đọc chương sau và tóm tắt trong 3-6 câu (TIẾNG VIỆT), tập trung vào:",
+    "Đọc chương sau và tóm tắt trong 2-3 câu (TIẾNG VIỆT), tập trung vào:",
     "- Sự kiện chính",
     "- Nhân vật xuất hiện",
     "- Thay đổi quan hệ / sức mạnh / tình trạng",
@@ -3857,12 +4183,17 @@ async function buildChapterPlan(context, recent, chapterNumber){
     "Bạn là biên kịch cho tiểu thuyết dài kỳ. Lập KẾ HOẠCH cho CHƯƠNG " + chapterNumber + ".",
     "", "Bối cảnh:", context, "",
     recent ? ("Chương gần nhất:\n" + recent.slice(0, 8000)) : "Chương đầu tiên.", "",
-    "Lập kế hoạch BEAT:",
-    "1. Mục tiêu chương", "2. Xung đột chính", "3. Nhân vật xuất hiện", "4. Địa điểm",
-    "5. SCENE BEATS (4-6 beat):", "   - Beat 1: ...", "   - Beat 2: ...",
-    "6. Kết chương",
-    "7. Nếu có cảnh 18+: mức intensity dự kiến + structure",
-    "", "KHÔNG viết văn xuôi. Chỉ bullet points."
+    "Lập kế hoạch theo NGÂN SÁCH SỰ KIỆN — không vượt quá 3 sự kiện chính:",
+    "1. Mục tiêu chương", "2. Xung đột chính",
+    "3. DANH SÁCH 1-3 SỰ KIỆN CHÍNH (mỗi sự kiện ghi: mục đích + diễn biến + hậu quả)",
+    "4. Nhân vật xuất hiện: ưu tiên nhân vật đã có; với nhân vật mới phải ghi rõ tên dự kiến + lý do bắt buộc phải xuất hiện + vai trò cụ thể",
+    "5. Địa điểm",
+    "6. SCENE BEATS (tối đa 5 beat) — các beat chỉ triển khai 1-3 sự kiện trên, KHÔNG được tự sinh thêm sự kiện lớn",
+    "7. Kết chương",
+    "8. Nếu có cảnh 18+: mức intensity dự kiến + structure",
+    "",
+    "QUY TẮC CỨNG: Không thêm sự kiện lớn thứ 4. Không tạo nhân vật quan trọng mới nếu không có lý do cốt truyện rõ ràng. Nếu có thể dùng nhân vật hiện có thì phải dùng nhân vật hiện có.",
+    "KHÔNG viết văn xuôi. Chỉ bullet points."
   ].join("\n");
   try{ const { text } = await callAI(prompt, {maxTokens:1000, temperature:0.8}); return text; }catch(err){ return ""; }
 }
@@ -3933,7 +4264,7 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
     ].filter(Boolean).join("\n");
     try{
       const { text: contText, finishReason } = await callAI(prompt, {
-        maxTokens: 12000, temperature: 0.95, modelOverride: targetModel,
+        maxTokens: 12000, temperature: 0.9, modelOverride: targetModel,
         frequency_penalty: 0.55, presence_penalty: 0.4,
         streaming: true, onChunk: onChunk
       });
@@ -3957,6 +4288,175 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
   return chapterObj;
 }
 
+
+/* ========== v10.2 UI / ARCHITECTURE ========== */
+
+
+function moveAuthoringSectionsToWriter(){
+  const layout=document.querySelector('.layout'), main=document.querySelector('.main');
+  const sidebar=layout?.querySelector(':scope > .sidebar'), stack=document.getElementById('authoringStack');
+  if(!layout||!main||!sidebar||!stack)return;
+  // v10.2.1 DOM contract: settings sections live inside .sidebar; only 5/6 live in writer.
+  // Migration safeguard for older cached markup where sections were direct children of .layout.
+  [...layout.querySelectorAll(':scope > .section')].forEach(sec=>{
+    const label=(sec.querySelector('.section-head')?.innerText||'').trim();
+    const isWriter=/^5\.\s*Công Cụ Sáng Tác/i.test(label)||/^6\.\s*Quản Lý Dữ Liệu/i.test(label);
+    if(isWriter) stack.appendChild(sec); else sidebar.appendChild(sec);
+  });
+  // Also recover misplaced 5/6 that might still be direct sidebar children in older builds.
+  [...sidebar.querySelectorAll(':scope > .section')].forEach(sec=>{
+    const label=(sec.querySelector('.section-head')?.innerText||'').trim();
+    if(/^5\.\s*Công Cụ Sáng Tác/i.test(label)||/^6\.\s*Quản Lý Dữ Liệu/i.test(label)) stack.appendChild(sec);
+  });
+  if(window.innerWidth>=901){
+    layout.style.gridTemplateColumns='minmax(0,1fr) minmax(330px,420px)';
+    main.style.gridColumn='1'; main.style.gridRow='1';
+    sidebar.style.gridColumn='2'; sidebar.style.gridRow='1';
+  }
+}
+function ensureUpgradePanel(){
+  const stack=$ID("authoringStack"); if(!stack || $ID("v102Panel")) return;
+  const sec=document.createElement("div");
+  sec.className="section tone-blue open"; sec.id="v102Panel"; sec.setAttribute("data-section","");
+  sec.innerHTML=`<div class="section-head" data-toggle><span>⚡ 10.2. Hiệu năng & Hậu kỳ iOS</span><span class="chev">▾</span></div>
+  <div class="section-body">
+    <div class="writer-tools-note">IndexedDB + debounce 1.75s · tối đa 5 thẻ nhân vật · 5–10 snapshot/chương (mặc định 7) · backup JSON 1-click.</div>
+    <div class="token-estimator" id="tokenEstimator">Token dự tính: <b id="tokenEstimate">—</b> · Chi phí: <b id="costEstimate">—</b></div>
+    <div class="row2">
+      <button class="btn btn-amber" id="exportBackupV102">⬇ Backup JSON</button>
+      <button class="btn btn-ghost" id="cleanTextV102">🧹 Làm sạch văn bản</button>
+    </div>
+    <div class="field"><label>Cấm từ / Anti-AI tropes</label><textarea id="banWordsV102" rows="3" placeholder="Mỗi dòng một từ/cụm từ..."></textarea></div>
+    <div class="row2">
+      <button class="btn btn-purple" id="auditTextV102">🔎 Quét lặp / cấm từ</button>
+      <button class="btn btn-ghost" id="wakeLockV102">🔆 Wake Lock: Bật</button>
+    </div>
+    <div class="field"><label>Glossary Lock — xưng hô cố định</label><textarea id="glossaryV102" rows="2" placeholder="Ví dụ: Ta - Ngươi\\nHuynh - Muội"></textarea></div>
+    <div id="auditResultV102" class="hint"></div>
+  </div>`;
+  stack.appendChild(sec);
+  sec.querySelector("[data-toggle]").addEventListener("click",()=>sec.classList.toggle("open"));
+  $ID("banWordsV102").value=(state.banWords||[]).join("\\n");
+  $ID("glossaryV102").value=(state.glossaryLock||[]).join("\\n");
+  $ID("banWordsV102").addEventListener("input",()=>{state.banWords=$ID("banWordsV102").value.split(/\\n|,/).map(x=>x.trim()).filter(Boolean);persist();});
+  $ID("glossaryV102").addEventListener("input",()=>{state.glossaryLock=$ID("glossaryV102").value.split(/\\n/).map(x=>x.trim()).filter(Boolean);persist();});
+  $ID("exportBackupV102").addEventListener("click",exportFullBackupV102);
+  $ID("cleanTextV102").addEventListener("click",cleanCurrentChapterTextV102);
+  $ID("auditTextV102").addEventListener("click",()=>{ auditCurrentChapterV102(); highlightAuditMatchesV102(); });
+  $ID("wakeLockV102").addEventListener("click",async()=>{
+    state.wakeLockEnabled=!state.wakeLockEnabled;
+    if(state.wakeLockEnabled) await acquireWakeLock(); else releaseWakeLock();
+    $ID("wakeLockV102").textContent="🔆 Wake Lock: "+(state.wakeLockEnabled?"Bật":"Tắt");
+    persist();
+  });
+}
+function syncApiSettingsV102(){
+  state.apiSettings={
+    endpoint:state.apiEndpoint||"",
+    key:state.apiKey||"",
+    primaryModel:state.model||"",
+    nsfwModel:state.modelNsfw||"",
+    nsfwMode:state.nsfwMode||"auto",
+    nsfwThreshold:Number(state.nsfwAutoThreshold||6)
+  };
+  state.storyMetaData=buildStoryMetaData(state);
+}
+function estimateCurrentPromptV102(){
+  try{
+    const c=state.chapters[state.currentChapterIndex];
+    const context=buildContextBlock();
+    const directive=state.directive||"";
+    const tokens=estimateTokens(context+"\\n"+directive);
+    const out=Math.max(500,Number(state.minChapterWords)||5000)*1.35;
+    const p=priceForModel(state.model);
+    const cost=(tokens/1000000)*p.in+(out/1000000)*p.out;
+    if($ID("tokenEstimate")) $ID("tokenEstimate").textContent=(tokens+Math.round(out)).toLocaleString("vi-VN")+" (~"+tokens.toLocaleString("vi-VN")+" input)";
+    if($ID("costEstimate")) $ID("costEstimate").textContent="$"+cost.toFixed(4);
+    return {tokens:tokens+Math.round(out),cost};
+  }catch(e){return null;}
+}
+function exportFullBackupV102(){
+  syncApiSettingsV102();
+  const safe=JSON.parse(JSON.stringify(state));
+  if(!state.includeKeyOnExport && safe.apiSettings) safe.apiSettings.key="";
+  if(!state.includeKeyOnExport) safe.apiKey="";
+  const payload={format:"xuong-truyen-ai-backup",version:10.2,exportedAt:new Date().toISOString(),StoryMetaData:buildStoryMetaData(safe),ChapterData:buildChapterData(safe)};
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=(state.storyName||"xuong-truyen")+"-backup-"+new Date().toISOString().slice(0,10)+".json";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  setStatus("Đã xuất backup JSON.","saved");
+}
+function cleanVietnameseTextV102(text){
+  return String(text||"").replace(/[\\u00A0\\t]+/g," ")
+    .replace(/[ ]{2,}/g," ")
+    .replace(/\\n{3,}/g,"\\n\\n")
+    .replace(/[“”]/g,'"')
+    .replace(/\\s+([,.;:!?…])/g,"$1")
+    .replace(/([,.;:!?…])([A-Za-zÀ-ỹ])/g,"$1 $2")
+    .replace(/(^|\\n)\\s*([a-zà-ỹ])/g,(m,p,c)=>p+c.toUpperCase())
+    .trim();
+}
+function cleanCurrentChapterTextV102(){
+  const idx=state.currentChapterIndex, c=state.chapters[idx];
+  if(!c) return;
+  const before=c.text||""; const after=cleanVietnameseTextV102(before);
+  c.text=after; c.wordCount=countWords(after);
+  chapterTextEl.textContent=after;
+  persistNow(); renderCurrentChapter();
+  setStatus("Đã làm sạch văn bản.","saved");
+}
+function auditCurrentChapterV102(){
+  const idx=state.currentChapterIndex, c=state.chapters[idx]; if(!c) return;
+  const text=c.text||"", lower=text.toLocaleLowerCase("vi");
+  const banned=(state.banWords||[]).filter(w=>w && lower.includes(w.toLocaleLowerCase("vi")));
+  const words=lower.normalize("NFC").match(/[\\p{L}\\p{N}']+/gu)||[];
+  const freq={}; words.forEach(w=>freq[w]=(freq[w]||0)+1);
+  const repeats=Object.entries(freq).filter(([w,n])=>n>=4&&w.length>=4).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  const el=$ID("auditResultV102"); if(!el)return;
+  el.innerHTML=(banned.length?"<b>🚫 Cấm:</b> "+banned.map(escapeHtml).join(", ")+"<br>":"")
+    +(repeats.length?"<b>🔁 Lặp ≥4:</b> "+repeats.map(([w,n])=>escapeHtml(w)+" ×"+n).join(", "):"Không phát hiện từ lặp đáng chú ý.");
+}
+function updateV102Estimator(){ setTimeout(estimateCurrentPromptV102,0); }
+
+// Manual editing in the contenteditable editor must be persisted too.
+let chapterEditTimer=null;
+chapterTextEl.addEventListener("input",()=>{
+  const idx=state.currentChapterIndex, c=state.chapters[idx];
+  if(!c || generating) return;
+  c.text=chapterTextEl.textContent||"";
+  c.wordCount=countWords(c.text);
+  c.polished=false;
+  clearTimeout(chapterEditTimer);
+  chapterEditTimer=setTimeout(()=>persist(),650);
+});
+
+function highlightAuditMatchesV102(){
+  const idx=state.currentChapterIndex, c=state.chapters[idx];
+  if(!c) return;
+  const text=c.text||"";
+  const lower=text.toLocaleLowerCase("vi");
+  const banned=(state.banWords||[]).filter(Boolean);
+  const words=lower.normalize("NFC").match(/[\p{L}\p{N}']+/gu)||[];
+  const freq={}; words.forEach(w=>freq[w]=(freq[w]||0)+1);
+  const repeated=Object.entries(freq).filter(([w,n])=>n>=4&&w.length>=4).map(([w])=>w);
+  const terms=[...banned,...repeated].sort((a,b)=>b.length-a.length).filter(Boolean);
+  if(!terms.length){ chapterTextEl.textContent=text; return; }
+  const escaped=terms.map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+  try{
+    const re=new RegExp(escaped,'giu');
+    let pos=0, html="", m;
+    while((m=re.exec(text))){
+      html+=escapeHtml(text.slice(pos,m.index));
+      html+='<mark class="audit-hit" title="Từ/cụm cần xem lại">'+escapeHtml(m[0])+'</mark>';
+      pos=m.index+m[0].length;
+      if(!m[0].length) re.lastIndex++;
+    }
+    html+=escapeHtml(text.slice(pos));
+    chapterTextEl.innerHTML=html;
+  }catch(e){ chapterTextEl.textContent=text; }
+}
+
 function setGenerating(on){
   generating = on;
   if(on) userStopRequested = false; /* bắt đầu lượt mới thì xoá cờ "đã dừng" của lượt trước */
@@ -3975,13 +4475,14 @@ function setGenerating(on){
    1) Wake Lock: xin trình duyệt ĐỪNG tự khoá màn hình trong lúc đang viết
       (chỉ chống được TRƯỜNG HỢP tự khoá màn hình, không chống được việc
       người dùng chủ động bấm Home / chuyển app).
-   2) Lưu tạm phần văn bản đang stream ra localStorage mỗi ~1.5s. Nếu bị
+   2) Lưu tạm phần văn bản đang stream ra IndexedDB mỗi ~1.5s. Nếu bị
       ngắt giữa chừng (mất mạng, tab bị hệ điều hành giết), lần mở lại app
       sẽ phát hiện bản nháp dở dang và cho khôi phục thay vì mất trắng. */
 let wakeLockRef = null;
 let wakeLockUnsupportedWarned = false;
 async function acquireWakeLock(){
   try{
+    if(state && state.wakeLockEnabled === false) return;
     if('wakeLock' in navigator){
       wakeLockRef = await navigator.wakeLock.request('screen');
     } else if(!wakeLockUnsupportedWarned){
@@ -4003,43 +4504,36 @@ document.addEventListener("visibilitychange", ()=>{
 
 const DRAFT_KEY_PREFIX = "aiStoryWorkshop_draft_";
 let lastDraftSaveAt = 0;
+
 function saveDraftProgress(displayText, meta){
   try{
     if(!state.storyId) return;
-    const now = Date.now();
-    if(now - lastDraftSaveAt < 1500) return; /* debounce, tránh ghi localStorage liên tục */
-    if(!displayText || displayText.length < 200) return; /* quá ngắn thì chưa cần lưu */
-    lastDraftSaveAt = now;
-    localStorage.setItem(DRAFT_KEY_PREFIX + state.storyId, JSON.stringify({
-      text: displayText, savedAt: now, chapterCountAtSave: state.chapters.length,
-      mode: (meta && meta.mode) || "new", idx: meta ? meta.idx : null
-    }));
+    const now=Date.now();
+    if(now-lastDraftSaveAt<1500) return;
+    if(!displayText||displayText.length<200)return;
+    lastDraftSaveAt=now;
+    idbPut(IDB_DRAFT_STORE,state.storyId,{
+      text:displayText,savedAt:now,chapterCountAtSave:state.chapters.length,
+      mode:(meta&&meta.mode)||"new",idx:meta?meta.idx:null
+    }).catch(()=>{});
   }catch(e){}
 }
 function clearDraftProgress(){
-  try{ if(state.storyId) localStorage.removeItem(DRAFT_KEY_PREFIX + state.storyId); }catch(e){}
+  try{if(state.storyId)idbDelete(IDB_DRAFT_STORE,state.storyId);}catch(e){}
 }
-function checkForRecoverableDraft(){
+async function checkForRecoverableDraft(){
   try{
-    if(!state.storyId) return;
-    const raw = localStorage.getItem(DRAFT_KEY_PREFIX + state.storyId);
-    if(!raw) return;
-    const d = JSON.parse(raw);
-    if(!d || !d.text || d.text.length < 200){ clearDraftProgress(); return; }
-    if(d.mode === "continue"){
-      /* Nháp "Viết Tiếp": nếu chương đích đã có ĐỦ (hoặc nhiều hơn) chữ so
-         với lúc lưu nháp, nghĩa là lần sau đó người dùng đã viết tiếp thành
-         công bình thường rồi — nháp cũ hết ý nghĩa. */
-      const target = state.chapters[d.idx];
-      if(!target || target.text.length >= d.text.length){ clearDraftProgress(); return; }
-      showDraftRecoveryBanner(d);
-      return;
+    if(!state.storyId)return;
+    const d=await idbGet(IDB_DRAFT_STORE,state.storyId);
+    if(!d||!d.text||d.text.length<200){if(d)clearDraftProgress();return;}
+    if(d.mode==="continue"){
+      const target=state.chapters[d.idx];
+      if(!target||target.text.length>=d.text.length){clearDraftProgress();return;}
+      showDraftRecoveryBanner(d);return;
     }
-    /* Nếu số chương hiện tại đã vượt qua lúc lưu nháp, nghĩa là chương đó
-       đã hoàn tất bình thường rồi — nháp cũ không còn ý nghĩa. */
-    if(d.chapterCountAtSave != null && state.chapters.length > d.chapterCountAtSave){ clearDraftProgress(); return; }
+    if(d.chapterCountAtSave!=null&&state.chapters.length>d.chapterCountAtSave){clearDraftProgress();return;}
     showDraftRecoveryBanner(d);
-  }catch(e){}
+  }catch(e){console.warn("[draft]",e);}
 }
 async function showDraftRecoveryBanner(d){
   if(d.mode === "continue"){
@@ -4198,6 +4692,15 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       recentFullText ? ("\nChương gần (tránh lặp sự kiện / cấu trúc):\n" + recentFullText) : "",
       olderSummaries ? ("\nTÓM TẮT CHƯƠNG XA:\n" + olderSummaries) : "",
       plan ? ("\nKẾ HOẠCH CHƯƠNG " + chapterNumber + ":\n" + plan) : "",
+      "\nNGÂN SÁCH SỰ KIỆN — BẮT BUỘC:",
+      "- Toàn chương chỉ có 1–3 SỰ KIỆN CHÍNH. Không thêm sự kiện lớn thứ 4 dù còn dung lượng từ.",
+      "- Các cảnh/beat nhỏ chỉ là bước triển khai, phản ứng hoặc hậu quả của 1–3 sự kiện chính; không được biến thành tuyến sự kiện mới.",
+      "- Nếu chương cần dài hơn, hãy đào sâu diễn biến, đối thoại, nội tâm, nguyên nhân–hậu quả và chi tiết cảnh thay vì nhồi thêm biến cố.",
+      "\nNHÂN VẬT PHỤ — BẮT BUỘC:",
+      "- Ưu tiên sử dụng nhân vật đã tồn tại trong hồ sơ truyện; không tùy tiện tạo nhân vật quan trọng mới.",
+      "- Mỗi nhân vật xuất hiện phải có LÝ DO rõ ràng và VAI TRÒ cụ thể đối với một trong 1–3 sự kiện chính.",
+      "- Nếu một nhân vật mới không thực sự cần cho cốt truyện, KHÔNG được tạo chỉ để lấp cảnh, đối thoại hoặc làm nền.",
+      "- Nhân vật mới có vai trò quan trọng chỉ được xuất hiện khi kế hoạch đã chứng minh nhu cầu cốt truyện; nếu không có trong kế hoạch, không tự ý nâng một nhân vật mới thành nhân vật quan trọng.",
       isRegen ? ("\nVIẾT LẠI chương " + chapterNumber + ". Chế độ: " + (regenInstructions[regenMode]||regenInstructions.full)) : "",
       vocabBlock ? ("\n" + vocabBlock) : "",
       "",
@@ -4216,7 +4719,9 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       "3. Tiếp nối liền mạch từ đoạn kết chương trước.",
       "4. Xưng hô nhất quán.",
       "5. Không lặp ý, không lặp câu.",
-      "6. MIÊU TẢ: khi nhân vật mới xuất hiện hoặc cảnh mới mở, TẢ ngoại hình + không khí qua chi tiết cụ thể.",
+      "6. MỖI CHƯƠNG CHỈ 1–3 SỰ KIỆN CHÍNH; không nhồi biến cố mới ngoài ngân sách.",
+      "7. MỖI NHÂN VẬT XUẤT HIỆN PHẢI CÓ LÝ DO + VAI TRÒ; ưu tiên nhân vật đã có, không tùy tiện tạo nhân vật quan trọng mới.",
+      "8. MIÊU TẢ: khi nhân vật mới xuất hiện hoặc cảnh mới mở, TẢ ngoại hình + không khí qua chi tiết cụ thể.",
       usingNsfw ? "7. CẢNH 18+ ƯU TIÊN CAO NHẤT — đủ 4 lớp: cơ thể (số đo hồ sơ) + cảm giác thể xác + nội tâm đa lớp + âm thanh/nhịp. Cấm chỉ kể hành động bên ngoài. Cấm bỏ cảm giác và nội tâm." : "7. (không có yêu cầu 18+ đặc biệt)",
       "8. Định dạng:",
       "TIÊU ĐỀ: <tên chương>",
@@ -4234,7 +4739,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     } : null;
 
     let firstResult = await callAI(prompt, {
-      maxTokens: 16000, temperature: 1.0, modelOverride: targetModel,
+      maxTokens: 16000, temperature: 0.85, modelOverride: targetModel,
       frequency_penalty: usingNsfw ? 0.25 : 0.45,
       presence_penalty: usingNsfw ? 0.25 : 0.35,
       streaming: !!streamingTarget, onChunk: onChunk
@@ -4246,7 +4751,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     if(detectNonVietnamese(rawText)){
       setStatus("Phát hiện ngôn ngữ khác, viết lại...", true);
       try{
-        const retry = await callAI(prompt + "\n\nCẢNH BÁO: BẮT BUỘC 100% TIẾNG VIỆT.", {maxTokens:16000, temperature:1.0, modelOverride: targetModel});
+        const retry = await callAI(prompt + "\n\nCẢNH BÁO: BẮT BUỘC 100% TIẾNG VIỆT.", {maxTokens:16000, temperature:0.85, modelOverride: targetModel});
         if(retry.text){ rawText = retry.text; finishReason = retry.finishReason; }
       }catch(e){}
     }
@@ -4297,50 +4802,58 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     clearDraftProgress();
     setStatus(modeTag + (chapterObj.truncated ? "⚠ vẫn có thể bị cắt. " : "✓ Xong · ") + chapterObj.wordCount + " từ · " + new Date().toLocaleTimeString("vi-VN"), false);
 
-    /* Post-processing */
+    /* Post-processing: hoàn tất trước khi cho phép bắt đầu chương kế tiếp.
+       Điều này tránh race condition: Ch2 được tạo trong khi Character/Status
+       của Ch1 vẫn chưa cập nhật xong. */
     const cn = chapterNumber;
-    enqueueTask(async ()=>{
+    const postTasks = [];
+    postTasks.push(enqueueTask(async ()=>{
       if(state.autoSummaryEnabled && text){
         try{
           const sum = await generateChapterSummary(text, cn, true);
           if(sum){ chapterObj.summary = sum; persist(); renderChapterNav(); renderCurrentChapter(); }
         }catch(e){}
       }
-    }, "summary", {serial:true});
-    enqueueTask(async ()=>{
+    }, "summary", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
       const r = await updateCharactersIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Cập nhật NV ch" + cn + " thất bại — bấm Quét toàn truyện khi rảnh.", false);
       markAutoUpdateIssue(cn, "NV", !r || !r.ok);
-    }, "char", {serial:true});
-    enqueueTask(async ()=>{
+    }, "char", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
       const r = await updateWorldIncremental(text, cn, true);
       markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok);
-    }, "world", {serial:true});
-    enqueueTask(async ()=>{
+    }, "world", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
       const r = await updateCurrentStatusIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Current Status ch" + cn + " lỗi — bấm Quét toàn bộ Status.", false);
       else if(cn % 5 === 0) setStatus("✓ Bộ nhớ đã cập nhật tới ch" + cn + ". Nên rescan NV định kỳ.", false);
       markAutoUpdateIssue(cn, "Status", !r || !r.ok);
-    }, "status", {serial:true});
-    enqueueTask(async ()=>{
+    }, "status", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
       const r = await updateLongMemoryIncremental(text, cn, true);
       markAutoUpdateIssue(cn, "Memory", !r || !r.ok);
-    }, "memory", {serial:true});
-    enqueueTask(async ()=>{
+    }, "memory", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
       /* Scene detection nếu mature */
       if(state.mature && state.autoSceneEnabled){
         try{ await scanScenesForChapter(cn); }catch(e){}
       }
-    }, "scene", {serial:true});
-    enqueueTask(async ()=>{
+    }, "scene", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
       const w = await runContinuityCheck(text, cn, buildStoryBibleSummary() + "\n" + characterSummaryForPrompt(relevantCharacters(20)), true);
       if(w && w.length){
         chapterObj.continuityWarnings = (chapterObj.continuityWarnings || []).concat(w);
         persist(); renderChapterNav(); renderCurrentChapter();
       }
-    }, "continuity", {serial:true});
-    enqueueTask(()=> checkCheckpoint(cn), "checkpoint", {serial:true});
-    enqueueTask(()=> checkPacingGuard(false), "pacing", {serial:true});
+    }, "continuity", {serial:true}));
+    postTasks.push(enqueueTask(()=> checkCheckpoint(cn), "checkpoint", {serial:true}));
+    postTasks.push(enqueueTask(()=> checkPacingGuard(false), "pacing", {serial:true}));
+    // Chỉ sau khi summary + Character + World + Status + Memory + Scene +
+    // Continuity hoàn tất mới đóng snapshot chính thức của chương.
+    await Promise.allSettled(postTasks);
+    try{ captureChapterSnapshot(cn); }catch(e){}
+
 
   }catch(err){
     if(err.userAbort) setStatus("Đã dừng bởi người dùng.", false);
@@ -4424,7 +4937,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
 
     let contText = "", contFinish = null;
     const r = await callAI(prompt, {
-      maxTokens:12000, temperature:0.95, modelOverride: targetModel,
+      maxTokens:12000, temperature:0.9, modelOverride: targetModel,
       frequency_penalty: 0.55, presence_penalty: 0.4,
       streaming: canStream, onChunk: onChunk
     });
@@ -4432,7 +4945,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     chapterTextEl.classList.remove("streaming");
 
     if(detectNonVietnamese(contText)){
-      try{ const r2 = await callAI(prompt + "\n\nBẮT BUỘC 100% TIẾNG VIỆT.", {maxTokens:12000, temperature:1.0, modelOverride: targetModel}); contText = r2.text; contFinish = r2.finishReason; }catch(e){}
+      try{ const r2 = await callAI(prompt + "\n\nBẮT BUỘC 100% TIẾNG VIỆT.", {maxTokens:12000, temperature:0.9, modelOverride: targetModel}); contText = r2.text; contFinish = r2.finishReason; }catch(e){}
     }
     if(state.spellCheckEnabled && contText){
       const fixed = await polishVietnamese(contText, { modelOverride: state.model });
@@ -4447,18 +4960,29 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     persist(); renderChapterNav(); renderCurrentChapter();
     setStatus("Đã viết tiếp.", false);
     const cn = idx + 1;
-    enqueueTask(async ()=>{ const r = await updateCharactersIncremental(contText, cn, true); markAutoUpdateIssue(cn, "NV", !r || !r.ok); }, "char", {serial:true});
-    enqueueTask(async ()=>{ const r = await updateWorldIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok); }, "world", {serial:true});
-    enqueueTask(async ()=>{ const r = await updateCurrentStatusIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Status", !r || !r.ok); }, "status", {serial:true});
-    enqueueTask(async ()=>{
+    const postTasks = [];
+    postTasks.push(enqueueTask(async ()=>{ const r = await updateCharactersIncremental(contText, cn, true); markAutoUpdateIssue(cn, "NV", !r || !r.ok); }, "char", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{ const r = await updateWorldIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok); }, "world", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{ const r = await updateCurrentStatusIncremental(contText, cn, true); markAutoUpdateIssue(cn, "Status", !r || !r.ok); }, "status", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
       const r = await updateLongMemoryIncremental(contText, cn, true);
       markAutoUpdateIssue(cn, "Memory", !r || !r.ok);
-    }, "memory", {serial:true});
-    enqueueTask(async ()=>{
+    }, "memory", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
       if(state.mature && state.autoSceneEnabled){
         try{ await scanScenesForChapter(cn); }catch(e){}
       }
-    }, "scene", {serial:true});
+    }, "scene", {serial:true}));    postTasks.push(enqueueTask(async ()=>{
+      if(state.autoSummaryEnabled && chapter.text){
+        try{
+          const sum = await generateChapterSummary(chapter.text, cn, true);
+          if(sum){ chapter.summary = sum; persist(); renderChapterNav(); renderCurrentChapter(); }
+        }catch(e){}
+      }
+    }, "summary", {serial:true}));
+    await Promise.allSettled(postTasks);
+    try{ captureChapterSnapshot(cn); }catch(e){}
+
   }catch(err){
     chapterTextEl.classList.remove("streaming");
     if(err.userAbort) setStatus("Đã dừng.", false);
@@ -4786,7 +5310,7 @@ async function rewriteScene(chapterIdx, sceneIdx, sceneText, overlay){
   try{
     const { text } = await callAI(prompt2, {
       maxTokens: Math.min(8000, Math.ceil(sceneText.length/2) + 800),
-      temperature: isErotic ? 1.0 : 0.9,
+      temperature: isErotic ? 0.9 : 0.9,
       modelOverride: isErotic ? (state.modelNsfw || undefined) : undefined
     });
     const cleaned = text.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/,"").trim();
@@ -4857,7 +5381,7 @@ floatingRewrite.addEventListener("click", async ()=>{
   try{
     const { text } = await callAI(prompt2, {
       maxTokens: Math.min(8000, Math.ceil(selText.length/2) + 1000),
-      temperature: isErotic ? 1.0 : 0.9,
+      temperature: isErotic ? 0.9 : 0.9,
       frequency_penalty: 0.4, presence_penalty: 0.3,
       modelOverride: isErotic ? (state.modelNsfw || undefined) : undefined
     });
@@ -5185,7 +5709,147 @@ $ID("memoryRescanBtn").addEventListener("click",async()=>{
 });
 
 /* ========== RENDER ALL ========== */
+
+/* ========== v10 LOREBOOK ENGINE ==========
+   Thẻ tri thức tự kích hoạt theo từ khóa (khớp nguyên từ, không phân biệt hoa/thường,
+   hỗ trợ /regex/), sắp theo priority, cắt theo ngân sách token. */
+let loreEditId = null, lastLoreInfo = null;
+function loreCards(){ if(!Array.isArray(state.lorebook)) state.lorebook = []; return state.lorebook; }
+function loreKeyList(c){ return String(c.keys||"").split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean); }
+function loreCompileKey(k){
+  const m = k.match(/^\/(.+)\/([a-z]*)$/i);
+  try{
+    if(m) return new RegExp(m[1], Array.from(new Set((m[2].replace(/[gy]/g,"")+"iu").split(""))).join(""));
+    const esc = k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&").replace(/\s+/g,"\\s+");
+    return new RegExp("(?:^|[^\\p{L}\\p{N}_])" + esc + "(?![\\p{L}\\p{N}_])", "iu");
+  }catch(e){ return null; }
+}
+function loreScan(cards, text){
+  const hits = [];
+  for(const c of cards){
+    if(c.enabled === false || !String(c.content||"").trim()) continue;
+    if(c.always){ hits.push({ c, why:"luôn bật" }); continue; }
+    for(const k of loreKeyList(c)){
+      const re = loreCompileKey(k);
+      if(re && re.test(text)){ hits.push({ c, why:k }); break; }
+    }
+  }
+  return hits;
+}
+function loreScanText(){
+  const recent = (state.chapters||[]).slice(-2).map(c=>c.text||"").join("\n\n").slice(-12000);
+  return recent + "\n" + (state.directive||"") + "\n" + (state.currentStatus||"").slice(0,1500);
+}
+function loreBuild(cards, text, budget){
+  const hits = loreScan(cards, text).sort((a,b)=> (Number(b.c.priority)||50) - (Number(a.c.priority)||50));
+  const parts = [], active = [], dropped = []; let used = 0;
+  for(const h of hits){
+    if(active.length >= 5){ dropped.push(h.c.name||"?"); continue; }
+    const block = "• " + (h.c.name||"?") + ": " + String(h.c.content).trim();
+    const t = estimateTokens(block);
+    if(used + t > budget){ dropped.push(h.c.name||"?"); continue; }
+    used += t; parts.push(block); active.push(h.c.name||"?");
+  }
+  return { text: parts.length ? "THẺ TRI THỨC (Lorebook — bắt buộc tuân thủ khi nhân vật/đối tượng xuất hiện):\n" + parts.join("\n") : "", active, dropped, used, total: cards.length, budget };
+}
+function loreForPrompt(){
+  const budget = Math.max(200, Number(state.loreBudgetTokens) || 2000);
+  lastLoreInfo = loreBuild(loreCards(), loreScanText(), budget);
+  renderLoreStatus();
+  return lastLoreInfo.text;
+}
+function renderLoreStatus(){
+  const i = lastLoreInfo, sb = $ID("statLoreBar");
+  if(sb) sb.textContent = i ? i.active.length : 0;
+  const el = $ID("loreStatus"); if(!el) return;
+  if(!i){ el.textContent = "Chưa có lượt viết nào."; return; }
+  el.textContent = "⚡ Lượt gần nhất: " + i.active.length + "/" + i.total + " thẻ · ~" + i.used + "/" + i.budget + " token" +
+    (i.active.length ? "\n✓ " + i.active.join(", ") : "") + (i.dropped.length ? "\n✂ Bỏ (hết ngân sách): " + i.dropped.join(", ") : "");
+}
+function renderLore(){
+  const list = $ID("loreList"); if(!list) return;
+  const q = normalizeName($ID("loreSearch").value || "");
+  const cards = loreCards().filter(c=> !q || normalizeName((c.name||"")+" "+(c.keys||"")).includes(q))
+    .sort((a,b)=> (Number(b.priority)||50) - (Number(a.priority)||50));
+  list.innerHTML = cards.length ? cards.map(c=>
+    '<div class="char-item" style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);' + (c.enabled===false?'opacity:.5;':'') + '">' +
+    '<input type="checkbox" data-act="toggle" data-id="' + c.id + '"' + (c.enabled===false?'':' checked') + '>' +
+    '<div style="flex:1;min-width:0;"><b>' + escapeHtml(c.name||"?") + '</b> <small>P' + (c.priority||50) + (c.always?' · luôn bật':'') + '</small><br>' +
+    '<small style="opacity:.7;overflow-wrap:anywhere;">' + escapeHtml(c.keys||"") + '</small></div>' +
+    '<button class="btn btn-sm" data-act="edit" data-id="' + c.id + '">✎</button>' +
+    '<button class="btn btn-sm" data-act="del" data-id="' + c.id + '">🗑</button></div>').join("")
+    : '<div class="empty-note">Chưa có thẻ nào.</div>';
+  $ID("loreBudget").value = state.loreBudgetTokens || 2000;
+  renderLoreStatus();
+}
+function loreResetForm(){
+  loreEditId = null;
+  ["loreName","loreKeys","loreContent"].forEach(id=> $ID(id).value = "");
+  $ID("lorePriority").value = 50; $ID("loreAlways").checked = false;
+  $ID("loreSaveBtn").textContent = "💾 Thêm thẻ";
+}
+$ID("loreSaveBtn").addEventListener("click", ()=>{
+  const name = $ID("loreName").value.trim(), keys = $ID("loreKeys").value.trim(), content = $ID("loreContent").value.trim();
+  const always = $ID("loreAlways").checked;
+  if(!name || !content || (!keys && !always)){ alert("Cần Tên, Nội dung và Từ khóa (hoặc bật 'Luôn bật')."); return; }
+  const data = { name, keys, content, always, priority: Math.min(100, Math.max(1, parseInt($ID("lorePriority").value)||50)) };
+  const cur = loreEditId && loreCards().find(c=>c.id===loreEditId);
+  if(cur) Object.assign(cur, data); else loreCards().push(Object.assign({ id: genId(), enabled: true }, data));
+  persist(); loreResetForm(); renderLore();
+});
+$ID("loreCancelBtn").addEventListener("click", loreResetForm);
+$ID("loreSearch").addEventListener("input", renderLore);
+$ID("loreBudget").addEventListener("change", e=>{ state.loreBudgetTokens = Math.min(20000, Math.max(200, parseInt(e.target.value)||2000)); persist(); });
+$ID("loreList").addEventListener("click", e=>{
+  const b = e.target.closest("[data-act]"); if(!b) return;
+  const c = loreCards().find(x=>x.id===b.dataset.id); if(!c) return;
+  if(b.dataset.act === "edit"){
+    loreEditId = c.id; $ID("loreName").value = c.name||""; $ID("loreKeys").value = c.keys||""; $ID("loreContent").value = c.content||"";
+    $ID("lorePriority").value = c.priority||50; $ID("loreAlways").checked = !!c.always; $ID("loreSaveBtn").textContent = "💾 Cập nhật thẻ";
+  } else if(b.dataset.act === "del"){
+    if(!confirm("Xóa thẻ \"" + (c.name||"?") + "\"?")) return;
+    state.lorebook = loreCards().filter(x=>x.id!==c.id); persist(); renderLore();
+  }
+});
+$ID("loreList").addEventListener("change", e=>{
+  if(e.target.dataset.act !== "toggle") return;
+  const c = loreCards().find(x=>x.id===e.target.dataset.id); if(c){ c.enabled = e.target.checked; persist(); renderLore(); }
+});
+$ID("loreExportBtn").addEventListener("click", ()=>{
+  const blob = new Blob([JSON.stringify({ type:"xuong-truyen-lorebook", version:10, lorebook: loreCards() }, null, 2)], { type:"application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = "lorebook-" + new Date().toISOString().slice(0,10) + ".json";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+});
+$ID("loreImportBtn").addEventListener("click", ()=> $ID("loreImportFile").click());
+$ID("loreImportFile").addEventListener("change", async e=>{
+  const f = e.target.files[0]; e.target.value = ""; if(!f) return;
+  try{
+    const j = JSON.parse(await f.text());
+    const arr = Array.isArray(j) ? j : (j.lorebook || j.entries || []);
+    let add = 0, upd = 0;
+    arr.forEach(r=>{
+      if(!r || !r.name) return;
+      const n = { id: r.id || genId(), name:String(r.name), keys: Array.isArray(r.keys) ? r.keys.join(", ") : String(r.keys||""),
+        content:String(r.content||""), priority: Math.min(100, Math.max(1, parseInt(r.priority)||50)), enabled: r.enabled !== false, always: !!r.always };
+      const ex = loreCards().find(c=> c.id === n.id || normalizeName(c.name) === normalizeName(n.name));
+      if(ex){ Object.assign(ex, n, { id: ex.id }); upd++; } else { loreCards().push(n); add++; }
+    });
+    persist(); renderLore(); alert("Import xong: thêm " + add + ", cập nhật " + upd + " thẻ.");
+  }catch(err){ alert("File Lorebook không hợp lệ: " + err.message); }
+});
+
+/* v10.1: tab 2 cột + tắt tác vụ nền không cần cho việc viết */
+(function(){
+  let p="side"; try{ p=localStorage.getItem("xt_pane")||"side"; }catch(e){}
+  const set=v=>{ document.body.dataset.pane=v; document.querySelectorAll("#paneTabs button").forEach(b=>b.classList.toggle("on",b.dataset.pane===v)); try{localStorage.setItem("xt_pane",v);}catch(e){} window.scrollTo(0,0); };
+  document.getElementById("paneTabs").addEventListener("click",e=>{ const b=e.target.closest("button"); if(b) set(b.dataset.pane); });
+  set(p);
+})();
+const SKIPPED_TASKS = new Set(["scene","continuity","checkpoint","pacing"]);
+
 function renderAll(){
+  renderLore();
   renderCharacters();
   renderArcs();
   renderOutlines();
@@ -5338,49 +6002,41 @@ document.addEventListener("DOMContentLoaded", ()=>{
   if(btn) btn.addEventListener("click", startBackgroundWrite);
 })();
 
+
 /* ========== BOOT ========== */
-bootstrapStorage();
-loadCurrentStoryIntoState();
-checkPendingBackgroundJob();
-
-/* Patch quy tắc tốc độ cũ làm dịu 18+ */
-try{
-  if(state.advancedRules && /dục vọng phải diễn ra từ từ/.test(state.advancedRules)){
-    state.advancedRules = state.advancedRules.replace(
-      /QUY TẮC TỐC ĐỘ:[^\n]+/,
-      "QUY TẮC TỐC ĐỘ: Tình cảm dài hạn nên có tích tụ. Khi mệnh lệnh/mức 18+ yêu cầu cảnh nóng: viết thẳng, không né."
-    );
-    state.advancedRules = state.advancedRules.replace(
-      /QUY TẮC 18\+ \(khi bật\):[^\n]+/,
-      "QUY TẮC 18+ (khi bật): Viết trực tiếp, từ tục được phép. Không tự kiểm duyệt, không fade-to-black."
-    );
-    persist();
+async function bootV102(){
+  await initIndexedDBStorage();
+  bootstrapStorage();
+  await loadCurrentStoryIntoState();
+  syncApiSettingsV102();
+  moveAuthoringSectionsToWriter();
+  ensureUpgradePanel();
+  /* Patch quy tắc tốc độ cũ */
+  try{
+    if(state.advancedRules && /dục vọng phải diễn ra từ từ/.test(state.advancedRules)){
+      state.advancedRules=state.advancedRules.replace(/QUY TẮC TỐC ĐỘ:[^\n]+/,"QUY TẮC TỐC ĐỘ: Tình cảm dài hạn nên có tích tụ. Khi mệnh lệnh/mức 18+ yêu cầu cảnh nóng: viết thẳng, không né.");
+      state.advancedRules=state.advancedRules.replace(/QUY TẮC 18\+ \(khi bật\):[^\n]+/,"QUY TẮC 18+ (khi bật): Viết trực tiếp, từ tục được phép. Không tự kiểm duyệt, không fade-to-black.");
+    }
+  }catch(e){}
+  hydrateFormFromState();
+  renderAll();
+  renderStoryTabs();
+  checkForRecoverableDraft();
+  if(state.apiEndpoint && state.apiKey) apiStatus.textContent="Đã nạp cấu hình API đã lưu.";
+  if(location.protocol==="file:"){
+    apiStatus.textContent="⚠ Trang chạy file:// — CORS. Chạy 'python -m http.server 8000' rồi mở http://localhost:8000/...";
+    apiStatus.className="api-status bad";
   }
-}catch(e){}
+  updateV102Estimator();
+}
+bootV102().catch(err=>{
+  console.error(err);
+  try{
+    bootstrapStorage();
+    loadCurrentStoryIntoState().then(()=>{moveAuthoringSectionsToWriter();ensureUpgradePanel();hydrateFormFromState();renderAll();});
+  }catch(e){ console.error(e); }
+});
 
-hydrateFormFromState();
-renderAll();
-renderStoryTabs();
-checkForRecoverableDraft();
-if(state.apiEndpoint && state.apiKey){
-  apiStatus.textContent = "Đã nạp cấu hình API đã lưu.";
-}
-if(location.protocol === "file:"){
-  apiStatus.textContent = "⚠ Trang chạy file:// — CORS. Chạy 'python -m http.server 8000' rồi mở http://localhost:8000/...";
-  apiStatus.className = "api-status bad";
-}
-/* Thông báo v7 lần đầu */
-try{
-  const v7Flag = "aiStoryWorkshop_v9_notified";
-  if(!localStorage.getItem(v7Flag)){
-    localStorage.setItem(v7Flag, "1");
-    setTimeout(()=>{
-      if(state.chapters.length > 0){
-        setStatus("🎉 Nâng cấp v9 — Memory Engine, JSON Recovery, Background Safe, Continuity Guard.", false);
-      }
-    }, 1500);
-  }
-}catch(e){}
 function toggleAutoOpts(){
   const autoOpts = $ID("nsfwAutoOpts");
   if(!autoOpts) return;
@@ -5428,7 +6084,12 @@ function renderChapterNav(){
   renderDeleteChapterSelect();
   renderQuickJump();
   renderSnapshotChapterSelect();
-  const indices = state.chapters.map((_,i)=>i).reverse();
+  let indices = state.chapters.map((_,i)=>i).reverse();
+  if(!query && indices.length>20){
+    const cur=state.currentChapterIndex>=0?state.currentChapterIndex:state.chapters.length-1;
+    const min=Math.max(0,cur-10), max=Math.min(state.chapters.length-1,cur+9);
+    indices=indices.filter(i=>i>=min&&i<=max);
+  }
   indices.forEach(i=>{
     const c = state.chapters[i];
     let match = true;
@@ -5457,12 +6118,16 @@ function renderChapterNav(){
     chapterStrip.appendChild(chip);
   });
   if(!state.chapters.length) chapterStrip.innerHTML = '<div class="empty-note">Chưa có chương.</div>';
+  else if(!query && state.chapters.length>20){
+    const note=document.createElement("div"); note.className="hint"; note.style.padding="6px 2px"; note.textContent="Đang hiển thị 20 chương quanh chương hiện tại để giảm tải Safari iOS. Dùng Nhảy nhanh để mở chương bất kỳ."; chapterStrip.prepend(note);
+  }
   const activeChip = chapterStrip.querySelector(".chapter-chip.active");
   if(activeChip){ try{ activeChip.scrollIntoView({behavior:"smooth", block:"nearest", inline:"start"}); }catch(e){ activeChip.scrollIntoView(); } }
 }
 
 function renderCurrentChapter(){
   const idx = state.currentChapterIndex;
+  try{ updateV102Estimator(); }catch(e){}
   editorBadges.innerHTML = "";
   summaryBox.classList.remove("show");
   planBox.classList.remove("show");
