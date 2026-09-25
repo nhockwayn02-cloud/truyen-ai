@@ -6022,6 +6022,7 @@ async function bootV102(){
   renderAll();
   renderStoryTabs();
   checkForRecoverableDraft();
+  checkPendingBackgroundJob();
   if(state.apiEndpoint && state.apiKey) apiStatus.textContent="Đã nạp cấu hình API đã lưu.";
   if(location.protocol==="file:"){
     apiStatus.textContent="⚠ Trang chạy file:// — CORS. Chạy 'python -m http.server 8000' rồi mở http://localhost:8000/...";
