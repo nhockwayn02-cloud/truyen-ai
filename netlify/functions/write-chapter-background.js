@@ -474,8 +474,10 @@ function buildContext(state) {
   if (state.pronounRules) p.push("XƯNG HÔ:\n" + state.pronounRules);
   if (state.currentStatus) p.push("CURRENT STATUS:\n" + state.currentStatus);
   if (state.directive) p.push("MỆNH LỆNH:\n" + state.directive);
+  if (state.nextChapterHint) p.push("GỢI Ý ĐỊNH HƯỚNG CHO CÁC CHƯƠNG SAU (tham khảo, không bắt buộc dùng ngay):\n" + state.nextChapterHint);
   if (state.advancedRules) p.push("QUY TẮC:\n" + state.advancedRules);
-  if (state.mainCharProfile?.name) p.push("NVC:\n" + JSON.stringify(state.mainCharProfile));
+  if (state.mainCharProfile?.name) p.push("NHÂN VẬT CHÍNH (BẮT BUỘC xuất hiện, là trung tâm mọi chương, không đổi tên/nhầm sang NV khác):\n" + JSON.stringify(state.mainCharProfile));
+  else if (state.mainPlot || state.worldSetting) p.push("⚠ CHƯA khai báo Nhân Vật Chính. Nếu Cốt Truyện/Bối Cảnh có nhắc tên nhân vật chính, PHẢI dùng đúng tên đó xuyên suốt, không tự đặt tên khác.");
   const chars = (state.characters || []).filter(c => !c.dead).slice(0, 18);
   if (chars.length) {
     p.push("NHÂN VẬT QUAN TRỌNG:\n" + chars.map(c => `- ${c.name} [${c.tier || "supporting"}] | vai trò:${c.role || ""} | ở:${c.currentLocation || "?"} | thể:${c.physicalState || ""} | tâm:${c.mentalState || ""} | biết:${c.knowledge || ""}`).join("\n"));
@@ -543,6 +545,12 @@ async function generateOneChapter(job) {
     "Không lặp lại đoạn kết chương trước; phải tiếp nối nguyên nhân và hệ quả.",
     buildContext(state), recentContext(chapters),
     isNsfw ? ("MỨC TRƯỞNG THÀNH: " + (EXPLICIT_PROMPTS[state.explicitLevel] || "")) : "",
+    "NHẮC LẠI (bắt buộc, ưu tiên cao nhất — đọc kỹ trước khi viết):\n" +
+      "- Chỉ 1–3 SỰ KIỆN CHÍNH trong chương này, không nhồi thêm biến cố.\n" +
+      "- Ưu tiên dùng nhân vật đã liệt kê ở mục NHÂN VẬT QUAN TRỌNG phía trên; chỉ tạo nhân vật mới khi thực sự cần và phải có lý do/vai trò rõ ràng.\n" +
+      (((state.characters || []).filter(c => !c.dead).length === 0) ? "- CHƯA CÓ NHÂN VẬT PHỤ NÀO ĐƯỢC KHAI BÁO TRƯỚC. Nếu cần người ngoài nhân vật chính, ưu tiên nhân vật KHÔNG TÊN RIÊNG (chức danh chung chung). Chỉ đặt tên riêng nếu họ thực sự sẽ quay lại các chương sau.\n" : "") +
+      (state.mainCharProfile?.name ? ("- NHÂN VẬT CHÍNH BẮT BUỘC LÀ TRUNG TÂM CHƯƠNG NÀY: " + state.mainCharProfile.name + ". TUYỆT ĐỐI không viết chương thiếu hẳn nhân vật này, không đổi tên/nhầm sang nhân vật khác.\n") : "") +
+      (state.directive ? ("- MỆNH LỆNH CHƯƠNG NÀY: " + String(state.directive).slice(0, 400) + "\n") : ""),
     "Định dạng cuối: TIÊU ĐỀ: <tên>\nNỘI DUNG:\n<văn xuôi>"
   ].filter(Boolean).join("\n\n");
 
@@ -585,6 +593,24 @@ async function generateSummary(job, chapter, n) {
   try {
     const body = representativeText(chapter.text, 30000);
     const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: `Tóm tắt CHƯƠNG ${n} bằng 5-8 câu tiếng Việt. Bắt buộc bao quát đầu, giữa, cuối; nhân vật; thay đổi trạng thái; quan hệ; vật phẩm/địa điểm; hệ quả và việc chưa giải quyết.\n\n${body}` }], maxTokens: 2900, temperature: 0.25 }, 2);
+    return (r.text || "").trim();
+  } catch (_) { return ""; }
+}
+
+/* Tự động đề xuất định hướng ngắn cho (các) chương SAU — chỉ tham khảo,
+   không ép chương kế phải theo ngay. Người dùng có thể sửa tay trong app. */
+async function generateNextChapterHint(job, chapter, summary, n, state) {
+  try {
+    const openThreads = (state.threads || []).filter(t => !["paid_off", "abandoned", "completed"].includes(t.status)).slice(0, 8).map(t => "- " + t.desc).join("\n");
+    const openForeshadowing = (state.foreshadowing || []).filter(f => !["paid_off", "abandoned", "resolved"].includes(f.status)).slice(-8).map(f => "- " + f.description).join("\n");
+    const prompt = [
+      `Bạn vừa đọc xong CHƯƠNG ${n} (tóm tắt bên dưới). Đề xuất ĐỊNH HƯỚNG NGẮN (2-4 câu) cho các chương SAU — mức cao, không phải kế hoạch chi tiết, không liệt kê sự kiện cụ thể.`,
+      "TÓM TẮT:", summary || representativeText(chapter.text, 2000),
+      openThreads ? ("THREADS ĐANG MỞ:\n" + openThreads) : "",
+      openForeshadowing ? ("FORESHADOWING CHƯA GIẢI:\n" + openForeshadowing) : "",
+      "Chỉ trả về đoạn gợi ý ngắn, tiếng Việt, không tiêu đề."
+    ].filter(Boolean).join("\n\n");
+    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: prompt }], maxTokens: 400, temperature: 0.5 }, 2);
     return (r.text || "").trim();
   } catch (_) { return ""; }
 }
@@ -899,7 +925,6 @@ exports.handler = async (event) => {
     const n = job.storyState.chapters.length + 1;
     job.progress = "Đang tạo tóm tắt..."; job.updatedAt = Date.now(); await store.setJSON(jobId, cleanJobForStore(job));
     chapter.summary = await generateSummary(job, chapter, n);
-
     const newState = JSON.parse(JSON.stringify(job.storyState));
     newState.chapters.push(chapter);
     newState.currentChapterIndex = newState.chapters.length - 1;
@@ -933,7 +958,12 @@ exports.handler = async (event) => {
     await Promise.all([
       runPar("Status", () => updateCurrentStatus(job, chapter, n, newState)),
       runPar("Memory", () => updateLongMemory(job, chapter, n, newState)),
-      runPar("Scene", () => scanScenes(job, chapter, n, newState))
+      runPar("Scene", () => scanScenes(job, chapter, n, newState)),
+      runPar("Gợi ý chương sau", async () => {
+        const hint = await generateNextChapterHint(job, chapter, chapter.summary, n, newState);
+        if (hint) newState.nextChapterHint = hint;
+        return { ok: !!hint, notes: [hint ? "Gợi ý chương sau: đã cập nhật" : "Gợi ý chương sau: bỏ trống (lỗi hoặc rỗng)"], problems: [] };
+      })
     ]);
     await checkpoint("Đang lưu kết quả...");
 
