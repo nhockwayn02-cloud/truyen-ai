@@ -646,6 +646,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="section-head" data-toggle=""><span>2. Chỉ Đạo</span><span class="chev">▾</span></div>
 <div class="section-body">
 <div class="field"><label>Mệnh lệnh chương tới</label><textarea id="directive" rows="3"></textarea></div>
+<div class="field"><label>Gợi ý chương sau (định hướng, không bắt buộc thực hiện ngay)</label><textarea id="nextChapterHint" rows="3" placeholder="VD: Chương sau nên hé lộ thân phận của X; chưa cần đưa Y quay lại."></textarea></div>
 </div>
 </div><div class="section tone-green settings-only-section" data-column="settings" data-section="">
 <div class="section-head" data-toggle=""><span>2.5. Quy Tắc Nâng Cao</span><span class="chev">▾</span></div>
@@ -1323,7 +1324,7 @@ const state = {
   pronounRules: "", worldDescription: "", storyBibleLocked: false,
   mainCharProfile: null,
   vocabulary: { preferred:"", banned:"", overused:"", anatomy:"" },
-  arcs: [], outlinePlans: [], storyClock: "", directive: "",
+  arcs: [], outlinePlans: [], storyClock: "", directive: "", nextChapterHint: "",
   difficulty: "vua", mature: false,
   currentStatus: "",
   characters: [], locations: [], items: [], threads: [],
@@ -1365,7 +1366,7 @@ function newStoryState(name){
     pronounRules:"", worldDescription:"", storyBibleLocked:false,
     mainCharProfile: newMainCharProfile(),
     vocabulary: { preferred:"", banned:"", overused:"", anatomy:"" },
-    arcs:[], outlinePlans:[], storyClock:"", directive:"",
+    arcs:[], outlinePlans:[], storyClock:"", directive:"", nextChapterHint:"",
     difficulty:"vua", mature:false, currentStatus:"",
     characters:[], locations:[], items:[], threads:[],
     scenes:[], consentLog:[],
@@ -1635,6 +1636,7 @@ const mainPlotEl = $ID("mainPlot"), genreEl = $ID("genre"), worldSettingEl = $ID
 const worldRulesEl = $ID("worldRules"), antagonistEl = $ID("antagonist"), pronounRulesEl = $ID("pronounRules");
 const worldDescriptionEl = $ID("worldDescription");
 const storyBibleLockEl = $ID("storyBibleLock"), storyClockEl = $ID("storyClock") || { value: "" }, directiveEl = $ID("directive");
+const nextChapterHintEl = $ID("nextChapterHint") || { value: "" };
 const advancedRulesEl = $ID("advancedRules"), difficultyEl = $ID("difficulty"), matureToggle = $ID("matureToggle");
 const statusBox = $ID("statusBox"), statusEdit = $ID("statusEdit"), charList = $ID("charList");
 const arcList = $ID("arcList"), outlineList = $ID("outlineList"), locationList = $ID("locationList");
@@ -2606,15 +2608,22 @@ function buildContextBlock(){
   const cardText = characterCardsForPromptV102((state.chapters.slice(-1)[0]?.text||"") + "\n" + (state.directive||""));
   if(cardText) lines.push("THẺ NHÂN VẬT KÍCH HOẠT (tối đa 5):\n" + clip(cardText, 2400));
 
+  /* QUAN TRỌNG: danh sách nhân vật đã có trong truyện — nếu không liệt kê ở đây,
+     model không biết họ tồn tại nên sẽ tự bịa nhân vật mới dù prompt cấm. */
+  const rosterChars = relevantCharacters(22);
+  if(rosterChars.length) lines.push("NHÂN VẬT ĐÃ CÓ TRONG TRUYỆN (BẮT BUỘC ưu tiên dùng lại, KHÔNG tạo mới nếu chưa cần):\n" + characterSummaryForPrompt(rosterChars));
+
   if(state.mainCharProfile && state.mainCharProfile.name){
     const mc = state.mainCharProfile;
-    const mcParts = ["NV CHÍNH: " + mc.name];
+    const mcParts = ["NHÂN VẬT CHÍNH (BẮT BUỘC xuất hiện và là trung tâm mọi chương): " + mc.name];
     if(mc.personality) mcParts.push("tính:"+clip(mc.personality, 120));
     if(mc.goals) mcParts.push("mục tiêu:"+clip(mc.goals, 120));
     if(mc.currentLocation) mcParts.push("ở:"+mc.currentLocation);
     if(mc.mentalState) mcParts.push("tâm lý:"+clip(mc.mentalState, 100));
     if(mc.physicalState) mcParts.push("thể trạng:"+clip(mc.physicalState, 100));
     lines.push(mcParts.join(" | "));
+  } else if(state.mainPlot || state.worldSetting) {
+    lines.push("⚠ CHƯA khai báo Nhân Vật Chính (tab Nhân Vật Chính) — nếu Cốt Truyện/Bối Cảnh có nhắc tên nhân vật chính, PHẢI dùng đúng tên đó xuyên suốt, không tự đặt tên khác.");
   }
 
   const activeLocs = state.locations.filter(l=>l.status === 'active').slice(-4);
@@ -2647,6 +2656,7 @@ function buildContextBlock(){
   if((state.glossaryLock||[]).length) lines.push("GLOSSARY LOCK:\n"+state.glossaryLock.map(x=>"- "+x).join("\n"));
   if((state.banWords||[]).length) lines.push("CẤM TỪ / ANTI-AI TROPES:\n"+state.banWords.slice(0,80).map(x=>"- "+x).join("\n"));
   if(state.directive) lines.push("MỆNH LỆNH: " + clip(state.directive, 500));
+  if(state.nextChapterHint) lines.push("GỢI Ý ĐỊNH HƯỚNG CHO CÁC CHƯƠNG SAU (tham khảo, không bắt buộc dùng ngay trong chương này):\n" + clip(state.nextChapterHint, 500));
   if(state.advancedRules) lines.push("QUY TẮC:\n" + clip(state.advancedRules, 1200));
 
   const diffMap = { de:"Dễ thở.", vua:"Cân bằng.", kho:"Khó.", tan_khoc:"Tàn khốc." };
@@ -2792,9 +2802,10 @@ $ID("saveAdvancedRulesBtn").addEventListener("click", ()=>{
   state.advancedRules = advancedRulesEl.value; persist();
   setStatus("Đã lưu.", false);
 });
-[directiveEl, difficultyEl, matureToggle].forEach(el=>{
+[directiveEl, nextChapterHintEl, difficultyEl, matureToggle].forEach(el=>{
   el.addEventListener("change", ()=>{
-    state.directive = directiveEl.value; state.difficulty = difficultyEl.value;
+    state.directive = directiveEl.value; state.nextChapterHint = nextChapterHintEl.value;
+    state.difficulty = difficultyEl.value;
     state.mature = matureToggle.checked; persist(); updateNsfwHint();
   });
 });
@@ -4147,6 +4158,30 @@ async function generateChapterSummary(text, chapterNumber, silent){
     return summary.trim();
   }catch(err){ console.warn("[Summary]", err.message); return ""; }
 }
+
+/* Tự động đề xuất định hướng cho (các) chương SAU chương vừa viết xong.
+   Chỉ là gợi ý tham khảo — không ép chương kế phải làm theo ngay,
+   người dùng luôn có thể sửa tay trong ô "Gợi ý chương sau". */
+async function generateNextChapterHint(text, summary, chapterNumber){
+  if(!text) return "";
+  const openThreads = (state.threads||[]).filter(t=>!['paid_off','abandoned','completed'].includes(t.status)).slice(0,8).map(t=>"- "+t.desc).join("\n");
+  const openForeshadowing = (state.foreshadowing||[]).filter(f=>!['paid_off','abandoned','resolved'].includes(f.status)).slice(-8).map(f=>"- "+f.description).join("\n");
+  const prompt = [
+    "Bạn vừa đọc xong CHƯƠNG " + chapterNumber + " của một truyện dài kỳ (tóm tắt bên dưới).",
+    "Hãy đề xuất ĐỊNH HƯỚNG NGẮN cho (các) CHƯƠNG SAU — không phải kế hoạch chi tiết, chỉ 2-4 câu gợi ý ở mức cao.",
+    "Có thể gợi ý: nên khai thác thread/foreshadowing nào tiếp theo, nhịp độ nên tăng/giảm, có nên đưa nhân vật nào quay lại không, có nên tạm hoãn tuyến nào.",
+    "KHÔNG viết văn xuôi, KHÔNG liệt kê sự kiện cụ thể từng chương, chỉ định hướng chung.",
+    "",
+    "TÓM TẮT CHƯƠNG VỪA VIẾT:", summary || text.slice(-2000),
+    openThreads ? ("\nTHREADS ĐANG MỞ:\n" + openThreads) : "",
+    openForeshadowing ? ("\nFORESHADOWING CHƯA GIẢI:\n" + openForeshadowing) : "",
+    "\nChỉ trả về đoạn gợi ý ngắn (2-4 câu), tiếng Việt, không tiêu đề."
+  ].filter(Boolean).join("\n");
+  try{
+    const { text: hint } = await callAI(prompt, {maxTokens:400, temperature:0.5});
+    return hint.trim();
+  }catch(err){ console.warn("[NextHint]", err.message); return ""; }
+}
 $ID("regenSummaryBtn").addEventListener("click", async ()=>{
   const idx = state.currentChapterIndex;
   if(idx < 0){ setStatus("Chưa có chương.", false); return; }
@@ -4697,10 +4732,11 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       "- Các cảnh/beat nhỏ chỉ là bước triển khai, phản ứng hoặc hậu quả của 1–3 sự kiện chính; không được biến thành tuyến sự kiện mới.",
       "- Nếu chương cần dài hơn, hãy đào sâu diễn biến, đối thoại, nội tâm, nguyên nhân–hậu quả và chi tiết cảnh thay vì nhồi thêm biến cố.",
       "\nNHÂN VẬT PHỤ — BẮT BUỘC:",
-      "- Ưu tiên sử dụng nhân vật đã tồn tại trong hồ sơ truyện; không tùy tiện tạo nhân vật quan trọng mới.",
+      "- Ưu tiên sử dụng nhân vật đã tồn tại trong hồ sơ truyện (xem mục NHÂN VẬT ĐÃ CÓ TRONG TRUYỆN ở Bối cảnh phía trên); không tùy tiện tạo nhân vật quan trọng mới.",
       "- Mỗi nhân vật xuất hiện phải có LÝ DO rõ ràng và VAI TRÒ cụ thể đối với một trong 1–3 sự kiện chính.",
       "- Nếu một nhân vật mới không thực sự cần cho cốt truyện, KHÔNG được tạo chỉ để lấp cảnh, đối thoại hoặc làm nền.",
       "- Nhân vật mới có vai trò quan trọng chỉ được xuất hiện khi kế hoạch đã chứng minh nhu cầu cốt truyện; nếu không có trong kế hoạch, không tự ý nâng một nhân vật mới thành nhân vật quan trọng.",
+      (relevantCharacters(1).length === 0) ? "- CHƯA CÓ NHÂN VẬT PHỤ NÀO ĐƯỢC KHAI BÁO TRƯỚC. Nếu cảnh cần người ngoài NVC, ưu tiên nhân vật KHÔNG TÊN RIÊNG (chức danh chung: 'người gác cổng', 'cô gái lạ mặt', 'một thương nhân'...). CHỈ đặt tên riêng cho một nhân vật mới khi họ thực sự sẽ quay lại các chương sau; nếu đặt tên, phải cho họ vai trò/lý do rõ ràng." : "",
       isRegen ? ("\nVIẾT LẠI chương " + chapterNumber + ". Chế độ: " + (regenInstructions[regenMode]||regenInstructions.full)) : "",
       vocabBlock ? ("\n" + vocabBlock) : "",
       "",
@@ -4720,8 +4756,10 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       "4. Xưng hô nhất quán.",
       "5. Không lặp ý, không lặp câu.",
       "6. MỖI CHƯƠNG CHỈ 1–3 SỰ KIỆN CHÍNH; không nhồi biến cố mới ngoài ngân sách.",
-      "7. MỖI NHÂN VẬT XUẤT HIỆN PHẢI CÓ LÝ DO + VAI TRÒ; ưu tiên nhân vật đã có, không tùy tiện tạo nhân vật quan trọng mới.",
+      "7. MỖI NHÂN VẬT XUẤT HIỆN PHẢI CÓ LÝ DO + VAI TRÒ; ưu tiên nhân vật đã có ở danh sách NHÂN VẬT ĐÃ CÓ TRONG TRUYỆN phía trên, không tùy tiện tạo nhân vật quan trọng mới.",
       "8. MIÊU TẢ: khi nhân vật mới xuất hiện hoặc cảnh mới mở, TẢ ngoại hình + không khí qua chi tiết cụ thể.",
+      state.directive ? ("9. MỆNH LỆNH CHƯƠNG NÀY (ưu tiên cao nhất, không được lơ đi): " + String(state.directive).slice(0, 400)) : "",
+      (state.mainCharProfile && state.mainCharProfile.name) ? ("10. NHÂN VẬT CHÍNH BẮT BUỘC LÀ TRUNG TÂM CHƯƠNG NÀY: " + state.mainCharProfile.name + (state.mainCharProfile.appearance ? (" — " + String(state.mainCharProfile.appearance).slice(0,150)) : "") + ". TUYỆT ĐỐI không viết chương mà thiếu hẳn nhân vật này, và không đổi tên/nhầm sang nhân vật khác.") : "",
       usingNsfw ? "7. CẢNH 18+ ƯU TIÊN CAO NHẤT — đủ 4 lớp: cơ thể (số đo hồ sơ) + cảm giác thể xác + nội tâm đa lớp + âm thanh/nhịp. Cấm chỉ kể hành động bên ngoài. Cấm bỏ cảm giác và nội tâm." : "7. (không có yêu cầu 18+ đặc biệt)",
       "8. Định dạng:",
       "TIÊU ĐỀ: <tên chương>",
@@ -4815,6 +4853,18 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
         }catch(e){}
       }
     }, "summary", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
+      if(text){
+        try{
+          const hint = await generateNextChapterHint(text, chapterObj.summary, cn);
+          if(hint){
+            state.nextChapterHint = hint;
+            nextChapterHintEl.value = hint;
+            persist();
+          }
+        }catch(e){}
+      }
+    }, "nextHint", {serial:true}));
     postTasks.push(enqueueTask(async ()=>{
       const r = await updateCharactersIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Cập nhật NV ch" + cn + " thất bại — bấm Quét toàn truyện khi rảnh.", false);
@@ -4980,6 +5030,14 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
         }catch(e){}
       }
     }, "summary", {serial:true}));
+    postTasks.push(enqueueTask(async ()=>{
+      if(chapter.text){
+        try{
+          const hint = await generateNextChapterHint(chapter.text, chapter.summary, cn);
+          if(hint){ state.nextChapterHint = hint; nextChapterHintEl.value = hint; persist(); }
+        }catch(e){}
+      }
+    }, "nextHint", {serial:true}));
     await Promise.allSettled(postTasks);
     try{ captureChapterSnapshot(cn); }catch(e){}
 
@@ -5647,6 +5705,7 @@ function hydrateFormFromState(){
   storyBibleLockEl.checked = !!state.storyBibleLocked;
   storyClockEl.value = state.storyClock || "";
   directiveEl.value = state.directive || "";
+  nextChapterHintEl.value = state.nextChapterHint || "";
   advancedRulesEl.value = state.advancedRules || DEFAULT_ADVANCED_RULES;
   difficultyEl.value = state.difficulty || "vua";
   matureToggle.checked = !!state.mature;
@@ -5980,6 +6039,7 @@ async function mergeBackgroundChapter(statusData,record){
   state.knowledgeLedger=mergeArrayByIdOrName(state.knowledgeLedger,incoming.knowledgeLedger||[],"id").slice(-500);
   state.memoryEvents=mergeArrayByIdOrName(state.memoryEvents,incoming.memoryEvents||[],"id");
   state.lastMemorySyncChapter=incoming.lastMemorySyncChapter||state.lastMemorySyncChapter||0;
+  if(incoming.nextChapterHint){ state.nextChapterHint=incoming.nextChapterHint; if(nextChapterHintEl) nextChapterHintEl.value=state.nextChapterHint; }
   persist();renderAll();
   try{ captureChapterSnapshot(state.chapters.length); }catch(e){}
   const last=state.chapters[state.chapters.length-1];

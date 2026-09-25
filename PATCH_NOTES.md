@@ -27,6 +27,34 @@ req.onsuccess = e => { idb = e.target.result; resolve(idb); };
 - Chạy thử bằng trình duyệt headless (Playwright): tạo truyện mới → không còn lỗi console,
   và bản ghi truyện xuất hiện thật trong object store `stories` của IndexedDB (trước đó luôn là 0).
 
+---
+
+# Patch v10.2.3 — Sửa lỗi job nền bị "treo" vĩnh viễn
+
+## Lỗi đã sửa
+Hàm `checkPendingBackgroundJob()` (dùng để tự động kiểm tra lại job nền còn dang dở
+mỗi khi mở lại trang) được định nghĩa nhưng **không bao giờ được gọi** trong `bootV102()`.
+
+## Ảnh hưởng của lỗi
+- Nếu đóng tab / mất mạng / tắt máy trong lúc job nền đang chạy, việc polling
+  (kiểm tra tiến độ mỗi 12 giây) dừng hẳn.
+- Mở lại trang: cờ "đang có job" vẫn còn trong `localStorage`, nhưng không có gì
+  chạy lại để xác nhận job đã xong/lỗi → **job bị coi là đang chạy vĩnh viễn**,
+  chặn mọi job mới ("Đã có job nền đang theo dõi..."), dù job thật trên server
+  có thể đã xong hoặc lỗi từ lâu.
+
+## Cách sửa
+Thêm 1 dòng gọi hàm vào cuối `bootV102()`:
+```js
+checkForRecoverableDraft();
+checkPendingBackgroundJob();   // ← dòng mới
+```
+
+## Đã kiểm tra lại sau khi vá
+Giả lập 1 job cũ còn sót trong `localStorage` rồi tải lại trang bằng trình duyệt headless:
+app tự hiện "☁ Phát hiện job nền đang chờ đồng bộ..." và tiếp tục polling ngay khi boot,
+thay vì im lặng bỏ qua như trước.
+
 ## Khuyến nghị tiếp theo (chưa phải lỗi, nhưng nên làm trước khi phát hành)
 1. Test thủ công đầy đủ luồng: viết chương → tắt/mở lại trình duyệt → kiểm tra truyện còn nguyên.
 2. Cân nhắc thêm fallback ghi `localStorage` ngay trong `saveStoryStateToDisk()` phòng khi
