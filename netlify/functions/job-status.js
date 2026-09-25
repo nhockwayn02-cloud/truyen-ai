@@ -27,7 +27,7 @@ exports.handler = async (event) => {
     if(job.accessTokenHash && !equalHash(job.accessTokenHash,hashSecret(accessToken))) return jsonResponse(403,{error:"Token không hợp lệ"});
 
     const safe={
-      schemaVersion:job.schemaVersion||9,
+      schemaVersion:job.schemaVersion||10.2,
       jobId:job.jobId,
       storyId:job.storyId||null,
       baseChapterCount:job.baseChapterCount||0,

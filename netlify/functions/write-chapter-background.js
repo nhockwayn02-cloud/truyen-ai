@@ -465,6 +465,7 @@ function sampleOf(text, n = 140) { return String(text || "").replace(/\s+/g, " "
 
 function buildContext(state) {
   const p = [];
+  const loreTxt = buildLoreBlock(state); if (loreTxt) p.push(loreTxt);
   if (state.mainPlot) p.push("CỐT TRUYỆN:\n" + state.mainPlot);
   if (state.genre) p.push("THỂ LOẠI: " + state.genre);
   if (state.worldSetting) p.push("THẾ GIỚI:\n" + state.worldSetting);
@@ -495,6 +496,35 @@ function recentContext(chapters) {
   const last = chapters[chapters.length - 1];
   const prev = chapters.length > 1 ? chapters[chapters.length - 2] : null;
   return `${prev ? `CHƯƠNG TRƯỚC NỮA:\n${(prev.summary || prev.text || "").slice(0, 900)}\n\n` : ""}ĐOẠN CUỐI CHƯƠNG GẦN NHẤT:\n${(last.text || "").slice(-5000)}`;
+}
+
+/* ===== v10 Lorebook (đồng bộ với client) ===== */
+function loreCompileKey(k) {
+  const m = k.match(/^\/(.+)\/([a-z]*)$/i);
+  try {
+    if (m) return new RegExp(m[1], Array.from(new Set((m[2].replace(/[gy]/g, "") + "iu").split(""))).join(""));
+    const esc = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    return new RegExp("(?:^|[^\\p{L}\\p{N}_])" + esc + "(?![\\p{L}\\p{N}_])", "iu");
+  } catch (e) { return null; }
+}
+function buildLoreBlock(state) {
+  const cards = Array.isArray(state.lorebook) ? state.lorebook : [];
+  if (!cards.length) return "";
+  const text = (state.chapters || []).slice(-2).map(c => c.text || "").join("\n\n").slice(-12000) + "\n" + (state.directive || "") + "\n" + String(state.currentStatus || "").slice(0, 1500);
+  const budget = Math.max(200, Number(state.loreBudgetTokens) || 2000);
+  const hits = cards.filter(c => {
+    if (c.enabled === false || !String(c.content || "").trim()) return false;
+    if (c.always) return true;
+    return String(c.keys || "").split(/[,;\n]+/).map(s => s.trim()).filter(Boolean).some(k => { const re = loreCompileKey(k); return re && re.test(text); });
+  }).sort((a, b) => (Number(b.priority) || 50) - (Number(a.priority) || 50));
+  const parts = []; let used = 0;
+  for (const c of hits) {
+    const block = "• " + (c.name || "?") + ": " + String(c.content).trim();
+    const t = Math.ceil(block.length / 3.2);
+    if (used + t > budget) continue;
+    used += t; parts.push(block);
+  }
+  return parts.length ? "THẺ TRI THỨC (Lorebook — bắt buộc tuân thủ khi nhân vật/đối tượng xuất hiện):\n" + parts.join("\n") : "";
 }
 
 async function generateOneChapter(job) {
@@ -813,7 +843,8 @@ async function updateLongMemory(job, chapter, n, state) {
 }
 
 async function scanScenes(job, chapter, n, state) {
-  const res = { ok: true, skipped: false, notes: [], problems: [] };
+  const res = { ok: true, skipped: true, notes: [], problems: [] };
+  return res; /* v10.1: bỏ Scene Tracker cho nhẹ */
   if (!state.mature) { res.skipped = true; res.notes.push("Scene: bỏ qua (chưa bật 'Cho phép trưởng thành')"); return res; }
   if (timeLeft() < 60000) { res.ok = false; res.notes.push("Scene: BỎ QUA vì sắp hết thời gian job"); res.problems.push("Scene: bỏ qua vì hết thời gian"); return res; }
   const source = representativeText(chapter.text, 24000);
