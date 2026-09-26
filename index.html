@@ -5963,7 +5963,8 @@ async function startBackgroundWrite(){
   const storyBlob={};
   Object.keys(state).forEach(k=>{if(!GLOBAL_KEYS.includes(k))storyBlob[k]=state[k];});
   ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","advancedRules","includeScenesInPrompt"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
-  const payload={storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:false};
+  const bgForceNsfw = shouldForceNsfwByKeyword("", "");
+  const payload={storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:bgForceNsfw};
   setBgStatus("☁ Đang tạo job an toàn trên server...",true); $ID("bgWriteBtn").disabled=true;
   try{
     const res=await fetch(BG_FUNCTIONS_BASE+"/create-job",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
