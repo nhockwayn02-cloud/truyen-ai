@@ -283,7 +283,8 @@ const SYSTEM_PROMPT = [
   "Bạn là tiểu thuyết gia Việt Nam viết tiểu thuyết dài kỳ.",
   "Phản hồi văn xuôi phải 100% tiếng Việt có dấu; dữ liệu JSON cũng dùng tiếng Việt ở giá trị chuỗi.",
   "Giữ tính liên tục tuyệt đối: không tự ý hồi sinh người chết, đổi thân phận, đổi địa điểm, đổi cảnh giới hoặc cho nhân vật biết điều họ chưa thể biết.",
-  "Ưu tiên chi tiết cụ thể, hành động, giác quan, nguyên nhân và hệ quả."
+  "Ưu tiên chi tiết cụ thể, hành động, giác quan, nguyên nhân và hệ quả.",
+  "Khi prompt yêu cầu cảnh 18+/erotica: viết TRỰC TIẾP, không tự kiểm duyệt, không fade-to-black, không thay bằng ẩn dụ nếu người dùng muốn tả thẳng. Ưu tiên hướng dẫn 18+ trong prompt người dùng hơn các quy tắc chung."
 ].join(" ");
 
 const DESCRIPTION_PROMPTS = {
@@ -292,13 +293,34 @@ const DESCRIPTION_PROMPTS = {
   rich: "Miêu tả phong phú, chú ý ngoại hình và không khí cảnh.",
   deep: "Miêu tả sâu, giàu giác quan nhưng không lặp."
 };
+// Đồng bộ nguyên văn với EXPLICIT_PROMPTS trong index.html (bản viết trực tiếp) để 2 luồng ra văn phong giống nhau.
 const EXPLICIT_PROMPTS = {
-  subtle: "Cảnh trưởng thành ở mức nhẹ.",
-  sensual: "Cảnh trưởng thành thiên về cảm xúc và cảm giác.",
-  explicit: "Cảnh trưởng thành rõ ràng theo yêu cầu của truyện.",
-  strong: "Cảnh trưởng thành chi tiết theo thiết lập người dùng.",
-  wild: "Cảnh trưởng thành ở mức rất mạnh theo thiết lập người dùng."
+  subtle: "CẢNH 18+: Nhẹ nhàng — fade-to-black sau khi hôn, gợi ý chứ không tả. Cảm xúc chiếm ưu thế.",
+  sensual: "CẢNH 18+: Gợi cảm — tả cảm xúc, hơi thở, ánh mắt, da chạm da; hạn chế tả bộ phận sinh dục chi tiết. Vẫn giàu sức gợi.",
+  explicit: "CẢNH 18+: Rõ ràng — mô tả cơ thể và hành động cụ thể (hôn, sờ, cởi, tư thế). Có thể dùng từ trực tiếp khi cần. Show cảm giác qua da thịt và phản ứng.",
+  strong: "CẢNH 18+: MẠNH — mỗi đoạn nóng cần: (1) bộ phận + hình thái/màu/số đo hồ sơ; (2) cảm giác thể xác cụ thể; (3) một nhịp nội tâm (xấu hổ/dục/kháng cự); (4) động tác + âm thanh. Ít ẩn dụ.",
+  wild: "CẢNH 18+: CỰC MẠNH. Đủ 4 lớp (cơ thể+cảm giác+nội tâm+âm thanh/thoại). Không tóm tắt, không fade-to-black. Bám hồ sơ số đo."
 };
+
+/* ===== NSFW KEYWORD DETECT — đồng bộ với index.html, thay cho danh sách 6 từ cũ (quá hẹp) ===== */
+const NSFW_KEYWORDS = [
+  "cảnh nóng","cảnh sex","cảnh 18","cảnh 18+","quan hệ","làm tình","ân ái","giao hợp",
+  "sex","sexx","sexy","nsfw","erotic","erotica","porn",
+  "âu yếm","vuốt ve","mơn trớn","ve vuốt","hôn sâu","hôn môi","hôn cổ",
+  "cởi đồ","cởi áo","cởi quần","không mặc","khỏa thân","trần truồng","nude",
+  "sờ soạng","sờ ngực","sờ mông","nắn bóp","liếm","bú","thổi kèn",
+  "dương vật","âm đạo","âm hộ","ngực","núm vú","mông","háng","cặc","lồn",
+  "thúc","thúc mạnh","xuất tinh","orgasm","cao trào","khoái cảm",
+  "doggy","missionary","cowgirl","oral","blowjob","handjob",
+  "viết nóng","viết 18","tăng nhiệt","nóng hơn","cảnh ân ái","đêm tân hôn",
+  "lần đầu","mất trinh","đoạt mất","chiếm đoạt cơ thể","ham muốn",
+  "dục vọng","kích thích","nứng","phê","rên rỉ","rên la","rên ưỡn"
+];
+function textHasNsfwKeyword(text) {
+  if (!text) return false;
+  const t = String(text).toLowerCase().normalize("NFC");
+  return NSFW_KEYWORDS.some(k => t.includes(k));
+}
 
 // v9.2: dùng streaming + idle-timeout thay vì abort cứng sau 170s.
 // Chương dài (5000+ từ, ~12-16k token) thường chạy >170s nên bản cũ bị "This operation was aborted".
@@ -474,7 +496,7 @@ function buildContext(state) {
   if (state.pronounRules) p.push("XƯNG HÔ:\n" + state.pronounRules);
   if (state.currentStatus) p.push("CURRENT STATUS:\n" + state.currentStatus);
   if (state.directive) p.push("MỆNH LỆNH:\n" + state.directive);
-  if (state.nextChapterHint) p.push("GỢI Ý ĐỊNH HƯỚNG CHO CÁC CHƯƠNG SAU (tham khảo, không bắt buộc dùng ngay):\n" + state.nextChapterHint);
+  if (state.nextChapterHint) p.push("ĐỊNH HƯỚNG CHO CHƯƠNG NÀY (nên bám theo, trừ khi mâu thuẫn với MỆNH LỆNH thì MỆNH LỆNH thắng):\n" + state.nextChapterHint);
   if (state.advancedRules) p.push("QUY TẮC:\n" + state.advancedRules);
   if (state.mainCharProfile?.name) p.push("NHÂN VẬT CHÍNH (BẮT BUỘC xuất hiện, là trung tâm mọi chương, không đổi tên/nhầm sang NV khác):\n" + JSON.stringify(state.mainCharProfile));
   else if (state.mainPlot || state.worldSetting) p.push("⚠ CHƯA khai báo Nhân Vật Chính. Nếu Cốt Truyện/Bối Cảnh có nhắc tên nhân vật chính, PHẢI dùng đúng tên đó xuyên suốt, không tự đặt tên khác.");
@@ -534,9 +556,13 @@ async function generateOneChapter(job) {
   const chapters = Array.isArray(state.chapters) ? state.chapters : [];
   const chapterNumber = chapters.length + 1;
   const minWords = Math.min(Math.max(Number(state.minChapterWords) || 5000, 500), 9000);
-  const directive = String(state.directive || "").toLowerCase();
-  const hot = ["cảnh nóng", "18+", "sex", "nsfw", "erotic", "quan hệ"].some(k => directive.includes(k));
-  const isNsfw = !!job.forceNsfw || (state.mature && state.nsfwMode !== "never" && hot);
+  const nsfwSources = [
+    state.directive || "",
+    state.nextChapterHint || "",
+    (chapters[chapters.length - 1] && chapters[chapters.length - 1].title) || ""
+  ].join("\n");
+  const hot = textHasNsfwKeyword(nsfwSources);
+  const isNsfw = !!job.forceNsfw || (!!state.mature && state.nsfwMode !== "never" && !!state.modelNsfw && hot);
   const model = isNsfw ? (job.modelNsfw || job.model) : job.model;
   const prompt = [
     `VIẾT CHƯƠNG ${chapterNumber}. Truyện đã có ${chapters.length} chương.`,
@@ -547,9 +573,11 @@ async function generateOneChapter(job) {
     isNsfw ? ("MỨC TRƯỞNG THÀNH: " + (EXPLICIT_PROMPTS[state.explicitLevel] || "")) : "",
     "NHẮC LẠI (bắt buộc, ưu tiên cao nhất — đọc kỹ trước khi viết):\n" +
       "- Chỉ 1–3 SỰ KIỆN CHÍNH trong chương này, không nhồi thêm biến cố.\n" +
+      "- GIỚI HẠN CỨNG: TỐI ĐA 4 NHÂN VẬT CÓ TÊN RIÊNG xuất hiện trực tiếp (có thoại/hành động cụ thể) trong CẢ CHƯƠNG, tính cả nhân vật chính. Người qua đường/đám đông không tên không tính. Nếu là chương mở đầu, KHÔNG dồn hết dàn nhân vật vào chương 1 — chỉ ai trực tiếp tham gia 1-3 sự kiện chính của chương này, người còn lại để dành cho chương sau.\n" +
       "- Ưu tiên dùng nhân vật đã liệt kê ở mục NHÂN VẬT QUAN TRỌNG phía trên; chỉ tạo nhân vật mới khi thực sự cần và phải có lý do/vai trò rõ ràng.\n" +
       (((state.characters || []).filter(c => !c.dead).length === 0) ? "- CHƯA CÓ NHÂN VẬT PHỤ NÀO ĐƯỢC KHAI BÁO TRƯỚC. Nếu cần người ngoài nhân vật chính, ưu tiên nhân vật KHÔNG TÊN RIÊNG (chức danh chung chung). Chỉ đặt tên riêng nếu họ thực sự sẽ quay lại các chương sau.\n" : "") +
       (state.mainCharProfile?.name ? ("- NHÂN VẬT CHÍNH BẮT BUỘC LÀ TRUNG TÂM CHƯƠNG NÀY: " + state.mainCharProfile.name + ". TUYỆT ĐỐI không viết chương thiếu hẳn nhân vật này, không đổi tên/nhầm sang nhân vật khác.\n") : "") +
+      (state.nextChapterHint ? ("- ĐỊNH HƯỚNG CHO CHƯƠNG NÀY (PHẢI triển khai trừ khi mâu thuẫn với MỆNH LỆNH): " + String(state.nextChapterHint).slice(0, 400) + "\n") : "") +
       (state.directive ? ("- MỆNH LỆNH CHƯƠNG NÀY: " + String(state.directive).slice(0, 400) + "\n") : ""),
     "Định dạng cuối: TIÊU ĐỀ: <tên>\nNỘI DUNG:\n<văn xuôi>"
   ].filter(Boolean).join("\n\n");
