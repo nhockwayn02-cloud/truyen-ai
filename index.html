@@ -4552,7 +4552,8 @@ function saveDraftProgress(displayText, meta){
     lastDraftSaveAt=now;
     idbPut(IDB_DRAFT_STORE,state.storyId,{
       text:displayText,savedAt:now,chapterCountAtSave:state.chapters.length,
-      mode:(meta&&meta.mode)||"new",idx:meta?meta.idx:null
+      mode:(meta&&meta.mode)||"new",idx:meta?meta.idx:null,
+      isNsfw: meta ? !!meta.isNsfw : false
     }).catch(()=>{});
   }catch(e){}
 }
@@ -4601,7 +4602,7 @@ async function showDraftRecoveryBanner(d){
   if(ok){
     state.chapters.push({
       title: "Bản nháp khôi phục", text: d.text.trim(), wordCount: countWords(d.text),
-      truncated: true, plan: "", continuityWarnings: [], modelUsed: null, isNsfw: false,
+      truncated: true, plan: "", continuityWarnings: [], modelUsed: null, isNsfw: !!d.isNsfw,
       polished: false, summary: "", versions: [], compressed: false
     });
     state.currentChapterIndex = state.chapters.length - 1;
@@ -4780,7 +4781,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     const onChunk = streamingTarget ? (delta, full) => {
       const bodyMatch = full.match(/NỘI DUNG:\s*([\s\S]*)/i);
       const displayText = bodyMatch ? bodyMatch[1] : "";
-      if(displayText){ chapterTextEl.textContent = displayText; saveDraftProgress(displayText); }
+      if(displayText){ chapterTextEl.textContent = displayText; saveDraftProgress(displayText, { mode: "new", isNsfw: usingNsfw }); }
     } : null;
 
     let firstResult = await callAI(prompt, {
@@ -4989,7 +4990,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     const onChunk = canStream ? (delta, full) => {
       const combined = baseText.replace(/\s+$/,"") + "\n\n" + full;
       chapterTextEl.textContent = combined;
-      saveDraftProgress(combined, { mode: "continue", idx: idx });
+      saveDraftProgress(combined, { mode: "continue", idx: idx, isNsfw: usingNsfw });
     } : null;
 
     let contText = "", contFinish = null;
@@ -5966,7 +5967,11 @@ async function startBackgroundWrite(){
   const storyBlob={};
   Object.keys(state).forEach(k=>{if(!GLOBAL_KEYS.includes(k))storyBlob[k]=state[k];});
   ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","advancedRules","includeScenesInPrompt"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
-  const bgForceNsfw = shouldForceNsfwByKeyword("", "");
+  // Background phải giữ nguyên lựa chọn NSFW của người dùng, không tự reset về false.
+  // "always" luôn ép model NSFW; "mature_only" ép khi truyện đã đánh dấu trưởng thành.
+  // "auto" vẫn để backend tự phát hiện theo ngữ cảnh.
+  const bgForceNsfw = (state.nsfwMode === "always") ||
+    (state.nsfwMode === "mature_only" && state.mature === true);
   const payload={storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:bgForceNsfw};
   setBgStatus("☁ Đang tạo job an toàn trên server...",true); $ID("bgWriteBtn").disabled=true;
   try{
