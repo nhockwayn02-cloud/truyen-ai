@@ -661,7 +661,8 @@ async function generateOneChapter(job) {
   const issues = [];
   let attempts = 0;
 
-  while (countWords(text) < minWords * 0.9 && attempts < 4) {
+  const maxAttempts = Math.max(0, Math.min(8, Number(state.autoContinueMax) || 4));
+  while (countWords(text) < minWords * 0.9 && attempts < maxAttempts) {
     if (writeTimeLeft() < 30000) { issues.push("Dừng viết tiếp sớm để dành thời gian cho NV/Thế giới/Status/Memory"); break; }
     attempts++;
     const current = countWords(text);
@@ -671,8 +672,9 @@ async function generateOneChapter(job) {
       const cont = await callWithRetry({
         endpoint: job.apiEndpoint, apiKey: job.apiKey, model,
         messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: [
-          `Viết TIẾP chương ${chapterNumber}. Hiện ${current} từ, cần thêm khoảng ${need} từ.`,
+          `Viết TIẾP chương ${chapterNumber}. Hiện ${current} từ, cần thêm khoảng ${need} từ — KHÔNG viết dư quá nhiều so với con số này.`,
           "Bắt đầu ngay sau câu cuối. Không tóm tắt, không mở chương mới, không lặp.",
+          "Nếu diễn biến đã tự nhiên đi tới điểm dừng hợp lý gần đủ số từ, hãy kết thúc chương ở đó — KHÔNG cố nhồi thêm sự kiện/tình tiết mới chỉ để kéo dài.",
           "ĐOẠN CUỐI:", tail,
           "Chỉ trả văn xuôi tiếp theo."
         ].join("\n\n") }],
