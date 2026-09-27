@@ -294,6 +294,33 @@ const DESCRIPTION_PROMPTS = {
   deep: "Miêu tả sâu, giàu giác quan nhưng không lặp."
 };
 // Đồng bộ nguyên văn với EXPLICIT_PROMPTS trong index.html (bản viết trực tiếp) để 2 luồng ra văn phong giống nhau.
+// Đồng bộ nguyên khối EROTIC_STYLE_PROMPT từ index.html.
+const EROTIC_STYLE_PROMPT = [
+  "PHONG CÁCH REDQUILL / 18+ CỰC NẶNG (BẮT BUỘC khi cảnh nóng — đủ lớp, không bỏ):",
+  "",
+  "HAI LỚP (không trộn trong CÙNG MỘT CÂU):",
+  "- Lớp văn/tâm lý: không khí, quyền lực, nội tâm, xã hội — có thể văn hơn.",
+  "- Lớp erotic: khi đang sex/sỉ nhục/lên đỉnh → từ THÔ TỤC đường phố chiếm ưu thế (cặc, lồn, địt, nứng, nước lồn, tinh trùng, đĩ, nô lệ…). Không ẩn dụ hoa mỹ thay thế.",
+  "",
+  "4 LỚP MỖI ĐOẠN NÓNG:",
+  "1) CƠ THỂ: kích thước/màu/hình thái theo hồ sơ NV (cặc, lồn, ngực, mông, mép, hạt le, dịch).",
+  "2) CẢM GIÁC: căng, ướt, đau rát, no đầy, tê, run, nóng — trong da thịt, không chỉ nhìn từ ngoài.",
+  "3) NỘI TÂM đa lớp: xấu hổ ↔ dục, kháng cự ↔ cơ thể phản bội, tự nhục ↔ nghiện (nữ); tính toán/chiếm hữu (nam nếu có).",
+  "4) ÂM THANH + NHỊP: da đập, dịch, giường, thở, rên (ư, ahh, hah…), thoại van xin — đồng bộ nhịp đút.",
+  "",
+  "THOẠI (khi nhân vật đã quy phục / cảnh huấn luyện):",
+  "- Tăng mật độ thoại: van xin thô tục, tự sỉ nhục, mô tả lồn/cặc đang nứng, cầu xin được địt/xuất.",
+  "- Nam chính (nếu thống trị): thoại ngắn, lạnh, ra lệnh; nữ đáp dài hơn, thô hơn khi cao trào.",
+  "- Thoại xen hành động + biểu cảm (mắt, môi, nước dãi, run).",
+  "",
+  "KỸ THUẬT:",
+  "- Chậm từng nhịp; không tóm tắt cao trào trong 1-2 câu.",
+  "- Nhiều bộ phận cùng lúc (tay + miệng + cặc…).",
+  "- 5 giác quan khi phù hợp; mùi/dịch/nhiệt độ.",
+  "- Bám hồ sơ NV — cấm bịa số đo khác.",
+  "- 100% tiếng Việt có dấu. Không meta, không spoiler chương sau."
+].join("\n");
+
 const EXPLICIT_PROMPTS = {
   subtle: "CẢNH 18+: Nhẹ nhàng — fade-to-black sau khi hôn, gợi ý chứ không tả. Cảm xúc chiếm ưu thế.",
   sensual: "CẢNH 18+: Gợi cảm — tả cảm xúc, hơi thở, ánh mắt, da chạm da; hạn chế tả bộ phận sinh dục chi tiết. Vẫn giàu sức gợi.",
@@ -570,6 +597,7 @@ async function generateOneChapter(job) {
     "Không mở đầu bằng tiêu đề, không giải thích ngoài truyện.",
     "Không lặp lại đoạn kết chương trước; phải tiếp nối nguyên nhân và hệ quả.",
     buildContext(state), recentContext(chapters),
+    isNsfw ? EROTIC_STYLE_PROMPT : "",
     isNsfw ? ("MỨC TRƯỞNG THÀNH: " + (EXPLICIT_PROMPTS[state.explicitLevel] || "")) : "",
     "NHẮC LẠI (bắt buộc, ưu tiên cao nhất — đọc kỹ trước khi viết):\n" +
       "- Chỉ 1–3 SỰ KIỆN CHÍNH trong chương này, không nhồi thêm biến cố.\n" +
