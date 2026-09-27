@@ -3881,7 +3881,7 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
       let arr=safeJsonParse(r.text), wasRepair=false;
       if(!Array.isArray(arr)){ const repaired=repairTruncatedArray(r.text); if(repaired.length){arr=repaired;wasRepair=true;} }
       if(!Array.isArray(arr)){
-        const retry=await callAI("CHỈ TRẢ JSON ARRAY NHÂN VẬT. Không lời dẫn.\n"+CHAR_JSON_FORMAT_HINT+"\n\nNội dung:\n"+chunks[i].slice(0,8000),{maxTokens:2200,temperature:0.15});
+        const retry=await callAI("CHỈ TRẢ JSON ARRAY NHÂN VẬT. Không lời dẫn.\n"+CHAR_JSON_FORMAT_HINT+"\n\nNội dung:\n"+chunks[i].slice(0,8000),{maxTokens:12500,temperature:0.15});
         arr=safeJsonParse(retry.text); if(!Array.isArray(arr)){ const repaired=repairTruncatedArray(retry.text); if(repaired.length){arr=repaired;wasRepair=true;} }
       }
       if(!Array.isArray(arr)){failed++;continue;}
@@ -3984,10 +3984,10 @@ async function updateWorldIncremental(text, chapterNumber, silent){
     return safeJsonParse(raw);
   };
   try{
-    let obj = await attempt(prompt, 2000);
+    let obj = await attempt(prompt, 3200);
     if(!obj || typeof obj !== "object"){
       /* Thử lại 1 lần với lệnh ngắn gọn, nghiêm khắc hơn — thay vì âm thầm bỏ qua như trước */
-      try{ obj = await attempt("CHỈ trả JSON object đúng định dạng, không thêm chữ nào khác.\n" + WORLD_JSON_FORMAT_HINT + "\n\nChương " + chapterNumber + ":\n" + body.slice(0, 8000), 1800); }catch(e2){}
+      try{ obj = await attempt("CHỈ trả JSON object đúng định dạng, không thêm chữ nào khác.\n" + WORLD_JSON_FORMAT_HINT + "\n\nChương " + chapterNumber + ":\n" + body.slice(0, 8000), 5000); }catch(e2){}
     }
     if(!obj || typeof obj !== "object"){
       if(!silent) setStatus("⚠ Không đọc được cập nhật địa điểm/vật phẩm/thread ch" + chapterNumber + " (lỗi định dạng AI trả về).", false);
@@ -4024,7 +4024,7 @@ async function updateCurrentStatusIncremental(text, chapterNumber, silent){
     const r=await callAI(prompt,{maxTokens:6900,temperature:0.15});
     let obj=safeJsonParse(r.text);
     if(!obj||Array.isArray(obj)||typeof obj!=="object"){
-      const retry=await callAI("CHỈ TRẢ JSON OBJECT ĐÚNG ĐỊNH DẠNG.\n"+prompt,{maxTokens:5750,temperature:0.1});
+      const retry=await callAI("CHỈ TRẢ JSON OBJECT ĐÚNG ĐỊNH DẠNG.\n"+prompt,{maxTokens:9500,temperature:0.1});
       obj=safeJsonParse(retry.text);
     }
     if(!obj||Array.isArray(obj)||typeof obj!=="object"){
@@ -5760,7 +5760,7 @@ async function updateLongMemoryIncremental(text, chapterNumber, silent){
   try{
     const r=await callAI(prompt,{maxTokens:6900,temperature:0.15});
     let obj=safeJsonParse(r.text);
-    if(!obj||Array.isArray(obj)){const rr=await callAI("CHỈ TRẢ JSON OBJECT. "+prompt,{maxTokens:5750,temperature:0.1});obj=safeJsonParse(rr.text);}
+    if(!obj||Array.isArray(obj)){const rr=await callAI("CHỈ TRẢ JSON OBJECT. "+prompt,{maxTokens:9500,temperature:0.1});obj=safeJsonParse(rr.text);}
     if(!obj||Array.isArray(obj))return {ok:false,reason:"parse"};
     if(!Array.isArray(state.timeline))state.timeline=[]; if(!Array.isArray(state.foreshadowing))state.foreshadowing=[]; if(!Array.isArray(state.knowledgeLedger))state.knowledgeLedger=[];
     (obj.events||[]).forEach(e=>{if(e&&e.summary)state.timeline.push({id:genId(),chapter:chapterNumber,type:e.type||"event",summary:e.summary,causes:e.causes||"",consequences:e.consequences||""});});
@@ -5941,6 +5941,9 @@ function renderAll(){
 /* ========== BACKGROUND JOB (Netlify) ========== */
 const BG_JOB_KEY = "aiStoryWorkshop_bgJobId_v9";
 const BG_FUNCTIONS_BASE = "/.netlify/functions"; // khi deploy Netlify sẽ đúng path
+// Netlify Background Function tối đa 15 phút (DEADLINE trong write-chapter-background.js = 13.5 phút).
+// Cộng thêm thời gian trigger + polling trễ 12s → coi job là "có thể đã chết" nếu quá ngưỡng này mà vẫn pending/running.
+const BG_JOB_STALE_MS = 18 * 60 * 1000;
 
 function getBgStatusEl(){ return $ID("bgJobStatus"); }
 
@@ -5989,13 +5992,30 @@ function pollBackgroundJob(record){
   if(!record||!record.jobId)return;
   if(bgPollTimer)clearInterval(bgPollTimer);
   const poll=async()=>{
+    const createdAt=Number(record.createdAt)||Date.now();
+    const age=Date.now()-createdAt;
     try{
       const token=encodeURIComponent(record.accessToken||"");
       const res=await fetch(BG_FUNCTIONS_BASE+"/job-status?jobId="+encodeURIComponent(record.jobId)+"&token="+token);
       if(res.status===403){clearInterval(bgPollTimer);bgPollTimer=null;setBgStatus("⚠ Job còn tồn tại nhưng token theo dõi trên iPhone không hợp lệ. Có thể cần mở backup/job cũ để đồng bộ thủ công.",true);return;}
-      if(!res.ok)return;
+      if(!res.ok){
+        if(age>BG_JOB_STALE_MS){
+          clearInterval(bgPollTimer);bgPollTimer=null;
+          setBgStatus("⚠ Không lấy được trạng thái job sau "+Math.round(BG_JOB_STALE_MS/60000)+" phút — nhiều khả năng job đã chết. Đã dừng theo dõi, bạn có thể tạo job mới.",true);
+          localStorage.removeItem(BG_JOB_KEY);
+        }
+        return;
+      }
       const data=await res.json();
-      if(data.status==="running"||data.status==="pending")setBgStatus("☁ Đang viết nền... "+(data.progress||data.status),true);
+      if(data.status==="running"||data.status==="pending"){
+        if(age>BG_JOB_STALE_MS){
+          clearInterval(bgPollTimer);bgPollTimer=null;
+          setBgStatus("⚠ Job nền đã chạy quá "+Math.round(BG_JOB_STALE_MS/60000)+" phút mà vẫn báo '"+data.status+"' — nhiều khả năng tiến trình trên server đã chết mà không kịp ghi lỗi. Đã dừng theo dõi (job cũ vẫn còn trên server, chưa mất dữ liệu), bạn có thể bấm 'Viết chương nền' để tạo job mới.",true);
+          localStorage.removeItem(BG_JOB_KEY);
+          return;
+        }
+        setBgStatus("☁ Đang viết nền... "+(data.progress||data.status),true);
+      }
       else if(data.status==="completed"){
         clearInterval(bgPollTimer);bgPollTimer=null;setBgStatus("✓ Chương nền đã xong — đang hợp nhất an toàn...",true);
         await mergeBackgroundChapter(data,record);
