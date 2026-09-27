@@ -1,3 +1,44 @@
+# Patch v10.2.3 — Sửa gốc: "Viết chương nền" không tự chuyển NSFW + hết giờ hàng loạt
+
+**Vấn đề báo cáo:** khi bấm "☁ Viết chương nền", (1) chương có cảnh nóng vẫn dùng model
+thường thay vì model NSFW dù `nsfwMode = "auto"`; (2) log trả về
+`NV: 7/7 lô không đọc được / Thế giới: 7/7 lô không đọc được / Status: bỏ qua vì hết thời
+gian / Memory: bỏ qua vì hết thời gian`.
+
+**Nguyên nhân gốc (trong `write-chapter-background.js`):**
+
+1. `generateOneChapter()` chỉ ép NSFW khi bắt được **từ khóa cứng** trong 3 nguồn hạn hẹp
+   (Mệnh lệnh, Định hướng chương sau, tiêu đề chương trước) — không có bước **chấm nhiệt độ
+   0–10** như bản viết trực tiếp trên client (`detectHeatLevel` trong `index.html`). Cảnh nóng
+   phát sinh tự nhiên từ mạch truyện (không có từ khóa tường minh) sẽ bị bỏ qua, job lặng lẽ
+   dùng model chính (đây là lý do bạn thấy nó "dùng mode thường" thay vì NSFW).
+2. Bước viết chương + "viết tiếp" (`generateOneChapter`) không giới hạn ngân sách thời gian
+   riêng — với chương dài (`minChapterWords` lớn) hoặc model trả lời chậm, bước này có thể ăn
+   gần hết 13.5 phút của Netlify Background Function, khiến các bước sau (NV, Thế giới,
+   Status, Memory) chạy dồn dập trong thời gian rất ngắn còn lại: các lệnh gọi trích xuất JSON
+   bị cắt ngang do hết giờ → JSON hỏng → "không đọc được"; Status/Memory thậm chí không kịp
+   bắt đầu → "bỏ qua vì hết thời gian".
+
+**Đã sửa:**
+
+- Thêm `detectHeatLevel()` trong worker, đồng bộ với client: nếu không bắt được từ khóa nhưng
+  `nsfwMode = "auto"`, chấm nhiệt độ cảnh sắp viết và so với `nsfwAutoThreshold` đã cấu hình.
+- Mở rộng nguồn quét từ khóa: thêm đoạn cuối chương trước (giống `tail` ở client), không chỉ
+  Mệnh lệnh/Định hướng/tiêu đề.
+- Dành riêng **5 phút dự trữ** (`POST_PROCESS_RESERVE_MS`) cho NV/Thế giới/Status/Memory: bước
+  viết chương + viết tiếp giờ tự giới hạn `totalMs` và dừng sớm nếu sắp lấn vào phần dự trữ này.
+- Nâng ngưỡng "bỏ qua vì hết thời gian" ở từng lô NV/Thế giới từ 60s lên 150s còn lại, để
+  Status/Memory (chạy sau) chắc chắn còn cơ hội thay vì luôn bị hết giờ.
+- Bỏ qua bước "sửa JSON bằng AI" (tốn thêm 1 lượt gọi model) khi còn dưới 90 giây, tránh vừa
+  tốn thời gian vừa vẫn thất bại.
+
+**Lưu ý còn lại:** nếu sau khi cập nhật vẫn thấy NV/Thế giới báo "không đọc được JSON" ngay cả
+khi còn nhiều thời gian (không phải do hết giờ), rất có thể do model bạn chọn cho trường
+"Model chính" trả lời bằng văn xuôi thay vì JSON thuần (thường gặp ở các model "reasoning" khi
+endpoint không phải OpenRouter nên worker không tắt được chế độ suy luận). Trường hợp đó cần
+xem đúng đoạn model trả về (mục "Chi tiết cập nhật nền" trong app) để xác định model có tuân
+thủ yêu cầu "chỉ trả JSON" hay không.
+
 # Patch v10.2.2 — Sửa lỗi mất dữ liệu IndexedDB
 
 ## Lỗi đã sửa
