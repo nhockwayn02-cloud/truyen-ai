@@ -5966,7 +5966,7 @@ async function startBackgroundWrite(){
   }
   const storyBlob={};
   Object.keys(state).forEach(k=>{if(!GLOBAL_KEYS.includes(k))storyBlob[k]=state[k];});
-  ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","advancedRules","includeScenesInPrompt"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
+  ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","advancedRules","includeScenesInPrompt","autoContinueMax"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
   // Background phải giữ nguyên lựa chọn NSFW của người dùng, không tự reset về false.
   // "always" luôn ép model NSFW; "mature_only" ép khi truyện đã đánh dấu trưởng thành.
   // "auto" vẫn để backend tự phát hiện theo ngữ cảnh.
