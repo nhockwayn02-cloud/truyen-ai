@@ -349,6 +349,30 @@ function textHasNsfwKeyword(text) {
   return NSFW_KEYWORDS.some(k => t.includes(k));
 }
 
+/* v10.2.2: worker trước đây chỉ ép NSFW khi bắt được từ khóa trong directive/hint/tiêu đề —
+ * không có bước "chấm nhiệt độ" như bản viết trực tiếp (index.html detectHeatLevel()).
+ * Hệ quả: nếu cảnh nóng phát sinh tự nhiên từ mạch truyện (không có từ khóa tường minh
+ * trong Mệnh lệnh/Định hướng), job nền âm thầm dùng model thường thay vì model NSFW dù
+ * chế độ đang để "auto". Hàm dưới đây đồng bộ với client: chấm 0-10, so với ngưỡng đã cấu hình. */
+async function detectHeatLevel(job, tail, hint, directive) {
+  try {
+    const prompt = [
+      "Bạn là bộ phân loại nhiệt độ cảnh cho tiểu thuyết.",
+      "Chấm mức 18+ của CẢNH SẮP VIẾT theo thang 0-10:",
+      "0-2 bình thường | 3-4 cảm xúc nhẹ | 5-6 hôn/ôm | 7-8 cởi đồ/sờ | 9-10 quan hệ",
+      "CHỈ TRẢ VỀ 1 SỐ DUY NHẤT. KHÔNG giải thích.",
+      "",
+      "MỆNH LỆNH: " + (directive || "(không)"),
+      "ĐỊNH HƯỚNG CHO CHƯƠNG NÀY: " + (hint || "(không)"),
+      "DIỄN BIẾN GẦN:",
+      (tail || "(chưa có)").slice(-2000)
+    ].join("\n");
+    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: prompt }], maxTokens: 10, temperature: 0 }, 1);
+    const m = String(r.text || "").match(/\d+/);
+    return m ? Math.max(0, Math.min(10, parseInt(m[0], 10))) : 0;
+  } catch (_) { return 0; }
+}
+
 // v9.2: dùng streaming + idle-timeout thay vì abort cứng sau 170s.
 // Chương dài (5000+ từ, ~12-16k token) thường chạy >170s nên bản cũ bị "This operation was aborted".
 // Nếu bị ngắt giữa chừng nhưng đã có nội dung, trả phần đã nhận (finishReason="length") để vòng "viết tiếp" xử lý.
@@ -497,6 +521,7 @@ async function repairJsonWithAI(job, raw, shape, keys, maxTokens = 6900) {
 async function parseArrayWithRepair(job, raw) {
   const p = parseArray(raw);
   if (p.valid) return { ...p, repairedByAI: false };
+  if (timeLeft() < 90000) return { ...p, repairedByAI: false }; // không đủ giờ cho 1 lượt gọi sửa JSON nữa
   const fixed = await repairJsonWithAI(job, raw, "array", null, 8000);
   const again = parseArray(fixed);
   return { ...again, repairedByAI: again.valid, method: again.valid ? "AI-repair" : "" };
@@ -505,6 +530,7 @@ async function parseArrayWithRepair(job, raw) {
 async function parseObjectWithRepair(job, raw, keys) {
   const p = parseObjectDetailed(raw, keys);
   if (p.obj) return { obj: p.obj, method: p.method, repairedByAI: false };
+  if (timeLeft() < 90000) return { obj: null, method: "", repairedByAI: false };
   const fixed = await repairJsonWithAI(job, raw, "object", keys, 6900);
   const again = parseObjectDetailed(fixed, keys);
   return { obj: again.obj, method: again.obj ? "AI-repair" : "", repairedByAI: !!again.obj };
@@ -578,18 +604,33 @@ function buildLoreBlock(state) {
   return parts.length ? "THẺ TRI THỨC (Lorebook — bắt buộc tuân thủ khi nhân vật/đối tượng xuất hiện):\n" + parts.join("\n") : "";
 }
 
+// Dành riêng cho bước viết văn (chương mới + viết tiếp): không được ăn hết ngân sách 13.5 phút,
+// phải để lại thời gian cho NV/Thế giới/Status/Memory chạy sau đó — đây là nguyên nhân gốc của
+// "7/7 lô không đọc được" + "Status/Memory bỏ qua vì hết thời gian" khi chương dài phải viết-tiếp nhiều lần.
+const POST_PROCESS_RESERVE_MS = 5 * 60 * 1000; // dành 5 phút cho các bước sau khi có văn bản chương
+const writeTimeLeft = () => timeLeft() - POST_PROCESS_RESERVE_MS;
+
 async function generateOneChapter(job) {
   const state = job.storyState;
   const chapters = Array.isArray(state.chapters) ? state.chapters : [];
   const chapterNumber = chapters.length + 1;
   const minWords = Math.min(Math.max(Number(state.minChapterWords) || 5000, 500), 9000);
+  const lastTail = ((chapters[chapters.length - 1] && chapters[chapters.length - 1].text) || "").slice(-1800);
   const nsfwSources = [
     state.directive || "",
     state.nextChapterHint || "",
+    lastTail,
     (chapters[chapters.length - 1] && chapters[chapters.length - 1].title) || ""
   ].join("\n");
-  const hot = textHasNsfwKeyword(nsfwSources);
-  const isNsfw = !!job.forceNsfw || (!!state.mature && state.nsfwMode !== "never" && !!state.modelNsfw && hot);
+  const hotKeyword = textHasNsfwKeyword(nsfwSources);
+  let isNsfw = !!job.forceNsfw || (!!state.mature && state.nsfwMode !== "never" && !!state.modelNsfw && hotKeyword);
+  // Không bắt được từ khóa cứng nào nhưng vẫn ở chế độ "auto" -> chấm nhiệt độ như bản viết trực tiếp,
+  // thay vì lặng lẽ coi là "cảnh thường" và dùng model chính.
+  if (!isNsfw && state.nsfwMode === "auto" && state.mature && state.modelNsfw && timeLeft() > 90000) {
+    const heat = await detectHeatLevel(job, lastTail, state.nextChapterHint, state.directive);
+    const threshold = Number(state.nsfwAutoThreshold) || 6;
+    if (heat >= threshold) isNsfw = true;
+  }
   const model = isNsfw ? (job.modelNsfw || job.model) : job.model;
   const prompt = [
     `VIẾT CHƯƠNG ${chapterNumber}. Truyện đã có ${chapters.length} chương.`,
@@ -610,7 +651,8 @@ async function generateOneChapter(job) {
     "Định dạng cuối: TIÊU ĐỀ: <tên>\nNỘI DUNG:\n<văn xuôi>"
   ].filter(Boolean).join("\n\n");
 
-  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 16000, temperature: isNsfw ? 1 : 0.95, totalMs: 420000, creative: true }, 2);
+  const mainCallBudget = Math.max(60000, Math.min(420000, writeTimeLeft() - 20000));
+  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 16000, temperature: isNsfw ? 1 : 0.95, totalMs: mainCallBudget, creative: true }, 2);
   const titleMatch = result.text.match(/TIÊU ĐỀ\s*:\s*(.+)/i);
   const bodyMatch = result.text.match(/NỘI DUNG\s*:\s*([\s\S]*)/i);
   const title = (titleMatch?.[1] || "Chương mới").replace(/^chương\s*\d+\s*[:\-–—.]*/i, "").trim() || "Chương mới";
@@ -620,6 +662,7 @@ async function generateOneChapter(job) {
   let attempts = 0;
 
   while (countWords(text) < minWords * 0.9 && attempts < 4) {
+    if (writeTimeLeft() < 30000) { issues.push("Dừng viết tiếp sớm để dành thời gian cho NV/Thế giới/Status/Memory"); break; }
     attempts++;
     const current = countWords(text);
     const tail = text.slice(-5000);
@@ -633,7 +676,7 @@ async function generateOneChapter(job) {
           "ĐOẠN CUỐI:", tail,
           "Chỉ trả văn xuôi tiếp theo."
         ].join("\n\n") }],
-        maxTokens: 9000, temperature: isNsfw ? 1 : 0.95, creative: true
+        maxTokens: 9000, temperature: isNsfw ? 1 : 0.95, totalMs: Math.max(45000, Math.min(400000, writeTimeLeft() - 20000)), creative: true
       }, 2);
       if (!cont.text || cont.text.trim().length < 50) { issues.push(`Viết tiếp #${attempts} quá ngắn`); break; }
       text = text.replace(/\s+$/, "") + "\n\n" + cont.text.trim();
@@ -728,7 +771,7 @@ async function updateCharacters(job, chapter, n, state) {
   const res = { ok: true, chunks: chunks.length, nNew: 0, nUpdated: 0, failed: 0, dropped: 0, cut: 0, notes: [], problems: [] };
   for (let i = 0; i < chunks.length; i++) {
     const tag = `NV lô ${i + 1}/${chunks.length}`;
-    if (timeLeft() < 60000) { res.failed++; res.notes.push(`${tag}: BỎ QUA vì sắp hết thời gian job (15 phút của Netlify)`); continue; }
+    if (timeLeft() < 150000) { res.failed++; res.notes.push(`${tag}: BỎ QUA vì sắp hết thời gian job (dành phần còn lại cho Status/Memory)`); continue; }
     const prompt = [
       `CẬP NHẬT NHÂN VẬT — CHƯƠNG ${n}, PHẦN ${i + 1}/${chunks.length}.`,
       "Chỉ liệt kê nhân vật thực sự xuất hiện hoặc được nhắc tới có ý nghĩa trong PHẦN này. Không bịa.",
@@ -804,7 +847,7 @@ async function updateWorld(job, chapter, n, state) {
   const keys = ["locations", "items", "threads"];
   for (let i = 0; i < chunks.length; i++) {
     const tag = `Thế giới lô ${i + 1}/${chunks.length}`;
-    if (timeLeft() < 60000) { res.failed++; res.notes.push(`${tag}: BỎ QUA vì sắp hết thời gian job`); continue; }
+    if (timeLeft() < 150000) { res.failed++; res.notes.push(`${tag}: BỎ QUA vì sắp hết thời gian job (dành phần còn lại cho Status/Memory)`); continue; }
     const prompt = [
       `CẬP NHẬT THẾ GIỚI — CHƯƠNG ${n}, PHẦN ${i + 1}/${chunks.length}.`,
       "Chỉ trả địa điểm/vật phẩm/thread mới hoặc thay đổi rõ trong phần này. Không bịa. Mô tả ngắn (tối đa 25 từ). Không dùng dấu \" bên trong giá trị chuỗi.",
