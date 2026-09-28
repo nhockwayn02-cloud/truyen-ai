@@ -789,26 +789,33 @@ async function generateOneChapter(job) {
 
 async function generateSummary(job, chapter, n) {
   try {
-    const body = representativeText(chapter.text, 30000);
-    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: `Tóm tắt CHƯƠNG ${n} bằng 5-8 câu tiếng Việt. Bắt buộc bao quát đầu, giữa, cuối; nhân vật; thay đổi trạng thái; quan hệ; vật phẩm/địa điểm; hệ quả và việc chưa giải quyết.\n\n${body}` }], maxTokens: 2900, temperature: 0.25 }, 2);
+    const body = representativeText(chapter.text, 90000);
+    const rules = ["Tóm tắt CHƯƠNG {n} theo đúng trình tự thời gian như một biên bản diễn biến — bám sát nội dung chương, không khái quát hóa, không đoán, không bịa.", "ĐỊNH DẠNG: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch quan hệ/xung đột chính của chương, sau đó 5-8 đoạn ngắn theo thứ tự diễn ra (đêm/sáng/chiều/tối...), mỗi đoạn là một cảnh hoặc một mốc thời gian. KHÔNG dùng nhãn kiểu \"Đầu/Giữa/Cuối\", KHÔNG viết dạng gạch đầu dòng danh mục (Vật phẩm/Quan hệ/Hệ quả...).", "BẮT BUỘC trong mỗi đoạn: (a) dùng TÊN ĐẦY ĐỦ của nhân vật đúng như trong truyện, tuyệt đối không viết \"một đàn ông (tên chưa rõ)\" nếu tên đã xuất hiện trong chương hay trong danh sách nhân vật; (b) ghi rõ ai làm gì với ai, ở đâu, lúc mấy giờ nếu có; (c) giữ nguyên các chi tiết cụ thể: mệnh lệnh/kịch bản/lời thoại quan trọng, giờ giấc, số hiệu phòng/tầng, vật dụng, con số, tên hợp đồng/sổ sách; (d) nêu hành động và phản ứng của nhân vật, kể cả mưu tính, do dự, thay đổi quyết định.", "Với cảnh 18+/bạo lực/cưỡng ép: tóm tắt trung thực và gọn bằng ngôn ngữ trung tính, nêu rõ ai tham gia, kiểu hành vi chính, mệnh lệnh hay câu ép lặp lại, hệ quả với nhân vật — không lược bỏ và cũng không thêm chi tiết chương không có.", "Câu cuối: nêu trạng thái kết chương (quan hệ quyền lực, kế hoạch tiếp theo, mốc thời gian sắp tới, việc còn bỏ ngỏ) — chỉ dùng thông tin có trong chương.", "Chỉ dùng thông tin có trong chương. Sửa lỗi chính tả/đánh máy theo văn bản gốc. Không đánh giá, không bình luận. Độ dài khoảng 350-550 từ tiếng Việt. Chỉ trả về bản tóm tắt."].join("\n");
+    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: rules.replace("{n}", String(n)) + "\n\nNỘI DUNG CHƯƠNG " + n + ":\n" + body }], maxTokens: 3500, temperature: 0.2 }, 2);
     return (r.text || "").trim();
   } catch (_) { return ""; }
 }
 
 /* Tự động đề xuất định hướng ngắn cho (các) chương SAU — chỉ tham khảo,
    không ép chương kế phải theo ngay. Người dùng có thể sửa tay trong app. */
+const HINT_STYLES = {"normal": "Diễn tiến tự nhiên, tiếp nối mạch hiện tại.", "resist": "Nhân vật bị khống chế/yếu thế PHẢN KHÁNG rõ rệt trong chương này (hành động chống cự cụ thể); bên kia đáp trả và siết chặt hơn, hệ quả làm quan hệ quyền lực nặng thêm.", "twist": "Có một bước ngoặt/đảo chiều bất ngờ (lộ bí mật, lợi thế đổi bên, kế hoạch bị phá) nhưng vẫn hợp lý với thông tin đã có.", "escalate": "Leo thang: mức độ căng thẳng, rủi ro hoặc mức nóng cao hơn chương trước, có cú chốt gây hồi hộp.", "slow": "Nhịp chậm hơn: đào sâu nội tâm, quan hệ và hệ quả cảm xúc; ít biến cố mới."};
 async function generateNextChapterHint(job, chapter, summary, n, state) {
   try {
     const openThreads = (state.threads || []).filter(t => !["paid_off", "abandoned", "completed"].includes(t.status)).slice(0, 8).map(t => "- " + t.desc).join("\n");
     const openForeshadowing = (state.foreshadowing || []).filter(f => !["paid_off", "abandoned", "resolved"].includes(f.status)).slice(-8).map(f => "- " + f.description).join("\n");
     const prompt = [
-      `Bạn vừa đọc xong CHƯƠNG ${n} (tóm tắt bên dưới). Đề xuất ĐỊNH HƯỚNG NGẮN (2-4 câu) cho các chương SAU — mức cao, không phải kế hoạch chi tiết, không liệt kê sự kiện cụ thể.`,
+      `Bạn vừa đọc xong CHƯƠNG ${n} (tóm tắt bên dưới). Hãy viết GỢI Ý CHI TIẾT cho CHƯƠNG ${n + 1}.`,
+      "YÊU CẦU ĐỊNH DẠNG: mở đầu bằng dòng \"**Gợi ý ngắn Chương " + (n + 1) + ":**\", sau đó 4-6 đoạn văn ngắn, mỗi đoạn là một cảnh/nhịp truyện theo đúng thứ tự diễn ra: (1) mở chương, (2) cảnh chính, (3) cảnh phát triển/căng thẳng, (4) cú chốt cuối chương.",
+      "Mỗi đoạn phải dùng TÊN NHÂN VẬT cụ thể, nêu rõ hành động, địa điểm, xung đột, cảm xúc và hệ quả — KHÔNG nói chung chung kiểu \"nên khai thác thêm tuyến X\".",
+      "Bám sát giọng điệu, thể loại, mức độ nóng/18+ và cách xưng hô mà chính truyện này đang dùng; tiếp nối trực tiếp các thread và foreshadowing đang mở, không tự mở tuyến mới lạc đề. Mở chương phải nối trực tiếp từ đoạn kết chương trước; các mốc đã hẹn (giờ họp, lệnh, hạn chót) phải được xử lý.",
+      "HƯỚNG CHƯƠNG SAU: " + (HINT_STYLES[job.hintStyle] || HINT_STYLES.normal),
+      "ĐOẠN KẾT CHƯƠNG (để nối mạch):", String(chapter.text || "").slice(-1500),
       "TÓM TẮT:", summary || representativeText(chapter.text, 2000),
       openThreads ? ("THREADS ĐANG MỞ:\n" + openThreads) : "",
       openForeshadowing ? ("FORESHADOWING CHƯA GIẢI:\n" + openForeshadowing) : "",
-      "Chỉ trả về đoạn gợi ý ngắn, tiếng Việt, không tiêu đề."
+      "Chỉ trả về nội dung gợi ý theo định dạng trên, tiếng Việt."
     ].filter(Boolean).join("\n\n");
-    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: prompt }], maxTokens: 400, temperature: 0.5 }, 2);
+    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: prompt }], maxTokens: 1400, temperature: 0.7 }, 2);
     return (r.text || "").trim();
   } catch (_) { return ""; }
 }
