@@ -314,7 +314,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="brand-mark"></div>
 <div>
 <div class="brand-name">Xưởng Truyện AI Pro Max</div>
-<div class="brand-sub">v11.1 · Nhanh hơn · An toàn dữ liệu · Lorebook · Memory</div>
+<div class="brand-sub">v12.2 · Nhanh hơn · Văn phong V8 · Memory · Background</div>
 </div>
 </div>
 <div class="topbar-actions">
@@ -2114,7 +2114,7 @@ stopBtn.addEventListener("click", stopGeneration);
 /* ========== QUEUE (parallel + sequential) ========== */
 const taskQueue = [];
 let queueRunning = false;
-/* v11.1: hậu xử lý theo pha. Pha 1: [tóm tắt → gợi ý chương sau] ∥ Nhân vật ∥ Thế giới ∥ rà chính tả.
+/* v12.2: hậu xử lý theo pha. Pha 1: [tóm tắt → gợi ý chương sau] ∥ Nhân vật ∥ Thế giới ∥ rà chính tả.
    Pha 2: Status ∥ Memory (đọc state đã có NV/Thế giới mới). Các hàm merge vào state ĐỒNG BỘ sau mỗi await
    nên chạy song song không ghi đè nhau. Tắt "Song song" trong cài đặt để quay về chế độ tuần tự cũ. */
 async function runFastPostTasks(d, extra){
@@ -4860,7 +4860,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     const promptTokens = estimateTokens(prompt);
     if(promptTokens > 90000) setStatus("⚠ Prompt ~" + promptTokens + " token — có thể vượt context.", true);
 
-    /* v11.1: giới hạn tần suất vẽ lại khung chữ (~8 lần/giây) thay vì mỗi chunk — vẽ lại toàn văn
+    /* v12.2: giới hạn tần suất vẽ lại khung chữ (~8 lần/giây) thay vì mỗi chunk — vẽ lại toàn văn
        + regex trên chuỗi dài mỗi chunk làm iPhone giật và chậm dần theo độ dài chương. */
     let streamLastAt = 0, streamTimer = null, streamLatest = "";
     const renderStream = (full) => {

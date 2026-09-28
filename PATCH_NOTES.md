@@ -140,3 +140,12 @@ thay vì im lặng bỏ qua như trước.
 3. Xác nhận gói Netlify đang dùng hỗ trợ Background Functions (cần gói Pro trở lên) nếu
    muốn dùng tính năng "☁ Viết chương nền".
 4. Đặt biến môi trường `JOB_SECRET` trên Netlify để mã hóa API key khi lưu job Blobs.
+
+
+## V12.2 — Background continuation length fix
+- Mature/NSFW writing branch gets a larger initial output budget (24k tokens) and continuation budget (12k).
+- Mature branch can use up to 8 continuation passes (minimum 4 when auto-continuation is enabled).
+- Mature branch reserves 90s instead of 5 minutes for post-processing, reducing premature truncation.
+- Every continuation reuses the exact routed model selected for the chapter; it does not fall back to the primary model.
+- Mature continuation prompt explicitly continues the same scene/momentum instead of ending early.
+- Normal writing behavior remains unchanged.
