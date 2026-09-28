@@ -314,7 +314,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="brand-mark"></div>
 <div>
 <div class="brand-name">Xưởng Truyện AI Pro Max</div>
-<div class="brand-sub">v10.2.1 · 2 cột · Lorebook · Memory</div>
+<div class="brand-sub">v11.1 · Nhanh hơn · An toàn dữ liệu · Lorebook · Memory</div>
 </div>
 </div>
 <div class="topbar-actions">
@@ -1261,24 +1261,54 @@ function hydrateFromRecord(record){
   /* legacy flat record */
   return record;
 }
-function saveStoryStateToDisk(id,s){
+/* v11: bản lưu khẩn cấp. Ghi ĐỒNG BỘ vào localStorage khi (a) IndexedDB lỗi hoặc (b) trang sắp
+   bị ẩn/đóng (iOS có thể đóng băng tab trước khi transaction IndexedDB kịp hoàn tất). Bản này
+   chỉ bị xoá khi IndexedDB xác nhận đã ghi xong một bản MỚI HƠN hoặc bằng nó. */
+const EMERGENCY_PREFIX = "aiStoryWorkshop_emergency_v11_";
+function writeEmergencyCopy(id,record){
+  try{
+    localStorage.setItem(EMERGENCY_PREFIX+id, JSON.stringify({t:record.updatedAt||Date.now(), record:record}));
+    return true;
+  }catch(e){ return false; /* quota đầy / chế độ riêng tư */ }
+}
+function clearEmergencyCopy(id,upToT){
+  try{
+    const raw=localStorage.getItem(EMERGENCY_PREFIX+id); if(!raw) return;
+    const o=JSON.parse(raw);
+    if(!o || typeof o.t!=="number" || o.t<=upToT) localStorage.removeItem(EMERGENCY_PREFIX+id);
+  }catch(e){ try{ localStorage.removeItem(EMERGENCY_PREFIX+id); }catch(_){} }
+}
+function readEmergencyRecord(id){
+  try{
+    const raw=localStorage.getItem(EMERGENCY_PREFIX+id); if(!raw) return null;
+    const o=JSON.parse(raw); return (o && o.record) ? o : null;
+  }catch(e){ return null; }
+}
+function saveStoryStateToDisk(id,s,opts){
   if(!id) return;
   try{ idbStoryCache.set(id,JSON.parse(JSON.stringify(s))); }catch(e){}
   const record=serializeStoryRecord(Object.assign({},s,{storyId:id}));
-  idbPut(IDB_STORY_STORE,id,record).catch(e=>{
+  if(opts && opts.sync) writeEmergencyCopy(id,record);
+  idbPut(IDB_STORY_STORE,id,record).then(()=>{
+    clearEmergencyCopy(id,record.updatedAt);
+  }).catch(e=>{
     console.warn("[IndexedDB]",e);
-    showSaveInd("⚠ lỗi IndexedDB","warn");
+    const ok=writeEmergencyCopy(id,record);
+    showSaveInd(ok?"⚠ IndexedDB lỗi — đã lưu dự phòng":"❌ Không lưu được — hãy Xuất JSON ngay","warn");
   });
 }
 async function loadStoryStateFromDiskAsync(id){
   if(!id) return null;
   if(idbStoryCache.has(id)) return idbStoryCache.get(id);
   try{
-    const record=await idbGet(IDB_STORY_STORE,id);
+    let record=await idbGet(IDB_STORY_STORE,id);
+    const em=readEmergencyRecord(id);
+    if(em && (!record || (record.updatedAt||0) < em.t)){ record=em.record; console.info("[v11] khôi phục từ bản lưu khẩn cấp"); }
     const s=hydrateFromRecord(record);
     if(s){ idbStoryCache.set(id,s); return JSON.parse(JSON.stringify(s)); }
   }catch(e){ console.warn("[IndexedDB read]",e); }
-  /* Chỉ dùng localStorage như migration fallback; dữ liệu mới không ghi vào đây. */
+  try{ const em=readEmergencyRecord(id); if(em){ const s=hydrateFromRecord(em.record); if(s){ idbStoryCache.set(id,s); return JSON.parse(JSON.stringify(s)); } } }catch(e){}
+  /* localStorage bản cũ (v9) dùng như migration fallback. */
   try{
     const raw=localStorage.getItem(STORY_KEY_PREFIX+id);
     if(raw){ const s=JSON.parse(raw); saveStoryStateToDisk(id,s); return s; }
@@ -1288,7 +1318,7 @@ async function loadStoryStateFromDiskAsync(id){
 function loadStoryStateFromDisk(id){ return idbStoryCache.get(id)||null; }
 function removeStoryFromDisk(id){
   idbStoryCache.delete(id); idbDelete(IDB_STORY_STORE,id).catch(()=>{});
-  try{ localStorage.removeItem(STORY_KEY_PREFIX+id); }catch(e){}
+  try{ localStorage.removeItem(STORY_KEY_PREFIX+id); localStorage.removeItem(EMERGENCY_PREFIX+id); }catch(e){}
 }
 async function initIndexedDBStorage(){
   try{
@@ -1296,7 +1326,9 @@ async function initIndexedDBStorage(){
     await loadStoriesIndexAsync();
     for(const item of storiesIndex){
       try{
-        const record=await idbGet(IDB_STORY_STORE,item.id);
+        let record=await idbGet(IDB_STORY_STORE,item.id);
+        const em=readEmergencyRecord(item.id);
+        if(em && (!record || (record.updatedAt||0) < em.t)){ record=em.record; console.info("[v11] khôi phục từ bản lưu khẩn cấp:",item.id); }
         const s=hydrateFromRecord(record);
         if(s) idbStoryCache.set(item.id,s);
       }catch(e){}
@@ -1536,7 +1568,8 @@ function showSaveInd(text, kind){
 }
 
 
-function persistNow(){
+function persistNow(opts){
+  persistPending=false;
   showSaveInd("💾 đang lưu...", "saving");
   if(state.storyId){
     const blob={};
@@ -1544,7 +1577,7 @@ function persistNow(){
     GLOBAL_KEYS.forEach(k=>{ blob[k]=state[k]; });
     blob.apiSettings=state.apiSettings;
     blob.storyMetaData=buildStoryMetaData(state);
-    saveStoryStateToDisk(state.storyId,blob);
+    saveStoryStateToDisk(state.storyId,blob,opts);
     const idx=storiesIndex.findIndex(x=>x.id===state.storyId);
     if(idx>=0){
       storiesIndex[idx].name=state.storyName||storiesIndex[idx].name;
@@ -1556,11 +1589,22 @@ function persistNow(){
   updateStorageBar();
   showSaveInd("✓ Đã lưu","saved");
 }
+let persistPending=false;
 function persist(){
+  persistPending=true;
   showSaveInd("⏳ chờ lưu...","saving");
   clearTimeout(persistTimer);
   persistTimer=setTimeout(()=>persistNow(),1750);
 }
+/* v11: không đợi debounce 1,75s khi người dùng rời trang / khoá màn hình / chuyển app. */
+function flushPersist(){
+  if(!persistPending) return;
+  clearTimeout(persistTimer);
+  persistNow({sync:true});
+}
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") flushPersist(); });
+window.addEventListener("pagehide",flushPersist);
+window.addEventListener("beforeunload",flushPersist);
 function loadGlobalSettings(){
   try{
     const raw = localStorage.getItem(GLOBAL_KEY);
@@ -1782,6 +1826,15 @@ async function deleteStory(storyId){
   const ok = await showConfirm("Xoá vĩnh viễn \""+(meta?meta.name:"?")+"\"?", {okText:"Xoá", danger:true});
   if(!ok) return;
   removeStoryFromDisk(storyId);
+  /* v10.2.4: nếu truyện này đang có job nền chờ đồng bộ, huỷ theo dõi luôn — nếu không, job cũ
+     hoàn tất sau này sẽ bị merge nhầm vào bất kỳ truyện nào đang mở lúc đó (xem mergeBackgroundChapter). */
+  try{
+    const pending = normalizeBgRecord(localStorage.getItem(BG_JOB_KEY));
+    if(pending && pending.storyId === storyId){
+      if(bgPollTimer){ clearInterval(bgPollTimer); bgPollTimer=null; }
+      localStorage.removeItem(BG_JOB_KEY);
+    }
+  }catch(e){}
   storiesIndex = storiesIndex.filter(x=>x.id!==storyId);
   saveStoriesIndex();
   if(storyId === currentStoryId){
@@ -2061,6 +2114,20 @@ stopBtn.addEventListener("click", stopGeneration);
 /* ========== QUEUE (parallel + sequential) ========== */
 const taskQueue = [];
 let queueRunning = false;
+/* v11.1: hậu xử lý theo pha. Pha 1: [tóm tắt → gợi ý chương sau] ∥ Nhân vật ∥ Thế giới ∥ rà chính tả.
+   Pha 2: Status ∥ Memory (đọc state đã có NV/Thế giới mới). Các hàm merge vào state ĐỒNG BỘ sau mỗi await
+   nên chạy song song không ghi đè nhau. Tắt "Song song" trong cài đặt để quay về chế độ tuần tự cũ. */
+async function runFastPostTasks(d, extra){
+  const safe = (fn) => Promise.resolve().then(()=> fn ? fn() : null).catch(e=>{ console.warn("[post]", e); });
+  await Promise.allSettled([
+    safe(async ()=>{ if(d.summary) await d.summary(); if(d.nextHint) await d.nextHint(); }),
+    safe(d.char), safe(d.world), extra
+  ]);
+  await Promise.allSettled([ safe(d.status), safe(d.memory) ]);
+  for(const l of ["scene","continuity","checkpoint","pacing"]){
+    if(d[l]) { try{ await enqueueTask(d[l], l, {serial:true}); }catch(e){} }
+  }
+}
 function enqueueTask(fn, label, opts){
   opts=opts||{};
   if(SKIPPED_TASKS.has(label)) return Promise.resolve();
@@ -2090,7 +2157,7 @@ async function runQueue(){
         const result = await task.fn();
         task.resolve(result);
       }catch(e){ task.reject(e); }
-      if(state.queueEnabled) await sleep(600);
+      if(state.queueEnabled) await sleep(250);
     }
   }
   queueRunning = false;
@@ -2665,9 +2732,24 @@ function buildContextBlock(){
   const descLevel = state.descriptionLevel || "balanced";
   lines.push("MỨC MIÊU TẢ: " + (DESCRIPTION_PROMPTS[descLevel] || DESCRIPTION_PROMPTS.balanced));
   if(state.mature) lines.push("MỨC 18+: " + (EXPLICIT_PROMPTS[state.explicitLevel] || EXPLICIT_PROMPTS.sensual));
+  if(state.mature) lines.push(ageGuardPrompt(state));
   return lines.filter(Boolean).join("\n\n");
 }
 
+
+/* ========== v11 AGE GUARD ========== */
+function parseAgeNum(a){ const m=String(a==null?"":a).match(/\d{1,4}/); return m?parseInt(m[0],10):null; }
+function underageNames(s){
+  const out=[]; const chk=(n,a)=>{ const v=parseAgeNum(a); if(n && v!==null && v<18) out.push(String(n)); };
+  chk(s.mainCharProfile&&s.mainCharProfile.name, s.mainCharProfile&&s.mainCharProfile.age);
+  (s.characters||[]).forEach(c=>chk(c&&c.name,c&&c.age));
+  return out;
+}
+function ageGuardPrompt(s){
+  const u=underageNames(s);
+  return "RÀO CHẮN TUỔI (bắt buộc): chỉ nhân vật đã trưởng thành (từ 18 tuổi trở lên) mới được tham gia cảnh tình dục/khiêu dâm. Tuyệt đối không viết nội dung tình dục với nhân vật dưới 18 tuổi hoặc được mô tả như trẻ em."
+    + (u.length? (" Nhân vật KHÔNG được xuất hiện trong cảnh 18+: "+u.join(", ")+".") : "");
+}
 
 /* ========== CHAPTER VERSIONS ========== */
 function pushChapterVersion(idx, note){
@@ -4778,10 +4860,20 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     const promptTokens = estimateTokens(prompt);
     if(promptTokens > 90000) setStatus("⚠ Prompt ~" + promptTokens + " token — có thể vượt context.", true);
 
-    const onChunk = streamingTarget ? (delta, full) => {
+    /* v11.1: giới hạn tần suất vẽ lại khung chữ (~8 lần/giây) thay vì mỗi chunk — vẽ lại toàn văn
+       + regex trên chuỗi dài mỗi chunk làm iPhone giật và chậm dần theo độ dài chương. */
+    let streamLastAt = 0, streamTimer = null, streamLatest = "";
+    const renderStream = (full) => {
       const bodyMatch = full.match(/NỘI DUNG:\s*([\s\S]*)/i);
       const displayText = bodyMatch ? bodyMatch[1] : "";
       if(displayText){ chapterTextEl.textContent = displayText; saveDraftProgress(displayText, { mode: "new", isNsfw: usingNsfw }); }
+    };
+    const cancelStream = () => { if(streamTimer){ clearTimeout(streamTimer); streamTimer = null; } };
+    const onChunk = streamingTarget ? (delta, full) => {
+      streamLatest = full;
+      const now = Date.now();
+      if(now - streamLastAt >= 120){ streamLastAt = now; cancelStream(); renderStream(full); }
+      else if(!streamTimer){ streamTimer = setTimeout(()=>{ streamTimer = null; streamLastAt = Date.now(); renderStream(streamLatest); }, 120); }
     } : null;
 
     let firstResult = await callAI(prompt, {
@@ -4792,6 +4884,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     });
     let rawText = firstResult.text;
     let finishReason = firstResult.finishReason;
+    cancelStream(); if(streamingTarget && streamLatest) renderStream(streamLatest);
     chapterTextEl.classList.remove("streaming");
 
     if(detectNonVietnamese(rawText)){
@@ -4820,13 +4913,13 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     };
 
     await autoContinueUntilDone(chapterObj, chapterNumber, targetModel, usingNsfw, onChunk);
+    cancelStream();
     text = chapterObj.text;
 
-    if(state.spellCheckEnabled && text){
-      setStatus("Đang rà chính tả + xưng hô...", true);
-      const fixed = await polishVietnamese(text, { modelOverride: state.model });
-      if(fixed && fixed !== text){ text = fixed; chapterObj.polished = true; }
-    }
+    /* v11.1: rà chính tả KHÔNG còn chặn việc lưu chương. Chương được lưu + hiện ngay bằng bản gốc;
+       bước rà chạy song song với các tác vụ hậu xử lý (tóm tắt, NV, thế giới...) rồi thay thế
+       nếu nội dung chưa bị ai sửa trong lúc đó. Tổng thời gian = max(rà, hậu xử lý) thay vì cộng dồn. */
+    const rawForPolish = text;
     chapterObj.text = text;
     chapterObj.wordCount = countWords(text);
 
@@ -4853,7 +4946,25 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
        của Ch1 vẫn chưa cập nhật xong. */
     const cn = chapterNumber;
     const postTasks = [];
-    postTasks.push(enqueueTask(async ()=>{
+    let polishPromise = Promise.resolve();
+    if(state.spellCheckEnabled && rawForPolish){
+      polishPromise = (async ()=>{
+        try{
+          const fixed = await polishVietnamese(rawForPolish, { modelOverride: state.model });
+          const stillThere = state.chapters.indexOf(chapterObj) !== -1;
+          const userTyping = document.activeElement === chapterTextEl;
+          if(fixed && fixed !== rawForPolish && stillThere && chapterObj.text === rawForPolish && !userTyping){
+            chapterObj.text = fixed; chapterObj.polished = true; chapterObj.wordCount = countWords(fixed);
+            persist(); renderChapterNav(); refreshStatBar();
+            if(state.chapters[state.currentChapterIndex] === chapterObj) renderCurrentChapter();
+          }
+        }catch(e){ console.warn("[Polish async]", e); }
+      })();
+    }
+    const fastPost = state.parallelEnabled !== false;
+    const deferredPost = {};
+    const sched = (fn, label, opts) => { if(!fastPost) return enqueueTask(fn, label, opts); deferredPost[label] = fn; return null; };
+    postTasks.push(sched(async ()=>{
       if(state.autoSummaryEnabled && text){
         try{
           const sum = await generateChapterSummary(text, cn, true);
@@ -4861,7 +4972,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
         }catch(e){}
       }
     }, "summary", {serial:true}));
-    postTasks.push(enqueueTask(async ()=>{
+    postTasks.push(sched(async ()=>{
       if(text){
         try{
           const hint = await generateNextChapterHint(text, chapterObj.summary, cn);
@@ -4873,43 +4984,44 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
         }catch(e){}
       }
     }, "nextHint", {serial:true}));
-    postTasks.push(enqueueTask(async ()=>{
+    postTasks.push(sched(async ()=>{
       const r = await updateCharactersIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Cập nhật NV ch" + cn + " thất bại — bấm Quét toàn truyện khi rảnh.", false);
       markAutoUpdateIssue(cn, "NV", !r || !r.ok);
     }, "char", {serial:true}));
-    postTasks.push(enqueueTask(async ()=>{
+    postTasks.push(sched(async ()=>{
       const r = await updateWorldIncremental(text, cn, true);
       markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok);
     }, "world", {serial:true}));
-    postTasks.push(enqueueTask(async ()=>{
+    postTasks.push(sched(async ()=>{
       const r = await updateCurrentStatusIncremental(text, cn, true);
       if(r && !r.ok) setStatus("⚠ Current Status ch" + cn + " lỗi — bấm Quét toàn bộ Status.", false);
       else if(cn % 5 === 0) setStatus("✓ Bộ nhớ đã cập nhật tới ch" + cn + ". Nên rescan NV định kỳ.", false);
       markAutoUpdateIssue(cn, "Status", !r || !r.ok);
     }, "status", {serial:true}));
-    postTasks.push(enqueueTask(async ()=>{
+    postTasks.push(sched(async ()=>{
       const r = await updateLongMemoryIncremental(text, cn, true);
       markAutoUpdateIssue(cn, "Memory", !r || !r.ok);
     }, "memory", {serial:true}));
-    postTasks.push(enqueueTask(async ()=>{
+    postTasks.push(sched(async ()=>{
       /* Scene detection nếu mature */
       if(state.mature && state.autoSceneEnabled){
         try{ await scanScenesForChapter(cn); }catch(e){}
       }
     }, "scene", {serial:true}));
-    postTasks.push(enqueueTask(async ()=>{
+    postTasks.push(sched(async ()=>{
       const w = await runContinuityCheck(text, cn, buildStoryBibleSummary() + "\n" + characterSummaryForPrompt(relevantCharacters(20)), true);
       if(w && w.length){
         chapterObj.continuityWarnings = (chapterObj.continuityWarnings || []).concat(w);
         persist(); renderChapterNav(); renderCurrentChapter();
       }
     }, "continuity", {serial:true}));
-    postTasks.push(enqueueTask(()=> checkCheckpoint(cn), "checkpoint", {serial:true}));
-    postTasks.push(enqueueTask(()=> checkPacingGuard(false), "pacing", {serial:true}));
+    postTasks.push(sched(()=> checkCheckpoint(cn), "checkpoint", {serial:true}));
+    postTasks.push(sched(()=> checkPacingGuard(false), "pacing", {serial:true}));
     // Chỉ sau khi summary + Character + World + Status + Memory + Scene +
     // Continuity hoàn tất mới đóng snapshot chính thức của chương.
-    await Promise.allSettled(postTasks);
+    if(fastPost) await runFastPostTasks(deferredPost, polishPromise);
+    else { await Promise.allSettled(postTasks); await polishPromise; }
     try{ captureChapterSnapshot(cn); }catch(e){}
 
 
@@ -6045,6 +6157,16 @@ async function mergeBackgroundChapter(statusData,record){
   if(!statusData)return;
   const incoming=statusData.storyState;
   if(!incoming||!Array.isArray(incoming.chapters))return;
+  /* v10.2.4: job nền có thể đã được tạo cho MỘT TRUYỆN KHÁC (đã bị xoá, hoặc người dùng đã
+     chuyển/viết lại truyện mới trong lúc job vẫn chạy trên server). Trước đây hàm này merge
+     thẳng vào state hiện tại bất kể storyId, khiến timeline/NV/threads của truyện cũ "sống lại"
+     trong truyện mới dù đã xoá truyện cũ. Chỉ merge nếu job thực sự thuộc truyện đang mở. */
+  const jobStoryId = record && record.storyId;
+  if(jobStoryId && state.storyId && jobStoryId !== state.storyId){
+    const stillExists = storiesIndex.some(x=>x.id===jobStoryId);
+    setStatus("⚠ Job nền thuộc truyện khác (" + (stillExists ? "đã chuyển sang truyện khác" : "truyện đó đã bị xoá") + ") — đã BỎ QUA, không hợp nhất vào truyện đang mở.", false);
+    return;
+  }
   const base=Number(statusData.baseChapterCount!=null?statusData.baseChapterCount:(record&&record.baseChapterCount)||0);
   const localCount=state.chapters.length;
   const serverNew=incoming.chapters.slice(Math.min(base,incoming.chapters.length));
@@ -6122,6 +6244,8 @@ async function bootV102(){
     apiStatus.className="api-status bad";
   }
   updateV102Estimator();
+  try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(e){}
+  try{ const u=underageNames(state); if(state.mature && u.length) setStatus("⚠ Nhân vật dưới 18 tuổi ("+u.join(", ")+") sẽ bị cấm xuất hiện trong cảnh 18+. Kiểm tra lại trường Tuổi nếu là nhầm lẫn.", true); }catch(e){}
 }
 bootV102().catch(err=>{
   console.error(err);
@@ -6253,6 +6377,16 @@ function renderCurrentChapter(){
 }
 
 chapterSearch.addEventListener("input", renderChapterNav);
+
+/* v11: móc kiểm thử — chỉ bật khi trang được nạp với window.__XTA_TEST__ = true (không ảnh hưởng người dùng thường). */
+if(window.__XTA_TEST__){
+  window.__xta = {
+    get state(){ return state; },
+    persist, persistNow, flushPersist, buildContextBlock, underageNames, ageGuardPrompt,
+    writeEmergencyCopy, readEmergencyRecord, serializeStoryRecord, removeStoryFromDisk,
+    setIdbPut(fn){ idbPut = fn; }, getIdbPut(){ return idbPut; }
+  };
+}
 })();
 </script>
 </body>

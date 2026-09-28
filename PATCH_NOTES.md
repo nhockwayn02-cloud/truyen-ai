@@ -1,3 +1,35 @@
+# v11.1.0 — Tăng tốc
+
+| Hạng mục | File | Nội dung |
+|---|---|---|
+| Rà chính tả không chặn lưu | `index.html` | `polishPromise` chạy song song hậu xử lý; chỉ thay văn bản khi `chapterObj.text` chưa đổi và không đang gõ |
+| Hậu xử lý theo pha | `index.html` | `runFastPostTasks()`; nhánh tuần tự cũ giữ nguyên khi tắt "Song song" |
+| Streaming throttle | `index.html` | `renderStream` giới hạn 120ms |
+| Nghỉ hàng đợi | `index.html` | `sleep(600)` → `sleep(250)` |
+| Lô trích xuất song song | `write-chapter-background.js` | `runPool()` + `EXTRACT_CONCURRENCY` cho NV/Thế giới |
+| Tóm tắt song song | `write-chapter-background.js` | `summaryP` chạy cùng NV/Thế giới; "Gợi ý chương sau" đợi ở pha 2 |
+| Test | `tests/` | e2e 21, unit 12, integration worker |
+
+**Đánh đổi cần biết:** Status/Memory vẫn đọc state sau NV/Thế giới (pha 2). Tóm tắt/NV/Thế giới giờ chạy khi bản rà chính tả chưa xong nên dùng văn bản gốc (lỗi chính tả không ảnh hưởng nội dung trích xuất). Chưa kiểm thử với model/Netlify/iOS thật.
+
+---
+
+# v11.0.0 — Tóm tắt thay đổi
+
+| Hạng mục | File | Nội dung |
+|---|---|---|
+| Lưu ngay khi rời trang | `index.html` | `flushPersist()` gắn vào `visibilitychange`, `pagehide`, `beforeunload` |
+| Bản lưu khẩn cấp | `index.html` | `writeEmergencyCopy / clearEmergencyCopy / readEmergencyRecord`; khôi phục ở `initIndexedDBStorage` và `loadStoryStateFromDiskAsync` |
+| Dự phòng khi IndexedDB lỗi | `index.html` | `saveStoryStateToDisk` ghi localStorage khi `idbPut` reject (trước đây chỉ hiện toast) |
+| Lưu trữ bền | `index.html` | `navigator.storage.persist()` lúc khởi động |
+| Rào chắn tuổi 18+ | `index.html`, `write-chapter-background.js` | `underageNames()`, `ageGuardPrompt()` chèn vào prompt khi bật 18+; cảnh báo khi mở truyện |
+| Đồng bộ phiên bản | `package.json`, `index.html` | 11.0.0 (trước đó package.json còn ghi 10.2.0, giao diện ghi 10.2.1) |
+| Bộ test | `tests/` | `e2e.py` (17), `worker.test.js` (11) |
+
+**Chưa kiểm thử được trong môi trường này:** chạy thật trên Netlify (Background Functions, Blobs), gọi model thật (OpenRouter), và iOS Safari thật. Test dùng API giả và Chromium.
+
+---
+
 # Patch v10.2.3 — Sửa gốc: "Viết chương nền" không tự chuyển NSFW + hết giờ hàng loạt
 
 **Vấn đề báo cáo:** khi bấm "☁ Viết chương nền", (1) chương có cảnh nóng vẫn dùng model

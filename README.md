@@ -1,4 +1,4 @@
-# Xưởng Truyện AI Pro Max v10.2 — GitHub + Netlify + iPhone
+# Xưởng Truyện AI Pro Max v11.1 — GitHub + Netlify + iPhone
 
 Bản v9 giữ nguyên kiến trúc **1 file HTML + 3 Netlify Functions**, không cần React/Docker/PostgreSQL, phù hợp chạy bằng GitHub Pages/Netlify và sử dụng trên iPhone.
 
@@ -236,3 +236,41 @@ Bản v10.2 tái cấu trúc giao diện và lưu trữ:
 ## v10.2.1 Layout
 - Cột Viết: Công Cụ Sáng Tác, Quản Lý Dữ Liệu, điều hướng chương, toolbar tách/gộp/chèn/tóm tắt/viết lại, editor và hậu kỳ iOS.
 - Cột Thiết lập: API/Model và toàn bộ Bible/nhân vật/địa điểm/status/memory/lorebook/chỉ đạo/quy tắc/18+.
+
+
+## v11 — An toàn dữ liệu + rào chắn tuổi
+
+**Lưu trữ (sửa nguy cơ mất truyện trên iPhone)**
+- Trước đây auto-save có độ trễ 1,75 giây và không có bước lưu khi rời trang: khoá màn hình / chuyển app trong khoảng đó là mất phần vừa sửa. Nay `visibilitychange(hidden)`, `pagehide` và `beforeunload` **lưu ngay lập tức**.
+- **Bản lưu khẩn cấp** trong `localStorage` (ghi đồng bộ khi ẩn tab hoặc khi IndexedDB báo lỗi). Khi IndexedDB xác nhận đã ghi xong, bản khẩn cấp tự xoá. Nếu app bị đóng trước khi IndexedDB kịp xong, lần mở sau sẽ **tự khôi phục** từ bản khẩn cấp nếu nó mới hơn.
+- Thông báo rõ khi không lưu được ở đâu cả (yêu cầu Xuất JSON ngay).
+- Xin quyền lưu trữ bền (`navigator.storage.persist()`) để trình duyệt ít xoá dữ liệu khi thiếu dung lượng.
+
+**Rào chắn tuổi cho cảnh 18+ (client và worker nền dùng chung)**
+- Khi bật 18+, prompt luôn có quy tắc: chỉ nhân vật từ 18 tuổi trở lên được tham gia cảnh tình dục.
+- Nhân vật có trường **Tuổi < 18** được liệt kê tên trong prompt là *không được xuất hiện* trong cảnh 18+, và app hiện cảnh báo khi mở truyện. Tuổi không phải số (ví dụ "không rõ") hoặc số lớn (nhân vật fantasy 1000 tuổi) không bị ảnh hưởng.
+
+**Kiểm thử**
+- `python3 tests/e2e.py` — 17 kiểm tra trên Chromium headless (tải trang, IndexedDB, flush khi ẩn tab, khôi phục khẩn cấp, IDB lỗi, viết chương với API giả, lưu bền sau reload).
+- `node tests/worker.test.js` — 11 kiểm tra đơn vị cho worker (rào chắn tuổi, parse/cứu JSON bị cắt).
+- Móc kiểm thử `window.__xta` chỉ tồn tại khi trang được nạp với `window.__XTA_TEST__ = true`.
+
+
+## v11.1 — Tăng tốc viết truyện
+
+Không đổi prompt, không đổi số lệnh gọi AI — chỉ bỏ thời gian chờ thừa.
+
+**Viết trên trình duyệt**
+- **Rà chính tả chạy nền:** trước đây bước rà (viết lại cả chương) chặn việc lưu và hiện chương. Nay chương được lưu ngay bằng bản gốc; bước rà chạy song song với hậu xử lý, rồi thay văn bản nếu chương chưa bị sửa tay và bạn không đang gõ trong khung chữ.
+- **Hậu xử lý theo pha:** pha 1 chạy song song `[Tóm tắt → Gợi ý chương sau] ∥ Nhân vật ∥ Thế giới ∥ Rà chính tả`; pha 2 chạy `Status ∥ Memory` (đọc state đã có NV/Thế giới mới). Trước đây 6 tác vụ chạy nối đuôi, mỗi bước nghỉ thêm 0,6 giây.
+- **Streaming nhẹ hơn:** khung chữ vẽ lại tối đa ~8 lần/giây thay vì mỗi chunk. Chương càng dài, bản cũ càng giật trên iPhone.
+- Công tắc **Song song** trong cài đặt điều khiển chế độ này; tắt đi là quay về chạy tuần tự như v11. Nghỉ giữa các tác vụ tuần tự giảm 0,6s → 0,25s.
+
+**Chương nền (Netlify worker)**
+- Các lô trích xuất NV / Thế giới (thường 7–8 lô/chương) chạy **3 lô cùng lúc** (biến môi trường `EXTRACT_CONCURRENCY`, mặc định 3, tối đa 6; đặt 1 để quay về tuần tự). Merge theo tên chuẩn hóa nên không tạo NV/địa điểm trùng.
+- Tóm tắt chạy song song với NV/Thế giới thay vì chặn trước. Việc này cũng giảm nguy cơ "hết thời gian" ở Status/Memory.
+- Nếu API của bạn hay trả lỗi 429 (giới hạn tốc độ), đặt `EXTRACT_CONCURRENCY=2` hoặc `1`.
+
+**Số đo (API giả có độ trễ, cùng 9 lệnh gọi AI):** 14,3s → 6,1s cho một chương. Worker giả lập 8 lô NV: 3,3s → 1,8s. Thời gian thật phụ thuộc model của bạn; phần thời gian sinh văn bản chính (streaming) không đổi vì do model quyết định.
+
+**Kiểm thử:** `python3 tests/e2e.py` (21), `node tests/worker.test.js` (12), `node tests/worker.integration.js` (chạy toàn bộ handler với Blobs + API giả; thử `EXTRACT_CONCURRENCY=1` và mặc định để so sánh).
