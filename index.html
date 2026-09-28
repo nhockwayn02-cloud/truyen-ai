@@ -4900,6 +4900,14 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     setStatus("Cấu hình endpoint + key trước.", false); return;
   }
   const isRegen = typeof regenIndex === "number";
+  if(!isRegen && state.chapters.length===0 && (
+    (state.mainPlot && state.mainPlot.trim()) ||
+    (state.characters && state.characters.length>0) ||
+    (state.mainCharProfile && state.mainCharProfile.name && state.mainCharProfile.name.trim())
+  )){
+    const ok = confirm("Truyện này chưa có chương nào trong bộ nhớ hiện tại, nhưng lại đã có nhân vật/cốt truyện — có thể do vừa Lên JSON chưa tải kịp hoặc mở nhầm truyện.\n\nBấm OK để VẪN viết Chương 1 (nếu bạn chắc đây đúng là truyện mới).\nBấm Hủy để dừng lại và kiểm tra trước.");
+    if(!ok){ return; }
+  }
   const basePick = pickWritingModel(!!forceNsfw);
   if(!basePick.model){ setStatus("Chưa cấu hình model.", false); return; }
 
@@ -5847,7 +5855,7 @@ $ID("jsonFileInput").addEventListener("change", (e)=>{
   const file = e.target.files[0];
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = ()=>{
+  reader.onload = async ()=>{
     try{
       const parsed = JSON.parse(reader.result);
       if(!parsed || typeof parsed !== "object") throw new Error("JSON không đúng.");
@@ -5882,8 +5890,11 @@ $ID("jsonFileInput").addEventListener("change", (e)=>{
       currentStoryId = storyBlob.storyId;
       localStorage.setItem(LAST_STORY_KEY, currentStoryId);
       openCharDetails.clear();
-      loadCurrentStoryIntoState(); hydrateFormFromState(); renderAll(); renderStoryTabs();
-      setStatus("Đã tải JSON.", false);
+      // V12.9: BẮT BUỘC đợi state.chapters được nạp xong trước khi vẽ lại/để người dùng
+      // thao tác tiếp — nếu không đợi, bấm "Tạo Chương Mới" ngay sau import có thể đọc
+      // phải state.chapters còn rỗng (chưa kịp gán) và ghi đè thành "chương 1".
+      await loadCurrentStoryIntoState(); hydrateFormFromState(); renderAll(); renderStoryTabs();
+      setStatus("Đã tải JSON — " + (state.chapters ? state.chapters.length : 0) + " chương.", false);
     }catch(err){ setStatus("JSON lỗi: " + err.message, false); }
   };
   reader.readAsText(file);
@@ -6288,6 +6299,14 @@ async function startBackgroundWrite(){
   if(state.storyId && state.chapters.length>=1){
     const old=localStorage.getItem(BG_JOB_KEY);
     if(old){setBgStatus("⚠ Đã có job nền đang theo dõi. Hãy chờ job đó xong trước khi tạo job mới.",true);return;}
+  }
+  if(state.chapters.length===0 && (
+    (state.mainPlot && state.mainPlot.trim()) ||
+    (state.characters && state.characters.length>0) ||
+    (state.mainCharProfile && state.mainCharProfile.name && state.mainCharProfile.name.trim())
+  )){
+    const ok = confirm("Truyện này chưa có chương nào trong bộ nhớ hiện tại, nhưng lại đã có nhân vật/cốt truyện — có thể do vừa Lên JSON chưa tải kịp hoặc mở nhầm truyện.\n\nBấm OK để VẪN gửi job viết Chương 1 (nếu bạn chắc đây đúng là truyện mới).\nBấm Hủy để dừng lại và kiểm tra trước.");
+    if(!ok){ return; }
   }
   const storyBlob={};
   Object.keys(state).forEach(k=>{if(!GLOBAL_KEYS.includes(k))storyBlob[k]=state[k];});
