@@ -1,3 +1,7 @@
+# V12 — Writing Engine Upgrade
+
+V12 keeps the V11.1 story-state pipeline and upgrades prose generation using the smoother V8-style path: temperature 0.82, no repetition penalties, prose-only output, and continuation style-lock.
+
 # Xưởng Truyện AI Pro Max v11.1 — GitHub + Netlify + iPhone
 
 Bản v9 giữ nguyên kiến trúc **1 file HTML + 3 Netlify Functions**, không cần React/Docker/PostgreSQL, phù hợp chạy bằng GitHub Pages/Netlify và sử dụng trên iPhone.
