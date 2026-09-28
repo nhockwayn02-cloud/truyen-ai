@@ -321,6 +321,20 @@ const EROTIC_STYLE_PROMPT = [
   "- 100% tiếng Việt có dấu. Không meta, không spoiler chương sau."
 ].join("\n");
 
+// v11 — Rào chắn tuổi (đồng bộ nguyên văn với index.html).
+function parseAgeNum(a) { const m = String(a == null ? "" : a).match(/\d{1,4}/); return m ? parseInt(m[0], 10) : null; }
+function underageNames(s) {
+  const out = []; const chk = (n, a) => { const v = parseAgeNum(a); if (n && v !== null && v < 18) out.push(String(n)); };
+  chk(s.mainCharProfile && s.mainCharProfile.name, s.mainCharProfile && s.mainCharProfile.age);
+  (s.characters || []).forEach(c => chk(c && c.name, c && c.age));
+  return out;
+}
+function ageGuardPrompt(s) {
+  const u = underageNames(s);
+  return "RÀO CHẮN TUỔI (bắt buộc): chỉ nhân vật đã trưởng thành (từ 18 tuổi trở lên) mới được tham gia cảnh tình dục/khiêu dâm. Tuyệt đối không viết nội dung tình dục với nhân vật dưới 18 tuổi hoặc được mô tả như trẻ em."
+    + (u.length ? (" Nhân vật KHÔNG được xuất hiện trong cảnh 18+: " + u.join(", ") + ".") : "");
+}
+
 const EXPLICIT_PROMPTS = {
   subtle: "CẢNH 18+: Nhẹ nhàng — fade-to-black sau khi hôn, gợi ý chứ không tả. Cảm xúc chiếm ưu thế.",
   sensual: "CẢNH 18+: Gợi cảm — tả cảm xúc, hơi thở, ánh mắt, da chạm da; hạn chế tả bộ phận sinh dục chi tiết. Vẫn giàu sức gợi.",
@@ -640,6 +654,7 @@ async function generateOneChapter(job) {
     buildContext(state), recentContext(chapters),
     isNsfw ? EROTIC_STYLE_PROMPT : "",
     isNsfw ? ("MỨC TRƯỞNG THÀNH: " + (EXPLICIT_PROMPTS[state.explicitLevel] || "")) : "",
+    isNsfw ? ageGuardPrompt(state) : "",
     "NHẮC LẠI (bắt buộc, ưu tiên cao nhất — đọc kỹ trước khi viết):\n" +
       "- Chỉ 1–3 SỰ KIỆN CHÍNH trong chương này, không nhồi thêm biến cố.\n" +
       "- GIỚI HẠN CỨNG: TỐI ĐA 4 NHÂN VẬT CÓ TÊN RIÊNG xuất hiện trực tiếp (có thoại/hành động cụ thể) trong CẢ CHƯƠNG, tính cả nhân vật chính. Người qua đường/đám đông không tên không tính. Nếu là chương mở đầu, KHÔNG dồn hết dàn nhân vật vào chương 1 — chỉ ai trực tiếp tham gia 1-3 sự kiện chính của chương này, người còn lại để dành cho chương sau.\n" +
@@ -767,13 +782,24 @@ function mergeCharacter(state, u, chapterNumber) {
   return { created, updated: true };
 }
 
+// v11.1 — chạy các lô trích xuất với độ song song giới hạn (mặc định 3). Merge vào state là ĐỒNG BỘ sau mỗi await
+// nên an toàn; mergeCharacter/applyWorld gộp theo tên chuẩn hóa nên lô chạy song song không tạo trùng.
+const EXTRACT_CONCURRENCY = Math.max(1, Math.min(6, parseInt(process.env.EXTRACT_CONCURRENCY, 10) || 3));
+async function runPool(count, worker, limit = EXTRACT_CONCURRENCY) {
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, count) }, async () => {
+    while (true) { const i = next++; if (i >= count) return; await worker(i); }
+  });
+  await Promise.all(runners);
+}
+
 async function updateCharacters(job, chapter, n, state) {
   if (!Array.isArray(state.characters)) state.characters = [];
   const chunks = chunkText(chapter.text, 9000, 700);
   const res = { ok: true, chunks: chunks.length, nNew: 0, nUpdated: 0, failed: 0, dropped: 0, cut: 0, notes: [], problems: [] };
-  for (let i = 0; i < chunks.length; i++) {
+  await runPool(chunks.length, async (i) => {
     const tag = `NV lô ${i + 1}/${chunks.length}`;
-    if (timeLeft() < 150000) { res.failed++; res.notes.push(`${tag}: BỎ QUA vì sắp hết thời gian job (dành phần còn lại cho Status/Memory)`); continue; }
+    if (timeLeft() < 150000) { res.failed++; res.notes.push(`${tag}: BỎ QUA vì sắp hết thời gian job (dành phần còn lại cho Status/Memory)`); return; }
     const prompt = [
       `CẬP NHẬT NHÂN VẬT — CHƯƠNG ${n}, PHẦN ${i + 1}/${chunks.length}.`,
       "Chỉ liệt kê nhân vật thực sự xuất hiện hoặc được nhắc tới có ý nghĩa trong PHẦN này. Không bịa.",
@@ -788,7 +814,7 @@ async function updateCharacters(job, chapter, n, state) {
       if (!parsed.valid) {
         res.failed++;
         res.notes.push(`${tag}: KHÔNG đọc được JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`);
-        continue;
+        return;
       }
       let created = 0, upd = 0, merr = 0;
       parsed.items.forEach(u => {
@@ -799,7 +825,7 @@ async function updateCharacters(job, chapter, n, state) {
       if (r.finishReason === "length" || parsed.truncated) res.cut++;
       res.notes.push(`${tag}: ${fin(r)}, parse=${parsed.method || "?"}, ${parsed.items.length} NV (+${created} mới, ${upd} cập nhật)${parsed.dropped ? `, ${parsed.dropped} object hỏng bị bỏ` : ""}${merr ? `, ${merr} lỗi merge` : ""}`);
     } catch (e) { res.failed++; res.notes.push(`${tag}: LỖI gọi model — ${sampleOf(e.message, 160)}`); }
-  }
+  });
   res.ok = res.failed < chunks.length;
   if (res.failed) res.problems.push(`NV: ${res.failed}/${chunks.length} lô không đọc được`);
   if (res.cut) res.problems.push(`NV: model bị cắt cụt ở ${res.cut} lô (có thể thiếu NV cuối lô)`);
@@ -847,9 +873,9 @@ async function updateWorld(job, chapter, n, state) {
   const chunks = chunkText(chapter.text, 10000, 700);
   const res = { ok: true, chunks: chunks.length, failed: 0, cut: 0, notes: [], problems: [] };
   const keys = ["locations", "items", "threads"];
-  for (let i = 0; i < chunks.length; i++) {
+  await runPool(chunks.length, async (i) => {
     const tag = `Thế giới lô ${i + 1}/${chunks.length}`;
-    if (timeLeft() < 150000) { res.failed++; res.notes.push(`${tag}: BỎ QUA vì sắp hết thời gian job (dành phần còn lại cho Status/Memory)`); continue; }
+    if (timeLeft() < 150000) { res.failed++; res.notes.push(`${tag}: BỎ QUA vì sắp hết thời gian job (dành phần còn lại cho Status/Memory)`); return; }
     const prompt = [
       `CẬP NHẬT THẾ GIỚI — CHƯƠNG ${n}, PHẦN ${i + 1}/${chunks.length}.`,
       "Chỉ trả địa điểm/vật phẩm/thread mới hoặc thay đổi rõ trong phần này. Không bịa. Mô tả ngắn (tối đa 25 từ). Không dùng dấu \" bên trong giá trị chuỗi.",
@@ -862,13 +888,13 @@ async function updateWorld(job, chapter, n, state) {
     try {
       const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "system", content: "Bạn là bộ máy trích xuất world state. Chỉ trả JSON hợp lệ." }, { role: "user", content: prompt }], maxTokens: 9200, temperature: 0.15 }, 2);
       const parsed = await parseObjectWithRepair(job, r.text, keys);
-      if (!parsed.obj) { res.failed++; res.notes.push(`${tag}: KHÔNG đọc được JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`); continue; }
+      if (!parsed.obj) { res.failed++; res.notes.push(`${tag}: KHÔNG đọc được JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`); return; }
       const before = [state.locations.length, state.items.length, state.threads.length];
       applyWorld(parsed.obj, n, state);
       if (r.finishReason === "length") res.cut++;
       res.notes.push(`${tag}: ${fin(r)}, parse=${parsed.method || "?"}, +${state.locations.length - before[0]} địa điểm, +${state.items.length - before[1]} vật phẩm, +${state.threads.length - before[2]} thread`);
     } catch (e) { res.failed++; res.notes.push(`${tag}: LỖI — ${sampleOf(e.message, 160)}`); }
-  }
+  });
   res.ok = res.failed < chunks.length;
   if (res.failed) res.problems.push(`Thế giới: ${res.failed}/${chunks.length} lô không đọc được`);
   if (res.cut) res.problems.push(`Thế giới: model bị cắt cụt ở ${res.cut} lô`);
@@ -1024,8 +1050,9 @@ exports.handler = async (event) => {
 
     const chapter = await generateOneChapter(job);
     const n = job.storyState.chapters.length + 1;
-    job.progress = "Đang tạo tóm tắt..."; job.updatedAt = Date.now(); await store.setJSON(jobId, cleanJobForStore(job));
-    chapter.summary = await generateSummary(job, chapter, n);
+    job.progress = "Đang tạo tóm tắt + cập nhật..."; job.updatedAt = Date.now(); await store.setJSON(jobId, cleanJobForStore(job));
+    // v11.1: tóm tắt chạy song song với NV/Thế giới (chỉ bước "Gợi ý chương sau" cần summary nên đợi ở pha 2).
+    const summaryP = generateSummary(job, chapter, n).then(s => { chapter.summary = s; return s; }).catch(() => { chapter.summary = chapter.summary || ""; return ""; });
     const newState = JSON.parse(JSON.stringify(job.storyState));
     newState.chapters.push(chapter);
     newState.currentChapterIndex = newState.chapters.length - 1;
@@ -1053,7 +1080,8 @@ exports.handler = async (event) => {
     await checkpoint("Đang cập nhật nhân vật + thế giới...");
     await Promise.all([
       runPar("NV", () => updateCharacters(job, chapter, n, newState)),
-      runPar("Thế giới", () => updateWorld(job, chapter, n, newState))
+      runPar("Thế giới", () => updateWorld(job, chapter, n, newState)),
+      summaryP
     ]);
     await checkpoint("Đang cập nhật Status + Memory + Scene...");
     await Promise.all([
