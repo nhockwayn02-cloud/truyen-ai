@@ -1,0 +1,14 @@
+# V12.7 — Continuity / Canon / Brief Fix
+- One shared female-character definition block for all female characters.
+- AI builds individual female characters from story evidence; no per-character female form required.
+- Full user directive and next-chapter hint are preserved (no 400-character truncation).
+- Automatic next-chapter hint is advisory only.
+- Main-character core profile is protected from automatic rescans; dynamic state remains updateable.
+- Character Database passes canonical fields separately from current state.
+- Tier auto-ranking changes only tier.
+- Confirmed character identity/role data cannot be overwritten by inference.
+- 1–3 main events and limited new-character rules remain active.
+- Chapter hard cap remains target x 1.15 (5,000 => 5,750 words).
+- Vietnamese-script guard remains active.
+- Last-chapter deletion restores prior snapshot including core state and female-definition rules.
+- Existing writer/settings two-column arrangement retained.

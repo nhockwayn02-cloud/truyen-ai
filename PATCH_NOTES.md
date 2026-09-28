@@ -1,3 +1,19 @@
+# V12.5 — Xóa chương hoàn nguyên toàn bộ bộ nhớ
+
+- Khi bật **Xóa kèm bộ nhớ**, xóa chương cuối sẽ rollback **Current Status, Status State, Story Clock, Nhân vật, Địa điểm, Vật phẩm, Threads, Timeline, Foreshadowing, Knowledge Ledger, Memory Events và Character State Tracker** về snapshot của chương ngay trước đó.
+- Xóa chương cũng loại bỏ dữ liệu Memory/Scene/History thuộc đúng chương bị xóa và đánh lại số chương của dữ liệu phía sau.
+- Sau khi xóa chương cuối, giao diện tự chọn lại chương trước; không còn giữ `currentChapterIndex` trỏ vào chương vừa xóa.
+- Snapshot mới từ V12.5 lưu thêm trạng thái Memory/Status để các lần rollback sau chính xác hơn.
+- Thao tác xóa ghi ngay vào IndexedDB + emergency copy, không chờ debounce 1,75 giây, tránh iOS/Safari giữ lại bản state cũ.
+- Nếu xóa chương giữa truyện, dữ liệu của các chương phía sau vẫn được giữ và đánh lại số; chỉ rollback toàn bộ live state khi chương cuối bị xóa vì đó là trường hợp có thể xác định chính xác mốc trạng thái trước đó.
+
+# V12.3 — Khóa độ dài + khóa ngôn ngữ
+
+- Độ dài mục tiêu được chuẩn hóa 500–6.000 từ; mỗi chương không vượt quá 115% mục tiêu. Với mặc định 5.000 từ, hard cap là 5.750 từ.
+- Cả local writer và background writer đều dừng continuation khi đạt mục tiêu/hard cap và cắt ở câu gần hoàn chỉnh nếu model trả quá dài.
+- Thêm phát hiện chữ Hán/Nhật/Hàn/Cyrillic lẫn vào văn Việt; nếu phát hiện, model được yêu cầu viết lại 100% tiếng Việt có dấu thay vì giữ nguyên đoạn lỗi.
+- Sửa auto-continue local: trước đây phát hiện ngôn ngữ khác thì dừng ngay, giờ retry trước.
+
 # V12 — Writing Engine Upgrade
 
 V12 keeps the V11.1 story-state pipeline and upgrades prose generation using the smoother V8-style path: temperature 0.82, no repetition penalties, prose-only output, and continuation style-lock.
@@ -142,7 +158,7 @@ thay vì im lặng bỏ qua như trước.
 4. Đặt biến môi trường `JOB_SECRET` trên Netlify để mã hóa API key khi lưu job Blobs.
 
 
-## V12.2 — Background continuation length fix
+## V12.4 — Background continuation length fix
 - Mature/NSFW writing branch gets a larger initial output budget (24k tokens) and continuation budget (12k).
 - Mature branch can use up to 8 continuation passes (minimum 4 when auto-continuation is enabled).
 - Mature branch reserves 90s instead of 5 minutes for post-processing, reducing premature truncation.
