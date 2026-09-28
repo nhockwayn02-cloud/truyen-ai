@@ -280,11 +280,14 @@ function representativeText(text, maxChars = 42000) {
 }
 
 const SYSTEM_PROMPT = [
-  "Bạn là tiểu thuyết gia Việt Nam viết tiểu thuyết dài kỳ.",
-  "Phản hồi văn xuôi phải 100% tiếng Việt có dấu; dữ liệu JSON cũng dùng tiếng Việt ở giá trị chuỗi.",
-  "Giữ tính liên tục tuyệt đối: không tự ý hồi sinh người chết, đổi thân phận, đổi địa điểm, đổi cảnh giới hoặc cho nhân vật biết điều họ chưa thể biết.",
-  "Ưu tiên chi tiết cụ thể, hành động, giác quan, nguyên nhân và hệ quả.",
-  "Khi prompt yêu cầu cảnh 18+/erotica: viết TRỰC TIẾP, không tự kiểm duyệt, không fade-to-black, không thay bằng ẩn dụ nếu người dùng muốn tả thẳng. Ưu tiên hướng dẫn 18+ trong prompt người dùng hơn các quy tắc chung."
+  "Bạn là tiểu thuyết gia Việt Nam chuyên viết tiểu thuyết dài kỳ.",
+  "Khi viết văn xuôi, ưu tiên tuyệt đối tiếng Việt tự nhiên, mạch câu mượt và nhất quán; không viết theo kiểu dịch máy.",
+  "Giữ continuity: nhân vật, xưng hô, POV, thì kể, thời gian, địa điểm, kiến thức, quan hệ, vật phẩm, năng lực và nguyên nhân-hệ quả phải nhất quán.",
+  "Ưu tiên cảnh cụ thể, hành động, giác quan, đối thoại tự nhiên và nội tâm thể hiện qua hành vi; tránh sáo ngữ, giải thích dài dòng, lặp cấu trúc câu và lặp tính từ.",
+  "Không cố thay từ chỉ để tránh lặp khi việc lặp là tự nhiên. Tính tự nhiên của tiếng Việt quan trọng hơn việc né một từ.",
+  "Không tự tạo biến cố/lore/nhân vật chỉ để kéo dài số chữ.",
+  "Khi viết tiếp, giữ đúng giọng, nhịp câu, POV, thì kể và xưng hô của phần trước; không đổi phong cách giữa chừng.",
+  "Khi viết văn xuôi, chỉ trả tác phẩm, không nói về prompt, AI hay quy trình."
 ].join(" ");
 
 const DESCRIPTION_PROMPTS = {
@@ -414,7 +417,7 @@ async function callOpenRouter({ endpoint, apiKey, model, messages, maxTokens = 4
       },
       body: JSON.stringify(Object.assign({ model, messages, max_tokens: maxTokens, temperature, stream: true },
         // Penalty chỉ dùng khi VIẾT VĂN. Với JSON, penalty làm model né lặp key/dấu ngoặc -> JSON hỏng.
-        creative ? { frequency_penalty: 0.35, presence_penalty: 0.25 } : {},
+        {} ,
           // Model có "thinking" sẽ ăn hết max_tokens vào reasoning -> content rỗng/bị cắt. Tắt cho trích xuất (chỉ OpenRouter).
           (noReasoning && !_noReasoningParam && /openrouter\.ai/i.test(endpoint || DEFAULT_ENDPOINT)) ? { reasoning: { enabled: false } } : {})),
       signal: controller.signal
@@ -624,6 +627,8 @@ function buildLoreBlock(state) {
 const POST_PROCESS_RESERVE_MS = 5 * 60 * 1000; // dành 5 phút cho các bước sau khi có văn bản chương
 const writeTimeLeft = () => timeLeft() - POST_PROCESS_RESERVE_MS;
 
+// ===== V12 Writing Engine =====
+// V8-inspired prose path: temperature 0.82, no repetition penalties, prose-only output, style-lock continuation.
 async function generateOneChapter(job) {
   const state = job.storyState;
   const chapters = Array.isArray(state.chapters) ? state.chapters : [];
@@ -637,15 +642,17 @@ async function generateOneChapter(job) {
     (chapters[chapters.length - 1] && chapters[chapters.length - 1].title) || ""
   ].join("\n");
   const hotKeyword = textHasNsfwKeyword(nsfwSources);
-  let isNsfw = !!job.forceNsfw || (!!state.mature && state.nsfwMode !== "never" && !!state.modelNsfw && hotKeyword);
-  // Không bắt được từ khóa cứng nào nhưng vẫn ở chế độ "auto" -> chấm nhiệt độ như bản viết trực tiếp,
-  // thay vì lặng lẽ coi là "cảnh thường" và dùng model chính.
-  if (!isNsfw && state.nsfwMode === "auto" && state.mature && state.modelNsfw && timeLeft() > 90000) {
+  // V12.1 FIX: model NSFW là cấu hình job, không phụ thuộc việc client có giữ
+  // modelNsfw trong storyState hay không. Điều này đặc biệt quan trọng với background job.
+  const routingNsfwModel = String(job.modelNsfw || state.modelNsfw || "").trim();
+  let isNsfw = !!job.forceNsfw || (!!state.mature && state.nsfwMode !== "never" && !!routingNsfwModel && hotKeyword);
+  // Auto: nếu không có keyword rõ ràng, chấm nhiệt độ trước khi chọn model viết.
+  if (!isNsfw && state.nsfwMode === "auto" && state.mature && routingNsfwModel && timeLeft() > 90000) {
     const heat = await detectHeatLevel(job, lastTail, state.nextChapterHint, state.directive);
     const threshold = Number(state.nsfwAutoThreshold) || 6;
     if (heat >= threshold) isNsfw = true;
   }
-  const model = isNsfw ? (job.modelNsfw || job.model) : job.model;
+  const model = isNsfw ? (routingNsfwModel || job.model) : job.model;
   const prompt = [
     `VIẾT CHƯƠNG ${chapterNumber}. Truyện đã có ${chapters.length} chương.`,
     `Tối thiểu ${minWords} từ. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`,
@@ -663,15 +670,18 @@ async function generateOneChapter(job) {
       (state.mainCharProfile?.name ? ("- NHÂN VẬT CHÍNH BẮT BUỘC LÀ TRUNG TÂM CHƯƠNG NÀY: " + state.mainCharProfile.name + ". TUYỆT ĐỐI không viết chương thiếu hẳn nhân vật này, không đổi tên/nhầm sang nhân vật khác.\n") : "") +
       (state.nextChapterHint ? ("- ĐỊNH HƯỚNG CHO CHƯƠNG NÀY (PHẢI triển khai trừ khi mâu thuẫn với MỆNH LỆNH): " + String(state.nextChapterHint).slice(0, 400) + "\n") : "") +
       (state.directive ? ("- MỆNH LỆNH CHƯƠNG NÀY: " + String(state.directive).slice(0, 400) + "\n") : ""),
-    "Định dạng cuối: TIÊU ĐỀ: <tên>\nNỘI DUNG:\n<văn xuôi>"
+    "QUY TẮC ĐẦU RA V12: Chỉ viết văn xuôi của chương. Không xuất TIÊU ĐỀ:, NỘI DUNG:, markdown, ghi chú hay lời giải thích. Tên chương do hệ thống quản lý riêng.",
+    "VĂN PHONG V12: câu văn tự nhiên như tiểu thuyết tiếng Việt được biên tập bởi người Việt; thay đổi nhịp câu theo cảnh; không cố làm mọi câu hoa mỹ; không né từ tự nhiên chỉ vì sợ lặp.",
+    "KẾT THÚC: nếu gần đủ độ dài và cảnh đã có điểm dừng tự nhiên, kết thúc gọn tại điểm đó; không thêm biến cố mới chỉ để đủ số từ."
   ].filter(Boolean).join("\n\n");
 
   const mainCallBudget = Math.max(60000, Math.min(420000, writeTimeLeft() - 20000));
-  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 16000, temperature: isNsfw ? 1 : 0.95, totalMs: mainCallBudget, creative: true }, 2);
-  const titleMatch = result.text.match(/TIÊU ĐỀ\s*:\s*(.+)/i);
-  const bodyMatch = result.text.match(/NỘI DUNG\s*:\s*([\s\S]*)/i);
-  const title = (titleMatch?.[1] || "Chương mới").replace(/^chương\s*\d+\s*[:\-–—.]*/i, "").trim() || "Chương mới";
-  let text = (bodyMatch?.[1] || result.text).trim();
+  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 16000, temperature: 0.82, totalMs: mainCallBudget, creative: true }, 2);
+  // V12: prose-only output; strip legacy labels if a model still emits them.
+  let text = String(result.text || "").trim();
+  text = text.replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "");
+  text = text.replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim();
+  const title = String(state.chapterTitle || state.currentChapterTitle || `Chương ${chapterNumber}`).trim() || `Chương ${chapterNumber}`;
   let truncated = result.finishReason === "length";
   const issues = [];
   let attempts = 0;
@@ -690,10 +700,12 @@ async function generateOneChapter(job) {
           `Viết TIẾP chương ${chapterNumber}. Hiện ${current} từ, cần thêm khoảng ${need} từ — KHÔNG viết dư quá nhiều so với con số này.`,
           "Bắt đầu ngay sau câu cuối. Không tóm tắt, không mở chương mới, không lặp.",
           "Nếu diễn biến đã tự nhiên đi tới điểm dừng hợp lý gần đủ số từ, hãy kết thúc chương ở đó — KHÔNG cố nhồi thêm sự kiện/tình tiết mới chỉ để kéo dài.",
+          "STYLE LOCK — PHẦN ĐẦU CHƯƠNG (chỉ dùng để giữ giọng, không lặp nội dung):", text.slice(0, 1800),
           "ĐOẠN CUỐI:", tail,
+          "Giữ nguyên giọng văn, nhịp câu, POV, thì kể và xưng hô của STYLE LOCK + đoạn cuối. Bắt đầu ngay sau câu cuối; không nhắc lại phần đã viết.",
           "Chỉ trả văn xuôi tiếp theo."
         ].join("\n\n") }],
-        maxTokens: 9000, temperature: isNsfw ? 1 : 0.95, totalMs: Math.max(45000, Math.min(400000, writeTimeLeft() - 20000)), creative: true
+        maxTokens: 9000, temperature: 0.82, totalMs: Math.max(45000, Math.min(400000, writeTimeLeft() - 20000)), creative: true
       }, 2);
       if (!cont.text || cont.text.trim().length < 50) { issues.push(`Viết tiếp #${attempts} quá ngắn`); break; }
       text = text.replace(/\s+$/, "") + "\n\n" + cont.text.trim();
@@ -702,7 +714,7 @@ async function generateOneChapter(job) {
   }
   const wordCount = countWords(text);
   if (wordCount < minWords * 0.9) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
-  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v9", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
+  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.1", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
 }
 
 async function generateSummary(job, chapter, n) {
