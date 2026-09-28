@@ -3436,7 +3436,7 @@ function charDetailHtml(c, idx){
     + '<select data-char-field="tier" data-char="'+idx+'" style="font-size:11px;padding:4px 6px;width:auto;">'
       + TIERS.map(t=>'<option value="'+t+'"'+(t===c.tier?' selected':'')+'>'+t+'</option>').join("")
     + '</select>'
-    + '<span class="lock-badge" title="Hồ sơ gốc được AI khóa; chỉ Lưu thủ công mới thay đổi">🔐 Core</span>'
+    + '<button class="btn btn-ghost btn-sm" data-char-togglelock="'+idx+'" title="'+(c.coreLocked!==false ? 'Hồ sơ gốc đang bị AI khóa; bấm để cho AI tự cập nhật ngoại hình/tính cách/mục tiêu sau mỗi chương' : 'AI đang được phép tự cập nhật hồ sơ gốc; bấm để khóa lại')+'">'+(c.coreLocked!==false ? '🔐 Core' : '🔓 Đang cho AI cập nhật')+'</button>'
     + '<button class="btn btn-ghost btn-sm" data-char-save="'+idx+'">💾 Lưu</button>'
     + '<button class="btn btn-outline-red btn-sm" data-char-del="'+idx+'">🗑 Xóa</button>'
     + '</div>';
@@ -3505,6 +3505,15 @@ function renderCharacters(){
     btn.addEventListener("click", ()=>{
       const idx = parseInt(btn.getAttribute("data-char-save"),10);
       openCharDetails.add(idx); saveCharacterFromDom(idx);
+    });
+  });
+  charList.querySelectorAll("[data-char-togglelock]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const idx = parseInt(btn.getAttribute("data-char-togglelock"),10);
+      const c = state.characters[idx]; if(!c) return;
+      c.coreLocked = (c.coreLocked===false) ? true : false;
+      openCharDetails.add(idx); persist(); renderCharacters();
+      setStatus(c.coreLocked ? "Đã khóa lại hồ sơ gốc của "+(c.name||"NV")+"." : "AI được phép tự cập nhật hồ sơ gốc của "+(c.name||"NV")+" từ chương sau.", false);
     });
   });
   charList.querySelectorAll("[data-char-del]").forEach(btn=>{
