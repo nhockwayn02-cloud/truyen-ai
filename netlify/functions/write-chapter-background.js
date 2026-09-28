@@ -73,6 +73,27 @@ function decryptText(record) {
 }
 
 function countWords(text) { return (text || "").trim().split(/\s+/).filter(Boolean).length; }
+
+// V12.3: hard cap để mục tiêu 5.000 từ không biến thành 8.000+ từ.
+function chapterWordLimits(state) {
+  const target = Math.min(Math.max(Number(state?.minChapterWords) || 5000, 500), 6000);
+  return { target, hardMax: Math.ceil(target * 1.15) };
+}
+function trimToWordLimit(text, maxWords) {
+  const s = String(text || "").trim();
+  if (!s || countWords(s) <= maxWords) return { text: s, trimmed: false };
+  const words = s.split(/\s+/);
+  let out = words.slice(0, maxWords).join(" ");
+  const m = out.match(/^([\s\S]*[.!?…][”"’']?)(?:\s|$)/);
+  if (m && countWords(m[1]) >= Math.max(1, maxWords - 180)) out = m[1];
+  return { text: out.trim(), trimmed: true };
+}
+function detectNonVietnamese(text) {
+  if (!text) return false;
+  const foreign = (String(text).match(/[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF]/g) || []).length;
+  const total = String(text).replace(/\s/g, "").length || 1;
+  return (foreign / total) > 0.005;
+}
 function normalizeName(s) {
   return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
 }
@@ -286,6 +307,8 @@ const SYSTEM_PROMPT = [
   "Ưu tiên cảnh cụ thể, hành động, giác quan, đối thoại tự nhiên và nội tâm thể hiện qua hành vi; tránh sáo ngữ, giải thích dài dòng, lặp cấu trúc câu và lặp tính từ.",
   "Không cố thay từ chỉ để tránh lặp khi việc lặp là tự nhiên. Tính tự nhiên của tiếng Việt quan trọng hơn việc né một từ.",
   "Không tự tạo biến cố/lore/nhân vật chỉ để kéo dài số chữ.",
+  "CHARACTER DATABASE là nguồn sự thật: không tự đổi thân phận, vai trò, tính cách, quan hệ hoặc lịch sử đã được xác nhận; nếu chưa biết thì để mở thay vì bịa.",
+  "Mệnh lệnh/gợi ý trực tiếp của người dùng cho chương hiện tại phải được triển khai đầy đủ; không thay thế bằng một tuyến truyện khác chỉ vì AI thấy tuyến đó thú vị hơn.",
   "Khi viết tiếp, giữ đúng giọng, nhịp câu, POV, thì kể và xưng hô của phần trước; không đổi phong cách giữa chừng.",
   "Khi viết văn xuôi, chỉ trả tác phẩm, không nói về prompt, AI hay quy trình."
 ].join(" ");
@@ -564,6 +587,7 @@ function buildContext(state) {
   if (state.worldRules) p.push("LUẬT THẾ GIỚI:\n" + state.worldRules);
   if (state.worldDescription) p.push("KHÔNG KHÍ:\n" + state.worldDescription);
   if (state.pronounRules) p.push("XƯNG HÔ:\n" + state.pronounRules);
+  if (state.femaleCharacterDefinition) p.push("ĐỊNH NGHĨA CHUNG NHÂN VẬT NỮ — ÁP DỤNG CHO MỌI NHÂN VẬT NỮ:\n" + String(state.femaleCharacterDefinition).trim() + "\nAI tự xây dựng từng nhân vật nữ theo diễn biến truyện; không gán nguyên xi một nhân vật cho nhân vật khác; không tự đổi thông tin đã được truyện xác nhận.");
   if (state.currentStatus) p.push("CURRENT STATUS:\n" + state.currentStatus);
   if (state.directive) p.push("MỆNH LỆNH:\n" + state.directive);
   if (state.nextChapterHint) p.push("ĐỊNH HƯỚNG CHO CHƯƠNG NÀY (nên bám theo, trừ khi mâu thuẫn với MỆNH LỆNH thì MỆNH LỆNH thắng):\n" + state.nextChapterHint);
@@ -572,7 +596,10 @@ function buildContext(state) {
   else if (state.mainPlot || state.worldSetting) p.push("⚠ CHƯA khai báo Nhân Vật Chính. Nếu Cốt Truyện/Bối Cảnh có nhắc tên nhân vật chính, PHẢI dùng đúng tên đó xuyên suốt, không tự đặt tên khác.");
   const chars = (state.characters || []).filter(c => !c.dead).slice(0, 18);
   if (chars.length) {
-    p.push("NHÂN VẬT QUAN TRỌNG:\n" + chars.map(c => `- ${c.name} [${c.tier || "supporting"}] | vai trò:${c.role || ""} | ở:${c.currentLocation || "?"} | thể:${c.physicalState || ""} | tâm:${c.mentalState || ""} | biết:${c.knowledge || ""}`).join("\n"));
+    p.push("CHARACTER DATABASE — CANON + TRẠNG THÁI:\n" + chars.map(c => {
+      const core = c.coreIdentity && Object.keys(c.coreIdentity).length ? Object.entries(c.coreIdentity).filter(([,v])=>String(v||"").trim()).map(([k,v])=>k+":"+String(v)).join(" | ") : "";
+      return `- ${c.name} [${c.tier || "supporting"}] | CANON:${core || "chưa xác lập"} | vai trò:${c.role || ""} | ở:${c.currentLocation || "?"} | thể:${c.physicalState || ""} | tâm:${c.mentalState || ""} | biết:${c.knowledge || ""}`;
+    }).join("\n"));
   }
   if (Array.isArray(state.threads) && state.threads.length) {
     p.push("PLOT THREADS ĐANG MỞ:\n" + state.threads.filter(t => !["paid_off","abandoned","completed"].includes(t.status)).slice(0, 20).map(t => `- ${t.type}: ${t.desc} [${t.status}]`).join("\n"));
@@ -636,7 +663,7 @@ async function generateOneChapter(job) {
   const state = job.storyState;
   const chapters = Array.isArray(state.chapters) ? state.chapters : [];
   const chapterNumber = chapters.length + 1;
-  const minWords = Math.min(Math.max(Number(state.minChapterWords) || 5000, 500), 9000);
+  const { target: minWords, hardMax: maxWords } = chapterWordLimits(state);
   const lastTail = ((chapters[chapters.length - 1] && chapters[chapters.length - 1].text) || "").slice(-1800);
   const nsfwSources = [
     state.directive || "",
@@ -658,7 +685,7 @@ async function generateOneChapter(job) {
   const model = isNsfw ? (routingNsfwModel || job.model) : job.model;
   const prompt = [
     `VIẾT CHƯƠNG ${chapterNumber}. Truyện đã có ${chapters.length} chương.`,
-    `Tối thiểu ${minWords} từ. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`,
+    `MỤC TIÊU ${minWords} từ; GIỚI HẠN CỨNG ${maxWords} từ. Khi đạt khoảng ${minWords} từ và cảnh đã có điểm dừng tự nhiên thì phải kết thúc; tuyệt đối không kéo dài vượt ${maxWords} từ. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`,
     "Không mở đầu bằng tiêu đề, không giải thích ngoài truyện.",
     "Không lặp lại đoạn kết chương trước; phải tiếp nối nguyên nhân và hệ quả.",
     buildContext(state), recentContext(chapters),
@@ -671,8 +698,8 @@ async function generateOneChapter(job) {
       "- Ưu tiên dùng nhân vật đã liệt kê ở mục NHÂN VẬT QUAN TRỌNG phía trên; chỉ tạo nhân vật mới khi thực sự cần và phải có lý do/vai trò rõ ràng.\n" +
       (((state.characters || []).filter(c => !c.dead).length === 0) ? "- CHƯA CÓ NHÂN VẬT PHỤ NÀO ĐƯỢC KHAI BÁO TRƯỚC. Nếu cần người ngoài nhân vật chính, ưu tiên nhân vật KHÔNG TÊN RIÊNG (chức danh chung chung). Chỉ đặt tên riêng nếu họ thực sự sẽ quay lại các chương sau.\n" : "") +
       (state.mainCharProfile?.name ? ("- NHÂN VẬT CHÍNH BẮT BUỘC LÀ TRUNG TÂM CHƯƠNG NÀY: " + state.mainCharProfile.name + ". TUYỆT ĐỐI không viết chương thiếu hẳn nhân vật này, không đổi tên/nhầm sang nhân vật khác.\n") : "") +
-      (state.nextChapterHint ? ("- ĐỊNH HƯỚNG CHO CHƯƠNG NÀY (PHẢI triển khai trừ khi mâu thuẫn với MỆNH LỆNH): " + String(state.nextChapterHint).slice(0, 400) + "\n") : "") +
-      (state.directive ? ("- MỆNH LỆNH CHƯƠNG NÀY: " + String(state.directive).slice(0, 400) + "\n") : ""),
+      (state.nextChapterHint ? ("- ĐỊNH HƯỚNG CHO CHƯƠNG NÀY (PHẢI triển khai đầy đủ các ý người dùng đã ghi; không tự thay bằng tuyến khác): " + String(state.nextChapterHint) + "\n") : "") +
+      (state.directive ? ("- MỆNH LỆNH CHƯƠNG NÀY (GIỮ NGUYÊN TOÀN BỘ, KHÔNG RÚT GỌN): " + String(state.directive) + "\n") : ""),
     "QUY TẮC ĐẦU RA V12: Chỉ viết văn xuôi của chương. Không xuất TIÊU ĐỀ:, NỘI DUNG:, markdown, ghi chú hay lời giải thích. Tên chương do hệ thống quản lý riêng.",
     "VĂN PHONG V12: câu văn tự nhiên như tiểu thuyết tiếng Việt được biên tập bởi người Việt; thay đổi nhịp câu theo cảnh; không cố làm mọi câu hoa mỹ; không né từ tự nhiên chỉ vì sợ lặp.",
     "KẾT THÚC: nếu gần đủ độ dài và cảnh đã có điểm dừng tự nhiên, kết thúc gọn tại điểm đó; không thêm biến cố mới chỉ để đủ số từ."
@@ -687,6 +714,20 @@ async function generateOneChapter(job) {
   let text = String(result.text || "").trim();
   text = text.replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "");
   text = text.replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim();
+
+  // V12.3: nếu model chèn chữ Hán/Nhật/Hàn/Cyrillic, yêu cầu viết lại bằng tiếng Việt.
+  if (detectNonVietnamese(text) && writeTimeLeft(isNsfw) > 60000) {
+    try {
+      const retry = await callWithRetry({
+        endpoint: job.apiEndpoint, apiKey: job.apiKey, model,
+        messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt + "\n\nCẢNH BÁO NGÔN NGỮ: Bản nháp vừa rồi có ngôn ngữ ngoài tiếng Việt. Viết lại toàn bộ, BẮT BUỘC 100% TIẾNG VIỆT CÓ DẤU; không dùng chữ Hán/Nhật/Hàn/Cyrillic; giữ nguyên cốt truyện và sự kiện." }],
+        maxTokens: mainMaxTokens, temperature: 0.72, totalMs: Math.max(45000, Math.min(240000, writeTimeLeft(isNsfw) - 10000)), creative: true
+      }, 1);
+      if (retry.text && retry.text.trim()) text = String(retry.text).trim();
+    } catch (_) {}
+  }
+  const initialCap = trimToWordLimit(text, maxWords);
+  text = initialCap.text;
   const title = String(state.chapterTitle || state.currentChapterTitle || `Chương ${chapterNumber}`).trim() || `Chương ${chapterNumber}`;
   let truncated = result.finishReason === "length";
   const issues = [];
@@ -696,17 +737,17 @@ async function generateOneChapter(job) {
   // chỉ đặt 4. Mỗi lượt vẫn dùng chính model đã route ở trên.
   const configuredAttempts = Number(state.autoContinueMax) || 4;
   const maxAttempts = isNsfw ? Math.max(4, Math.min(8, configuredAttempts)) : Math.max(0, Math.min(8, configuredAttempts));
-  while (countWords(text) < minWords * 0.9 && attempts < maxAttempts) {
+  while (countWords(text) < minWords && countWords(text) < maxWords && attempts < maxAttempts) {
     if (writeTimeLeft(isNsfw) < 30000) { issues.push("Dừng viết tiếp vì hết ngân sách thời gian của job"); break; }
     attempts++;
     const current = countWords(text);
     const tail = text.slice(-5000);
-    const need = Math.max(1200, minWords - current);
+    const need = Math.max(800, Math.min(minWords - current, maxWords - current));
     try {
       const cont = await callWithRetry({
         endpoint: job.apiEndpoint, apiKey: job.apiKey, model,
         messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: [
-          `Viết TIẾP chương ${chapterNumber}. Hiện ${current} từ, cần thêm khoảng ${need} từ — tiếp tục đủ lượng cần thiết, không tự rút ngắn vì muốn kết thúc sớm.`,
+          `Viết TIẾP chương ${chapterNumber}. Hiện ${current} từ, cần thêm khoảng ${need} từ. Mục tiêu ${minWords} từ, tuyệt đối không vượt ${maxWords} từ. Khi đạt mục tiêu thì kết thúc tự nhiên.`,
           "Bắt đầu ngay sau câu cuối. Không tóm tắt, không mở chương mới, không lặp.",
           isNsfw
             ? "Đây là continuation của cùng một cảnh trưởng thành đã được chọn đúng model. Giữ nguyên mạch, nhịp, POV, xưng hô và trạng thái nhân vật; không tự chuyển sang cảnh mới chỉ vì đã viết được một đoạn. Tiếp tục cho đến khi đạt mục tiêu độ dài hoặc model thực sự hết output."
@@ -719,13 +760,31 @@ async function generateOneChapter(job) {
         maxTokens: isNsfw ? 12000 : 9000, temperature: 0.82, totalMs: Math.max(45000, Math.min(420000, writeTimeLeft(isNsfw) - 12000)), creative: true
       }, 2);
       if (!cont.text || cont.text.trim().length < 50) { issues.push(`Viết tiếp #${attempts} quá ngắn`); break; }
-      text = text.replace(/\s+$/, "") + "\n\n" + cont.text.trim();
-      truncated = cont.finishReason === "length";
+      let contText = String(cont.text).trim();
+      if (detectNonVietnamese(contText) && writeTimeLeft(isNsfw) > 60000) {
+        try {
+          const retry = await callWithRetry({
+            endpoint: job.apiEndpoint, apiKey: job.apiKey, model,
+            messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: "Viết lại phần dưới đây bằng 100% tiếng Việt có dấu. Không dùng chữ Hán/Nhật/Hàn/Cyrillic. Giữ nguyên ý, không thêm sự kiện.\n\n" + contText }],
+            maxTokens: Math.min(12000, Math.max(1800, Math.ceil(contText.length / 3))), temperature: 0.45, totalMs: Math.max(45000, Math.min(180000, writeTimeLeft(isNsfw) - 10000)), creative: true
+          }, 1);
+          if (retry.text && retry.text.trim()) contText = String(retry.text).trim();
+        } catch (_) {}
+      }
+      const remaining = maxWords - current;
+      if (remaining <= 0) break;
+      const capped = trimToWordLimit(contText, remaining);
+      text = text.replace(/\s+$/, "") + "\n\n" + capped.text;
+      truncated = cont.finishReason === "length" || capped.trimmed;
+      if (capped.trimmed) break;
     } catch (e) { issues.push(`Viết tiếp #${attempts}: ${e.message}`); break; }
   }
+  const finalCap = trimToWordLimit(text, maxWords);
+  text = finalCap.text;
+  if (finalCap.trimmed) issues.push(`Đã khóa độ dài: tối đa ${maxWords} từ`);
   const wordCount = countWords(text);
   if (wordCount < minWords * 0.9) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
-  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.2", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
+  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.3", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
 }
 
 async function generateSummary(job, chapter, n) {
@@ -786,8 +845,15 @@ function mergeCharacter(state, u, chapterNumber) {
     if (!Array.isArray(state.characters)) state.characters = [];
     state.characters.push(c); created = true;
   } else {
-    ["appearance","personality","goals","secret","weakness","fear","knowledge"].forEach(k => { if (u[k]) c[k] = mergeTextField(c[k], u[k]); });
-    ["role","relevanceToMC","occupation","faction"].forEach(k => { if (u[k]) c[k] = u[k]; });
+    const coreLocked = c.coreLocked !== false;
+    const coreFields = ["name","age","gender","appearance","personality","goals","role","position","occupation","faction"];
+    const accum = ["appearance","personality","goals","secret","weakness","fear","knowledge"];
+    if(!c.coreIdentity || typeof c.coreIdentity !== "object") c.coreIdentity={};
+    if(coreLocked){
+      coreFields.forEach(k=>{ if(c.coreIdentity[k] === undefined) c.coreIdentity[k] = c[k] || ""; });
+    }
+    accum.forEach(k => { if (u[k] && (!coreLocked || !coreFields.includes(k))) c[k] = mergeTextField(c[k], u[k]); });
+    ["role","relevanceToMC","occupation","faction"].forEach(k => { if (u[k] && (!coreLocked || !coreFields.includes(k))) c[k] = u[k]; });
     ["currentLocation","physicalState","mentalState"].forEach(k => { if (u[k]) c[k] = u[k]; });
     if (u.tier && !c.locked) c.tier = u.tier;
     if (u.isDead === true && !c.dead) { c.dead = true; c.deathChapter = chapterNumber; }
