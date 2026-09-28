@@ -652,7 +652,8 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="section-head" data-toggle=""><span>2. Chỉ Đạo</span><span class="chev">▾</span></div>
 <div class="section-body">
 <div class="field"><label>Mệnh lệnh chương tới <span class="hint">(brief bắt buộc — AI phải bám đầy đủ)</span></label><textarea id="directive" rows="3"></textarea></div>
-<div class="field"><label>Gợi ý chương sau <span class="hint">(AI phải bám các chi tiết bạn ghi; không tự mở tuyến mới)</span></label><textarea id="nextChapterHint" rows="3" placeholder="VD: Chương sau nên hé lộ thân phận của X; chưa cần đưa Y quay lại."></textarea></div>
+<div class="field"><label>Kiểu gợi ý chương sau <span class="hint">(áp dụng cho gợi ý tự động và nút bên dưới)</span></label><select id="hintStyle"><option value="normal">Bình thường</option><option value="resist">Có chống cự</option><option value="twist">Đảo chiều / bước ngoặt</option><option value="escalate">Leo thang</option><option value="slow">Chậm lại, đào sâu cảm xúc</option></select><button type="button" id="regenHintBtn" style="margin-top:6px">✨ Tạo lại gợi ý chương sau</button></div>
+<div class="field"><label>Gợi ý chương sau <span class="hint">(AI phải bám các chi tiết bạn ghi; không tự mở tuyến mới)</span></label><textarea id="nextChapterHint" rows="10" placeholder="VD: Chương sau nên hé lộ thân phận của X; chưa cần đưa Y quay lại."></textarea></div>
 </div>
 </div><div class="section tone-green settings-only-section" data-column="settings" data-section="">
 <div class="section-head" data-toggle=""><span>2.5. Quy Tắc Nâng Cao</span><span class="chev">▾</span></div>
@@ -2939,7 +2940,7 @@ $ID("saveAdvancedRulesBtn").addEventListener("click", ()=>{
 });
 [directiveEl, nextChapterHintEl, difficultyEl, matureToggle].forEach(el=>{
   el.addEventListener("change", ()=>{
-    state.directive = directiveEl.value; state.nextChapterHint = nextChapterHintEl.value;
+    state.directive = directiveEl.value; state.nextChapterHint = nextChapterHintEl.value; { const hs=$ID("hintStyle"); if(hs) state.hintStyle=hs.value; }
     state.difficulty = difficultyEl.value;
     state.mature = matureToggle.checked; persist(); updateNsfwHint();
   });
@@ -4369,7 +4370,7 @@ function fullStoryTextCompressed(){
   const keepWords=Math.max(500,Number(state.slidingWindowWords)||1500);
   const old=state.chapters.slice(0,-1);
   const last=state.chapters[state.chapters.length-1];
-  const oldPart=old.map((c,i)=>"Chương "+(i+1)+": "+(c.summary||"(chưa tóm tắt)").slice(0,240)).join("\n");
+  const oldPart=old.map((c,i)=>"Chương "+(i+1)+": "+(c.summary||"(chưa tóm tắt)").slice(0, (old.length-i)<=3 ? 900 : 350)).join("\n");
   const words=(last.text||"").trim().split(/\s+/);
   const recent=words.length>keepWords ? words.slice(-keepWords).join(" ") : (last.text||"");
   return (oldPart ? "=== TÓM TẮT CHƯƠNG CŨ ===\n"+oldPart+"\n\n" : "")
@@ -4378,19 +4379,15 @@ function fullStoryTextCompressed(){
 /* ========== SUMMARY ========== */
 async function generateChapterSummary(text, chapterNumber, silent){
   if(!text) return "";
+  const names = (state.characters||[]).slice(0,60).map(c=>c.name).filter(Boolean).join(", ");
+  const rules = ["Tóm tắt CHƯƠNG {n} theo đúng trình tự thời gian như một biên bản diễn biến — bám sát nội dung chương, không khái quát hóa, không đoán, không bịa.", "ĐỊNH DẠNG: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch quan hệ/xung đột chính của chương, sau đó 5-8 đoạn ngắn theo thứ tự diễn ra (đêm/sáng/chiều/tối...), mỗi đoạn là một cảnh hoặc một mốc thời gian. KHÔNG dùng nhãn kiểu \"Đầu/Giữa/Cuối\", KHÔNG viết dạng gạch đầu dòng danh mục (Vật phẩm/Quan hệ/Hệ quả...).", "BẮT BUỘC trong mỗi đoạn: (a) dùng TÊN ĐẦY ĐỦ của nhân vật đúng như trong truyện, tuyệt đối không viết \"một đàn ông (tên chưa rõ)\" nếu tên đã xuất hiện trong chương hay trong danh sách nhân vật; (b) ghi rõ ai làm gì với ai, ở đâu, lúc mấy giờ nếu có; (c) giữ nguyên các chi tiết cụ thể: mệnh lệnh/kịch bản/lời thoại quan trọng, giờ giấc, số hiệu phòng/tầng, vật dụng, con số, tên hợp đồng/sổ sách; (d) nêu hành động và phản ứng của nhân vật, kể cả mưu tính, do dự, thay đổi quyết định.", "Với cảnh 18+/bạo lực/cưỡng ép: tóm tắt trung thực và gọn bằng ngôn ngữ trung tính, nêu rõ ai tham gia, kiểu hành vi chính, mệnh lệnh hay câu ép lặp lại, hệ quả với nhân vật — không lược bỏ và cũng không thêm chi tiết chương không có.", "Câu cuối: nêu trạng thái kết chương (quan hệ quyền lực, kế hoạch tiếp theo, mốc thời gian sắp tới, việc còn bỏ ngỏ) — chỉ dùng thông tin có trong chương.", "Chỉ dùng thông tin có trong chương. Sửa lỗi chính tả/đánh máy theo văn bản gốc. Không đánh giá, không bình luận. Độ dài khoảng 350-550 từ tiếng Việt. Chỉ trả về bản tóm tắt."].join("\n");
   const prompt = [
-    "Đọc chương sau và tóm tắt trong 2-3 câu (TIẾNG VIỆT), tập trung vào:",
-    "- Sự kiện chính",
-    "- Nhân vật xuất hiện",
-    "- Thay đổi quan hệ / sức mạnh / tình trạng",
-    "- Thông tin quan trọng cho chương sau",
-    "- Cảnh 18+ nếu có (mức độ + ai tham gia)",
-    "",
-    "Không đánh giá. Chỉ trả về tóm tắt.",
-    "", "Chương " + chapterNumber + ":", text
+    rules.replace("{n}", String(chapterNumber)),
+    names ? ("\nDANH SÁCH NHÂN VẬT ĐÃ BIẾT (dùng đúng tên này): " + names) : "",
+    "", "NỘI DUNG CHƯƠNG " + chapterNumber + ":", text
   ].join("\n");
   try{
-    const { text: summary } = await callAI(prompt, {maxTokens:700, temperature:0.3});
+    const { text: summary } = await callAI(prompt, {maxTokens:3500, temperature:0.2});
     return summary.trim();
   }catch(err){ console.warn("[Summary]", err.message); return ""; }
 }
@@ -4398,23 +4395,28 @@ async function generateChapterSummary(text, chapterNumber, silent){
 /* Tự động đề xuất định hướng cho (các) chương SAU chương vừa viết xong.
    Chỉ là gợi ý tham khảo — không ép chương kế phải làm theo ngay,
    người dùng luôn có thể sửa tay trong ô "Gợi ý chương sau". */
+const HINT_STYLES = {"normal": "Diễn tiến tự nhiên, tiếp nối mạch hiện tại.", "resist": "Nhân vật bị khống chế/yếu thế PHẢN KHÁNG rõ rệt trong chương này (hành động chống cự cụ thể); bên kia đáp trả và siết chặt hơn, hệ quả làm quan hệ quyền lực nặng thêm.", "twist": "Có một bước ngoặt/đảo chiều bất ngờ (lộ bí mật, lợi thế đổi bên, kế hoạch bị phá) nhưng vẫn hợp lý với thông tin đã có.", "escalate": "Leo thang: mức độ căng thẳng, rủi ro hoặc mức nóng cao hơn chương trước, có cú chốt gây hồi hộp.", "slow": "Nhịp chậm hơn: đào sâu nội tâm, quan hệ và hệ quả cảm xúc; ít biến cố mới."};
 async function generateNextChapterHint(text, summary, chapterNumber){
   if(!text) return "";
   const openThreads = (state.threads||[]).filter(t=>!['paid_off','abandoned','completed'].includes(t.status)).slice(0,8).map(t=>"- "+t.desc).join("\n");
   const openForeshadowing = (state.foreshadowing||[]).filter(f=>!['paid_off','abandoned','resolved'].includes(f.status)).slice(-8).map(f=>"- "+f.description).join("\n");
+  const names = (state.characters||[]).filter(c=>!c.dead).slice(0,40).map(c=>c.name).filter(Boolean).join(", ");
+  const styleKey = state.hintStyle || "normal";
   const prompt = [
-    "Bạn vừa đọc xong CHƯƠNG " + chapterNumber + " của một truyện dài kỳ (tóm tắt bên dưới).",
-    "Hãy đề xuất ĐỊNH HƯỚNG NGẮN cho (các) CHƯƠNG SAU — không phải kế hoạch chi tiết, chỉ 2-4 câu gợi ý ở mức cao.",
-    "Có thể gợi ý: nên khai thác thread/foreshadowing nào tiếp theo, nhịp độ nên tăng/giảm, có nên đưa nhân vật nào quay lại không, có nên tạm hoãn tuyến nào.",
-    "KHÔNG viết văn xuôi, KHÔNG liệt kê sự kiện cụ thể từng chương, chỉ định hướng chung.",
-    "",
-    "TÓM TẮT CHƯƠNG VỪA VIẾT:", summary || text.slice(-2000),
+    "Bạn vừa đọc xong CHƯƠNG " + chapterNumber + " của một truyện dài kỳ. Hãy viết GỢI Ý CHI TIẾT cho CHƯƠNG " + (chapterNumber+1) + ".",
+    "ĐỊNH DẠNG: mở đầu bằng dòng \"**Gợi ý ngắn Chương " + (chapterNumber+1) + ":**\", sau đó 4-6 đoạn ngắn, mỗi đoạn là một cảnh/nhịp truyện theo thứ tự: (1) mở chương — nối TRỰC TIẾP từ đoạn kết chương trước, (2) cảnh chính, (3) cảnh phát triển/căng thẳng, (4) cú chốt cuối chương.",
+    "Mỗi đoạn phải dùng TÊN NHÂN VẬT cụ thể, nêu rõ hành động, địa điểm, giờ giấc nếu có, xung đột, cảm xúc và hệ quả — KHÔNG nói chung chung. Các mốc đã hẹn trong chương trước (giờ họp, lệnh, hạn chót) phải được xử lý.",
+    "Bám sát giọng điệu, thể loại, mức độ nóng/18+ và cách xưng hô của chính truyện; tiếp nối thread/foreshadowing đang mở; không tự mở tuyến mới lạc đề; không mâu thuẫn dữ kiện đã có.",
+    "HƯỚNG CHƯƠNG SAU: " + (HINT_STYLES[styleKey] || HINT_STYLES.normal),
+    names ? ("NHÂN VẬT (dùng đúng tên): " + names) : "",
+    "", "TÓM TẮT CHƯƠNG VỪA VIẾT:", summary || text.slice(-2000),
+    "", "ĐOẠN KẾT CHƯƠNG (để nối mạch):", text.slice(-1500),
     openThreads ? ("\nTHREADS ĐANG MỞ:\n" + openThreads) : "",
     openForeshadowing ? ("\nFORESHADOWING CHƯA GIẢI:\n" + openForeshadowing) : "",
-    "\nChỉ trả về đoạn gợi ý ngắn (2-4 câu), tiếng Việt, không tiêu đề."
-  ].filter(Boolean).join("\n");
+    "\nChỉ trả về nội dung gợi ý theo định dạng trên, tiếng Việt."
+  ].filter(x=>x!=="" && x!=null).join("\n");
   try{
-    const { text: hint } = await callAI(prompt, {maxTokens:400, temperature:0.5});
+    const { text: hint } = await callAI(prompt, {maxTokens:1400, temperature:0.7});
     return hint.trim();
   }catch(err){ console.warn("[NextHint]", err.message); return ""; }
 }
@@ -4426,6 +4428,20 @@ $ID("regenSummaryBtn").addEventListener("click", async ()=>{
     const sum = await generateChapterSummary(state.chapters[idx].text, idx+1, false);
     if(sum){ state.chapters[idx].summary = sum; persist(); renderChapterNav(); renderCurrentChapter(); setStatus("Đã tạo lại tóm tắt.", false); }
     else setStatus("Không tạo được.", false);
+  }catch(e){ setStatus("Lỗi: " + e.message, false); }
+});
+
+
+$ID("regenHintBtn").addEventListener("click", async ()=>{
+  const idx = state.chapters.length-1;
+  if(idx < 0){ setStatus("Chưa có chương.", false); return; }
+  const hs=$ID("hintStyle"); if(hs) state.hintStyle=hs.value;
+  setStatus("Đang tạo gợi ý chương sau...", true);
+  try{
+    const ch = state.chapters[idx];
+    const hint = await generateNextChapterHint(ch.text, ch.summary, idx+1);
+    if(hint){ state.nextChapterHint = hint; nextChapterHintEl.value = hint; persist(); setStatus("Đã tạo gợi ý chương sau.", false); }
+    else setStatus("Không tạo được gợi ý.", false);
   }catch(e){ setStatus("Lỗi: " + e.message, false); }
 });
 
@@ -4936,7 +4952,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     if(priorChapters.length > 2){
       const older = priorChapters.slice(0, -2);
       const start = Math.max(0, older.length - 8);
-      olderSummaries = older.slice(start).map((c,i)=> "Ch" + (start + i + 1) + ": " + (c.summary || "(chưa tóm tắt)").slice(0, 200)).join("\n");
+      olderSummaries = older.slice(start).map((c,i)=> "Ch" + (start + i + 1) + ": " + (c.summary || "(chưa tóm tắt)").slice(0, (older.length-start-i)<=3 ? 900 : 350)).join("\n");
     }
 
     let plan = "";
@@ -6022,7 +6038,7 @@ function hydrateFormFromState(){
   storyBibleLockEl.checked = !!state.storyBibleLocked;
   storyClockEl.value = state.storyClock || "";
   directiveEl.value = state.directive || "";
-  nextChapterHintEl.value = state.nextChapterHint || "";
+  nextChapterHintEl.value = state.nextChapterHint || ""; { const hs=$ID("hintStyle"); if(hs) hs.value = state.hintStyle || "normal"; }
   advancedRulesEl.value = state.advancedRules || DEFAULT_ADVANCED_RULES;
   difficultyEl.value = state.difficulty || "vua";
   matureToggle.checked = !!state.mature;
@@ -6281,7 +6297,7 @@ async function startBackgroundWrite(){
   // "auto" vẫn để backend tự phát hiện theo ngữ cảnh.
   const bgForceNsfw = (state.nsfwMode === "always") ||
     (state.nsfwMode === "mature_only" && state.mature === true);
-  const payload={storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:bgForceNsfw};
+  const payload={hintStyle:state.hintStyle||"normal",storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:bgForceNsfw};
   setBgStatus("☁ Đang tạo job an toàn trên server...",true); $ID("bgWriteBtn").disabled=true;
   try{
     const res=await fetch(BG_FUNCTIONS_BASE+"/create-job",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
