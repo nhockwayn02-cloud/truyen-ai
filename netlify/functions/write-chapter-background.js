@@ -654,7 +654,9 @@ function buildLoreBlock(state) {
 // V12.2: không để hậu xử lý cắt ngắn lượt viết. Nhánh trưởng thành cần nhiều lượt
 // continuation hơn; vẫn giữ một khoảng đệm tối thiểu cho việc lưu kết quả và cập nhật state.
 const NORMAL_POST_PROCESS_RESERVE_MS = 5 * 60 * 1000;
-const MATURE_POST_PROCESS_RESERVE_MS = 90 * 1000;
+// V12.9: 90s cũ quá ngắn -> NV/Thế giới ăn gần hết, khiến Status/Memory/Scene/Gợi ý
+// chương sau bị "BỎ QUA vì hết thời gian" gần như mỗi lần với chương 18+. Nâng lên 210s.
+const MATURE_POST_PROCESS_RESERVE_MS = 210 * 1000;
 const writeTimeLeft = (isMature = false) => timeLeft() - (isMature ? MATURE_POST_PROCESS_RESERVE_MS : NORMAL_POST_PROCESS_RESERVE_MS);
 
 // ===== V12 Writing Engine =====
