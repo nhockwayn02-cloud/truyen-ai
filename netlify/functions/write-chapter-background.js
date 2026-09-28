@@ -624,8 +624,11 @@ function buildLoreBlock(state) {
 // Dành riêng cho bước viết văn (chương mới + viết tiếp): không được ăn hết ngân sách 13.5 phút,
 // phải để lại thời gian cho NV/Thế giới/Status/Memory chạy sau đó — đây là nguyên nhân gốc của
 // "7/7 lô không đọc được" + "Status/Memory bỏ qua vì hết thời gian" khi chương dài phải viết-tiếp nhiều lần.
-const POST_PROCESS_RESERVE_MS = 5 * 60 * 1000; // dành 5 phút cho các bước sau khi có văn bản chương
-const writeTimeLeft = () => timeLeft() - POST_PROCESS_RESERVE_MS;
+// V12.2: không để hậu xử lý cắt ngắn lượt viết. Nhánh trưởng thành cần nhiều lượt
+// continuation hơn; vẫn giữ một khoảng đệm tối thiểu cho việc lưu kết quả và cập nhật state.
+const NORMAL_POST_PROCESS_RESERVE_MS = 5 * 60 * 1000;
+const MATURE_POST_PROCESS_RESERVE_MS = 90 * 1000;
+const writeTimeLeft = (isMature = false) => timeLeft() - (isMature ? MATURE_POST_PROCESS_RESERVE_MS : NORMAL_POST_PROCESS_RESERVE_MS);
 
 // ===== V12 Writing Engine =====
 // V8-inspired prose path: temperature 0.82, no repetition penalties, prose-only output, style-lock continuation.
@@ -675,8 +678,11 @@ async function generateOneChapter(job) {
     "KẾT THÚC: nếu gần đủ độ dài và cảnh đã có điểm dừng tự nhiên, kết thúc gọn tại điểm đó; không thêm biến cố mới chỉ để đủ số từ."
   ].filter(Boolean).join("\n\n");
 
-  const mainCallBudget = Math.max(60000, Math.min(420000, writeTimeLeft() - 20000));
-  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 16000, temperature: 0.82, totalMs: mainCallBudget, creative: true }, 2);
+  // V12.2: nhánh trưởng thành có ngân sách output lớn hơn để không bị cụt sau một đoạn.
+  const writeLeft = writeTimeLeft(isNsfw);
+  const mainMaxTokens = isNsfw ? 24000 : 16000;
+  const mainCallBudget = Math.max(60000, Math.min(480000, writeLeft - 15000));
+  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: mainMaxTokens, temperature: 0.82, totalMs: mainCallBudget, creative: true }, 2);
   // V12: prose-only output; strip legacy labels if a model still emits them.
   let text = String(result.text || "").trim();
   text = text.replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "");
@@ -686,9 +692,12 @@ async function generateOneChapter(job) {
   const issues = [];
   let attempts = 0;
 
-  const maxAttempts = Math.max(0, Math.min(8, Number(state.autoContinueMax) || 4));
+  // V12.2: nếu là nhánh trưởng thành, cho phép tối đa 8 lượt nối tiếp bất kể cấu hình cũ
+  // chỉ đặt 4. Mỗi lượt vẫn dùng chính model đã route ở trên.
+  const configuredAttempts = Number(state.autoContinueMax) || 4;
+  const maxAttempts = isNsfw ? Math.max(4, Math.min(8, configuredAttempts)) : Math.max(0, Math.min(8, configuredAttempts));
   while (countWords(text) < minWords * 0.9 && attempts < maxAttempts) {
-    if (writeTimeLeft() < 30000) { issues.push("Dừng viết tiếp sớm để dành thời gian cho NV/Thế giới/Status/Memory"); break; }
+    if (writeTimeLeft(isNsfw) < 30000) { issues.push("Dừng viết tiếp vì hết ngân sách thời gian của job"); break; }
     attempts++;
     const current = countWords(text);
     const tail = text.slice(-5000);
@@ -697,15 +706,17 @@ async function generateOneChapter(job) {
       const cont = await callWithRetry({
         endpoint: job.apiEndpoint, apiKey: job.apiKey, model,
         messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: [
-          `Viết TIẾP chương ${chapterNumber}. Hiện ${current} từ, cần thêm khoảng ${need} từ — KHÔNG viết dư quá nhiều so với con số này.`,
+          `Viết TIẾP chương ${chapterNumber}. Hiện ${current} từ, cần thêm khoảng ${need} từ — tiếp tục đủ lượng cần thiết, không tự rút ngắn vì muốn kết thúc sớm.`,
           "Bắt đầu ngay sau câu cuối. Không tóm tắt, không mở chương mới, không lặp.",
-          "Nếu diễn biến đã tự nhiên đi tới điểm dừng hợp lý gần đủ số từ, hãy kết thúc chương ở đó — KHÔNG cố nhồi thêm sự kiện/tình tiết mới chỉ để kéo dài.",
+          isNsfw
+            ? "Đây là continuation của cùng một cảnh trưởng thành đã được chọn đúng model. Giữ nguyên mạch, nhịp, POV, xưng hô và trạng thái nhân vật; không tự chuyển sang cảnh mới chỉ vì đã viết được một đoạn. Tiếp tục cho đến khi đạt mục tiêu độ dài hoặc model thực sự hết output."
+            : "Nếu diễn biến đã tự nhiên đi tới điểm dừng hợp lý gần đủ số từ, hãy kết thúc chương ở đó — KHÔNG cố nhồi thêm sự kiện/tình tiết mới chỉ để kéo dài.",
           "STYLE LOCK — PHẦN ĐẦU CHƯƠNG (chỉ dùng để giữ giọng, không lặp nội dung):", text.slice(0, 1800),
           "ĐOẠN CUỐI:", tail,
           "Giữ nguyên giọng văn, nhịp câu, POV, thì kể và xưng hô của STYLE LOCK + đoạn cuối. Bắt đầu ngay sau câu cuối; không nhắc lại phần đã viết.",
           "Chỉ trả văn xuôi tiếp theo."
         ].join("\n\n") }],
-        maxTokens: 9000, temperature: 0.82, totalMs: Math.max(45000, Math.min(400000, writeTimeLeft() - 20000)), creative: true
+        maxTokens: isNsfw ? 12000 : 9000, temperature: 0.82, totalMs: Math.max(45000, Math.min(420000, writeTimeLeft(isNsfw) - 12000)), creative: true
       }, 2);
       if (!cont.text || cont.text.trim().length < 50) { issues.push(`Viết tiếp #${attempts} quá ngắn`); break; }
       text = text.replace(/\s+$/, "") + "\n\n" + cont.text.trim();
@@ -714,7 +725,7 @@ async function generateOneChapter(job) {
   }
   const wordCount = countWords(text);
   if (wordCount < minWords * 0.9) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
-  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.1", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
+  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.2", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
 }
 
 async function generateSummary(job, chapter, n) {
