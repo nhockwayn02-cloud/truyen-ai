@@ -4389,7 +4389,7 @@ function fullStoryTextCompressed(){
 async function generateChapterSummary(text, chapterNumber, silent){
   if(!text) return "";
   const names = (state.characters||[]).slice(0,60).map(c=>c.name).filter(Boolean).join(", ");
-  const rules = ["Tóm tắt CHƯƠNG {n} theo đúng trình tự thời gian như một biên bản diễn biến — bám sát nội dung chương, không khái quát hóa, không đoán, không bịa.", "ĐỊNH DẠNG: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch quan hệ/xung đột chính của chương, sau đó 5-8 đoạn ngắn theo thứ tự diễn ra (đêm/sáng/chiều/tối...), mỗi đoạn là một cảnh hoặc một mốc thời gian. KHÔNG dùng nhãn kiểu \"Đầu/Giữa/Cuối\", KHÔNG viết dạng gạch đầu dòng danh mục (Vật phẩm/Quan hệ/Hệ quả...).", "BẮT BUỘC trong mỗi đoạn: (a) dùng TÊN ĐẦY ĐỦ của nhân vật đúng như trong truyện, tuyệt đối không viết \"một đàn ông (tên chưa rõ)\" nếu tên đã xuất hiện trong chương hay trong danh sách nhân vật; (b) ghi rõ ai làm gì với ai, ở đâu, lúc mấy giờ nếu có; (c) giữ nguyên các chi tiết cụ thể: mệnh lệnh/kịch bản/lời thoại quan trọng, giờ giấc, số hiệu phòng/tầng, vật dụng, con số, tên hợp đồng/sổ sách; (d) nêu hành động và phản ứng của nhân vật, kể cả mưu tính, do dự, thay đổi quyết định.", "Với cảnh 18+/bạo lực/cưỡng ép: tóm tắt trung thực và gọn bằng ngôn ngữ trung tính, nêu rõ ai tham gia, kiểu hành vi chính, mệnh lệnh hay câu ép lặp lại, hệ quả với nhân vật — không lược bỏ và cũng không thêm chi tiết chương không có.", "Câu cuối: nêu trạng thái kết chương (quan hệ quyền lực, kế hoạch tiếp theo, mốc thời gian sắp tới, việc còn bỏ ngỏ) — chỉ dùng thông tin có trong chương.", "Chỉ dùng thông tin có trong chương. Sửa lỗi chính tả/đánh máy theo văn bản gốc. Không đánh giá, không bình luận. Độ dài khoảng 350-550 từ tiếng Việt. Chỉ trả về bản tóm tắt.",
+  const rules = ["Tóm tắt CHƯƠNG {n} theo đúng trình tự thời gian như một biên bản diễn biến — bám sát nội dung chương, không khái quát hóa, không đoán, không bịa.", "ĐỊNH DẠNG: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch quan hệ/xung đột chính của chương, sau đó 4-5 đoạn ngắn theo thứ tự diễn ra (đêm/sáng/chiều/tối...), mỗi đoạn là một cảnh hoặc một mốc thời gian. KHÔNG dùng nhãn kiểu \"Đầu/Giữa/Cuối\", KHÔNG viết dạng gạch đầu dòng danh mục (Vật phẩm/Quan hệ/Hệ quả...).", "BẮT BUỘC trong mỗi đoạn: (a) dùng TÊN ĐẦY ĐỦ của nhân vật đúng như trong truyện, tuyệt đối không viết \"một đàn ông (tên chưa rõ)\" nếu tên đã xuất hiện trong chương hay trong danh sách nhân vật; (b) ghi rõ ai làm gì với ai, ở đâu, lúc mấy giờ nếu có; (c) giữ nguyên các chi tiết cụ thể: mệnh lệnh/kịch bản/lời thoại quan trọng, giờ giấc, số hiệu phòng/tầng, vật dụng, con số, tên hợp đồng/sổ sách; (d) nêu hành động và phản ứng của nhân vật, kể cả mưu tính, do dự, thay đổi quyết định.", "Với cảnh 18+/bạo lực/cưỡng ép: tóm tắt trung thực và gọn bằng ngôn ngữ trung tính, nêu rõ ai tham gia, kiểu hành vi chính, mệnh lệnh hay câu ép lặp lại, hệ quả với nhân vật — không lược bỏ và cũng không thêm chi tiết chương không có.", "Câu cuối: nêu trạng thái kết chương (quan hệ quyền lực, kế hoạch tiếp theo, mốc thời gian sắp tới, việc còn bỏ ngỏ) — chỉ dùng thông tin có trong chương.", "Chỉ dùng thông tin có trong chương. Sửa lỗi chính tả/đánh máy theo văn bản gốc. Không đánh giá, không bình luận. Độ dài BẮT BUỘC 300-400 từ tiếng Việt, TUYỆT ĐỐI không quá 400 từ: lược chi tiết phụ, chỉ giữ mốc chính, tên, giờ giấc, số hiệu, lệnh và lời thoại then chốt. Chỉ trả về bản tóm tắt.",
       "TUYỆT ĐỐI KHÔNG mô tả tiêu chí/phương pháp tóm tắt và KHÔNG dùng các nhãn như \"Ngắn gọn:\", \"Đủ chi tiết:\", \"Cấu trúc rõ:\", \"Trung lập:\"... Đây PHẢI là tóm tắt NỘI DUNG CÂU CHUYỆN thật sự đã xảy ra trong chương (ai làm gì, ở đâu, khi nào) — không phải mô tả cách bạn sẽ tóm tắt hay giải thích quy tắc."].join("\n");
   const prompt = [
     rules.replace("{n}", String(chapterNumber)),
@@ -4397,7 +4397,7 @@ async function generateChapterSummary(text, chapterNumber, silent){
     "", "NỘI DUNG CHƯƠNG " + chapterNumber + ":", text
   ].join("\n");
   try{
-    let { text: summary } = await callAI(prompt, {maxTokens:3500, temperature:0.2});
+    let { text: summary } = await callAI(prompt, {maxTokens:1400, temperature:0.2});
     summary = summary.trim();
     // V12.9: nếu AI trả lời kiểu mô tả tiêu chí ("Ngắn gọn:", "Đủ chi tiết:"...) thay vì
     // tóm tắt nội dung thật, hoặc thiếu dòng mở đầu bắt buộc -> gọi lại 1 lần với cảnh báo mạnh hơn.
@@ -4405,9 +4405,23 @@ async function generateChapterSummary(text, chapterNumber, silent){
     if(looksLikeMeta){
       try{
         const retryPrompt = prompt + "\n\nCẢNH BÁO: Câu trả lời trước của bạn đã SAI — nó mô tả TIÊU CHÍ tóm tắt thay vì tóm tắt NỘI DUNG chương. Hãy viết lại: bắt đầu bằng \"**Tóm tắt chương:**\" rồi kể lại các sự kiện THẬT trong chương theo trình tự thời gian. TUYỆT ĐỐI không liệt kê tiêu chí/phương pháp.";
-        const retry = await callAI(retryPrompt, {maxTokens:3500, temperature:0.15});
+        const retry = await callAI(retryPrompt, {maxTokens:1400, temperature:0.15});
         if(retry.text && retry.text.trim()) summary = retry.text.trim();
       }catch(_){}
+    }
+    // V12.10: giới hạn 300-400 từ — nếu vẫn dài thì rút gọn 1 lần, rồi cắt cứng theo câu.
+    const wc = t => (String(t).trim().match(/\S+/g) || []).length;
+    if(wc(summary) > 450){
+      try{
+        const rc = "Rút gọn bản tóm tắt sau xuống 300-400 từ tiếng Việt. Giữ dòng mở đầu \"**Tóm tắt chương:**\", giữ trình tự thời gian, tên đầy đủ, giờ giấc, số hiệu, lệnh/lời thoại then chốt; bỏ chi tiết phụ. Chỉ trả về bản đã rút gọn.\n\n" + summary;
+        const r3 = await callAI(rc, {maxTokens:1400, temperature:0.15});
+        if(r3.text && r3.text.trim() && wc(r3.text) < wc(summary)) summary = r3.text.trim();
+      }catch(_){}
+      if(wc(summary) > 450){
+        const words = summary.split(/\s+/).slice(0,420).join(" ");
+        const cut = Math.max(words.lastIndexOf(". "), words.lastIndexOf("! "), words.lastIndexOf("? "));
+        summary = cut > words.length*0.6 ? words.slice(0,cut+1) : words;
+      }
     }
     return summary;
   }catch(err){ console.warn("[Summary]", err.message); return ""; }
