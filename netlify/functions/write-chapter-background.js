@@ -88,9 +88,17 @@ function trimToWordLimit(text, maxWords) {
   if (m && countWords(m[1]) >= Math.max(1, maxWords - 180)) out = m[1];
   return { text: out.trim(), trimmed: true };
 }
+function stripForeign(text) {
+  // V12.10: dọn chữ Hán/Nhật/Hàn/Cyrillic/Thái/Ả Rập/Hindi còn sót (kể cả khi dưới ngưỡng viết lại).
+  if (!text) return text;
+  let t = String(text)
+    .replace(/，/g, ", ").replace(/。/g, ". ").replace(/！/g, "! ").replace(/？/g, "? ").replace(/：/g, ": ").replace(/、/g, ", ")
+    .replace(/[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0E00-\u0E7F\u0600-\u06FF\u0900-\u097F]+/g, "");
+  return t.replace(/[ \t]{2,}/g, " ").replace(/ +([,.!?;:])/g, "$1").replace(/\( *\)|“ *”|" *"/g, "");
+}
 function detectNonVietnamese(text) {
   if (!text) return false;
-  const foreign = (String(text).match(/[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF]/g) || []).length;
+  const foreign = (String(text).match(/[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0E00-\u0E7F\u0600-\u06FF\u0900-\u097F]/g) || []).length;
   const total = String(text).replace(/\s/g, "").length || 1;
   return (foreign / total) > 0.005;
 }
@@ -781,6 +789,7 @@ async function generateOneChapter(job) {
       if (capped.trimmed) break;
     } catch (e) { issues.push(`Viết tiếp #${attempts}: ${e.message}`); break; }
   }
+  text = stripForeign(text);
   const finalCap = trimToWordLimit(text, maxWords);
   text = finalCap.text;
   if (finalCap.trimmed) issues.push(`Đã khóa độ dài: tối đa ${maxWords} từ`);
