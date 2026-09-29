@@ -858,17 +858,31 @@ async function generateNextChapterHint(job, chapter, summary, n, state) {
 }
 
 function compactCharacterList(state) {
-  return (state.characters || []).slice(0, 80).map(c => `- ${c.name} [${c.tier || "supporting"}]${c.dead ? " [ĐÃ CHẾT]" : ""}`).join("\n") || "(chưa có)";
+  // V12.10: NV bị khóa hồ sơ gốc -> không đổi appearance/personality/goals; NV đã mở khóa -> kèm hồ sơ hiện tại để AI chỉ bổ sung điểm MỚI.
+  return (state.characters || []).slice(0, 80).map(c => {
+    const locked = c.coreLocked !== false;
+    let line = `- ${c.name} [${c.tier || "supporting"}]${c.dead ? " [ĐÃ CHẾT]" : ""}${locked ? " [KHÓA HỒ SƠ GỐC]" : " [MỞ KHÓA: được cập nhật ngoại hình/tính cách/mục tiêu]"}`;
+    if (!locked) {
+      const cur = ["appearance","personality","goals"].map(k => c[k] ? `${k}: ${String(c[k]).slice(-260)}` : "").filter(Boolean).join(" | ");
+      if (cur) line += `\n    hiện có -> ${cur}`;
+    }
+    return line;
+  }).join("\n") || "(chưa có)";
 }
 
-function mergeTextField(oldValue, newValue, max = 1400) {
+function mergeTextField(oldValue, newValue, max = 2500) {
   const a = String(oldValue || "").trim(), b = String(newValue || "").trim();
   if (!b) return a;
   if (!a) return b.slice(0, max);
   if (normalizeName(a) === normalizeName(b) || normalizeName(a).includes(normalizeName(b))) return a;
   if (normalizeName(b).includes(normalizeName(a))) return b.slice(0, max);
-  const merged = a + "; " + b;
-  return merged.slice(0, max);
+  // V12.10: bỏ các đoạn đã có ý y hệt; khi vượt giới hạn thì bỏ đoạn CŨ NHẤT (không cắt mất phần mới ở cuối).
+  const na = normalizeName(a);
+  const fresh = b.split(/;\s*/).filter(seg => seg.trim() && !na.includes(normalizeName(seg)));
+  if (!fresh.length) return a;
+  const parts = a.split(/;\s*/).concat(fresh);
+  while (parts.length > 1 && parts.join("; ").length > max) parts.shift();
+  return parts.join("; ").slice(-max);
 }
 
 function mergeCharacter(state, u, chapterNumber) {
@@ -896,7 +910,7 @@ function mergeCharacter(state, u, chapterNumber) {
     if(coreLocked){
       coreFields.forEach(k=>{ if(c.coreIdentity[k] === undefined) c.coreIdentity[k] = c[k] || ""; });
     }
-    accum.forEach(k => { if (u[k] && (!coreLocked || !coreFields.includes(k))) c[k] = mergeTextField(c[k], u[k]); });
+    accum.forEach(k => { if (u[k] && (!coreLocked || !coreFields.includes(k))) { c[k] = mergeTextField(c[k], u[k]); if (!coreLocked && coreFields.includes(k)) c.coreIdentity[k] = c[k]; } });
     ["role","relevanceToMC","occupation","faction"].forEach(k => { if (u[k] && (!coreLocked || !coreFields.includes(k))) c[k] = u[k]; });
     ["currentLocation","physicalState","mentalState"].forEach(k => { if (u[k]) c[k] = u[k]; });
     if (u.tier && !c.locked) c.tier = u.tier;
@@ -936,7 +950,7 @@ async function updateCharacters(job, chapter, n, state) {
     const prompt = [
       `CẬP NHẬT NHÂN VẬT — CHƯƠNG ${n}, PHẦN ${i + 1}/${chunks.length}.`,
       "Chỉ liệt kê nhân vật thực sự xuất hiện hoặc được nhắc tới có ý nghĩa trong PHẦN này. Không bịa.",
-      "Tối đa 12 nhân vật; mỗi trường tối đa khoảng 25 từ; không lặp hồ sơ cũ dài dòng. Không dùng dấu \" bên trong giá trị chuỗi. Chỉ trả về JSON array.",
+      "Tối đa 12 nhân vật; mỗi trường mô tả (appearance/personality/goals/knowledge) khoảng 30-60 từ, cụ thể (đặc điểm, hành vi, chi tiết mới lộ ra trong phần này); chỉ ghi điểm MỚI so với mục \"hiện có\", không lặp lại hồ sơ cũ; NV đang [KHÓA HỒ SƠ GỐC] thì để trống appearance/personality/goals. Không dùng dấu \" bên trong giá trị chuỗi. Chỉ trả về JSON array.",
       "Danh sách tên đã biết:", compactCharacterList(state),
       "NỘI DUNG PHẦN:", chunks[i],
       'JSON: [{"name":"","tier":"background|minor|supporting|important|major","role":"","relevanceToMC":"","appearance":"","personality":"","occupation":"","faction":"","goals":"","secret":"","weakness":"","fear":"","knowledge":"","currentLocation":"","physicalState":"","mentalState":"","chapterEvent":"","relationships":[{"withName":"","stage":"","trust":"","notes":""}],"isDead":false}]'
