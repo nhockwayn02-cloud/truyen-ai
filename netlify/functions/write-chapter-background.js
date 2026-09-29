@@ -792,19 +792,33 @@ async function generateOneChapter(job) {
 async function generateSummary(job, chapter, n) {
   try {
     const body = representativeText(chapter.text, 90000);
-    const rules = ["Tóm tắt CHƯƠNG {n} theo đúng trình tự thời gian như một biên bản diễn biến — bám sát nội dung chương, không khái quát hóa, không đoán, không bịa.", "ĐỊNH DẠNG: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch quan hệ/xung đột chính của chương, sau đó 5-8 đoạn ngắn theo thứ tự diễn ra (đêm/sáng/chiều/tối...), mỗi đoạn là một cảnh hoặc một mốc thời gian. KHÔNG dùng nhãn kiểu \"Đầu/Giữa/Cuối\", KHÔNG viết dạng gạch đầu dòng danh mục (Vật phẩm/Quan hệ/Hệ quả...).", "BẮT BUỘC trong mỗi đoạn: (a) dùng TÊN ĐẦY ĐỦ của nhân vật đúng như trong truyện, tuyệt đối không viết \"một đàn ông (tên chưa rõ)\" nếu tên đã xuất hiện trong chương hay trong danh sách nhân vật; (b) ghi rõ ai làm gì với ai, ở đâu, lúc mấy giờ nếu có; (c) giữ nguyên các chi tiết cụ thể: mệnh lệnh/kịch bản/lời thoại quan trọng, giờ giấc, số hiệu phòng/tầng, vật dụng, con số, tên hợp đồng/sổ sách; (d) nêu hành động và phản ứng của nhân vật, kể cả mưu tính, do dự, thay đổi quyết định.", "Với cảnh 18+/bạo lực/cưỡng ép: tóm tắt trung thực và gọn bằng ngôn ngữ trung tính, nêu rõ ai tham gia, kiểu hành vi chính, mệnh lệnh hay câu ép lặp lại, hệ quả với nhân vật — không lược bỏ và cũng không thêm chi tiết chương không có.", "Câu cuối: nêu trạng thái kết chương (quan hệ quyền lực, kế hoạch tiếp theo, mốc thời gian sắp tới, việc còn bỏ ngỏ) — chỉ dùng thông tin có trong chương.", "Chỉ dùng thông tin có trong chương. Sửa lỗi chính tả/đánh máy theo văn bản gốc. Không đánh giá, không bình luận. Độ dài khoảng 350-550 từ tiếng Việt. Chỉ trả về bản tóm tắt.",
+    const rules = ["Tóm tắt CHƯƠNG {n} theo đúng trình tự thời gian như một biên bản diễn biến — bám sát nội dung chương, không khái quát hóa, không đoán, không bịa.", "ĐỊNH DẠNG: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch quan hệ/xung đột chính của chương, sau đó 4-5 đoạn ngắn theo thứ tự diễn ra (đêm/sáng/chiều/tối...), mỗi đoạn là một cảnh hoặc một mốc thời gian. KHÔNG dùng nhãn kiểu \"Đầu/Giữa/Cuối\", KHÔNG viết dạng gạch đầu dòng danh mục (Vật phẩm/Quan hệ/Hệ quả...).", "BẮT BUỘC trong mỗi đoạn: (a) dùng TÊN ĐẦY ĐỦ của nhân vật đúng như trong truyện, tuyệt đối không viết \"một đàn ông (tên chưa rõ)\" nếu tên đã xuất hiện trong chương hay trong danh sách nhân vật; (b) ghi rõ ai làm gì với ai, ở đâu, lúc mấy giờ nếu có; (c) giữ nguyên các chi tiết cụ thể: mệnh lệnh/kịch bản/lời thoại quan trọng, giờ giấc, số hiệu phòng/tầng, vật dụng, con số, tên hợp đồng/sổ sách; (d) nêu hành động và phản ứng của nhân vật, kể cả mưu tính, do dự, thay đổi quyết định.", "Với cảnh 18+/bạo lực/cưỡng ép: tóm tắt trung thực và gọn bằng ngôn ngữ trung tính, nêu rõ ai tham gia, kiểu hành vi chính, mệnh lệnh hay câu ép lặp lại, hệ quả với nhân vật — không lược bỏ và cũng không thêm chi tiết chương không có.", "Câu cuối: nêu trạng thái kết chương (quan hệ quyền lực, kế hoạch tiếp theo, mốc thời gian sắp tới, việc còn bỏ ngỏ) — chỉ dùng thông tin có trong chương.", "Chỉ dùng thông tin có trong chương. Sửa lỗi chính tả/đánh máy theo văn bản gốc. Không đánh giá, không bình luận. Độ dài BẮT BUỘC 300-400 từ tiếng Việt, TUYỆT ĐỐI không quá 400 từ: lược chi tiết phụ, chỉ giữ mốc chính, tên, giờ giấc, số hiệu, lệnh và lời thoại then chốt. Chỉ trả về bản tóm tắt.",
       "TUYỆT ĐỐI KHÔNG mô tả tiêu chí/phương pháp tóm tắt và KHÔNG dùng các nhãn như \"Ngắn gọn:\", \"Đủ chi tiết:\", \"Cấu trúc rõ:\", \"Trung lập:\"... Đây PHẢI là tóm tắt NỘI DUNG CÂU CHUYỆN thật sự đã xảy ra trong chương (ai làm gì, ở đâu, khi nào) — không phải mô tả cách bạn sẽ tóm tắt hay giải thích quy tắc."].join("\n");
     const fullPrompt = rules.replace("{n}", String(n)) + "\n\nNỘI DUNG CHƯƠNG " + n + ":\n" + body;
-    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: fullPrompt }], maxTokens: 3500, temperature: 0.2 }, 2);
+    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: fullPrompt }], maxTokens: 1400, temperature: 0.2 }, 2);
     let summary = (r.text || "").trim();
     // V12.9: nếu AI trả lời kiểu mô tả tiêu chí thay vì tóm tắt nội dung thật -> gọi lại 1 lần.
     const looksLikeMeta = !/\*\*Tóm tắt chương:?\*\*/i.test(summary) || /^(Ngắn gọn|Súc tích|Đủ chi tiết|Cấu trúc rõ|Trung lập)\s*[:：]/im.test(summary);
     if (looksLikeMeta) {
       try {
         const retryContent = fullPrompt + "\n\nCẢNH BÁO: Câu trả lời trước của bạn đã SAI — nó mô tả TIÊU CHÍ tóm tắt thay vì tóm tắt NỘI DUNG chương. Hãy viết lại: bắt đầu bằng \"**Tóm tắt chương:**\" rồi kể lại các sự kiện THẬT trong chương theo trình tự thời gian. TUYỆT ĐỐI không liệt kê tiêu chí/phương pháp.";
-        const r2 = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: retryContent }], maxTokens: 3500, temperature: 0.15 }, 1);
+        const r2 = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: retryContent }], maxTokens: 1400, temperature: 0.15 }, 1);
         if (r2.text && r2.text.trim()) summary = r2.text.trim();
       } catch (_) {}
+    }
+    // V12.10: giới hạn 300-400 từ — nếu vẫn dài thì rút gọn 1 lần, rồi cắt cứng theo câu.
+    const _wc = t => (String(t).trim().match(/\S+/g) || []).length;
+    if (_wc(summary) > 450) {
+      try {
+        const rc = "Rút gọn bản tóm tắt sau xuống 300-400 từ tiếng Việt. Giữ dòng mở đầu \"**Tóm tắt chương:**\", giữ trình tự thời gian, tên đầy đủ, giờ giấc, số hiệu, lệnh/lời thoại then chốt; bỏ chi tiết phụ. Chỉ trả về bản đã rút gọn.\n\n" + summary;
+        const r3 = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: rc }], maxTokens: 1400, temperature: 0.15 }, 1);
+        if (r3.text && r3.text.trim() && _wc(r3.text) < _wc(summary)) summary = r3.text.trim();
+      } catch (_) {}
+      if (_wc(summary) > 450) {
+        const words = summary.split(/\s+/).slice(0, 420).join(" ");
+        const cut = Math.max(words.lastIndexOf(". "), words.lastIndexOf("。"), words.lastIndexOf("! "), words.lastIndexOf("? "));
+        summary = cut > words.length * 0.6 ? words.slice(0, cut + 1) : words;
+      }
     }
     return summary;
   } catch (_) { return ""; }
