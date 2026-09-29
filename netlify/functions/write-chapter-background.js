@@ -798,37 +798,88 @@ async function generateOneChapter(job) {
   return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.3", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
 }
 
+/* V12.10: chống tóm tắt bịa — kiểm tra tên/từ trong bản tóm tắt có thật trong chương không. */
+function _sumNorm(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim(); }
+function summaryNameList(text, characters){
+  const nt=_sumNorm(text);
+  return (characters||[]).map(c=>c&&c.name).filter(Boolean).filter(n=>nt.includes(_sumNorm(n))).slice(0,40);
+}
+function _sumNameGrounded(name, text){
+  const toks=String(name).split(/\s+/).filter(Boolean);
+  let hit=0;
+  toks.forEach(t=>{ try{ if(new RegExp("(^|[^\\p{L}])"+t+"(?![\\p{L}])","u").test(text)) hit++; }catch(_){} });
+  return hit >= Math.ceil(toks.length/2);
+}
+function summaryGrounded(summary, text){
+  const names=[]; const bad=[]; let good=0;
+  (String(summary).match(/(?:\p{Lu}\p{Ll}+)(?:\s+\p{Lu}\p{Ll}+)+/gu)||[]).forEach(nm=>{
+    if(names.includes(nm)) return; names.push(nm);
+    if(_sumNameGrounded(nm, text)) good++; else bad.push(nm);
+  });
+  const nameOk = names.length<2 || bad.length/names.length <= 0.34;
+  const tw=new Set((_sumNorm(text).match(/[a-z0-9]{2,}/g)||[]));
+  const sw=(_sumNorm(summary).match(/[a-z]{4,}/g)||[]);
+  const ov = sw.length ? sw.filter(w=>tw.has(w)).length/sw.length : 1;
+  return { ok: nameOk && ov>=0.4, bad, ov };
+}
+function extractiveSummary(text){
+  const paras=String(text||"").split(/\n+/).map(p=>p.trim()).filter(p=>p.length>60);
+  if(!paras.length) return "";
+  const pick=Math.min(9, paras.length); const out=[];
+  for(let i=0;i<pick;i++){
+    const p=paras[Math.floor(i*paras.length/pick)];
+    const w=p.split(/\s+/); let seg=w.slice(0,45).join(" ");
+    if(w.length>45){ const k=Math.max(seg.lastIndexOf(". "),seg.lastIndexOf("! "),seg.lastIndexOf("? ")); if(k>seg.length*0.4) seg=seg.slice(0,k+1); }
+    out.push(seg);
+  }
+  return "**Tóm tắt chương:** (trích tự động từ văn bản)\n\n"+out.join("\n\n");
+}
+function buildSummaryPrompt(text, n, names){
+  return [
+    "Bạn là bộ máy tóm tắt. Chỉ được dựa vào văn bản trong thẻ <chuong>; không có kiến thức nào khác về truyện này.",
+    "<chuong>", text, "</chuong>",
+    "NHIỆM VỤ: tóm tắt CHƯƠNG "+n+" trên đây theo đúng trình tự diễn ra.",
+    "1) Chỉ dùng nhân vật, địa điểm, đồ vật, giờ giấc, lời thoại CÓ trong <chuong>. Không thêm, không suy diễn. Nếu chương không nêu giờ giấc hay chức danh thì KHÔNG ghi.",
+    names && names.length ? "2) Tên nhân vật xuất hiện trong chương (chỉ dùng đúng các tên này): "+names.join(", ")+"." : "2) Dùng đúng tên nhân vật như viết trong chương.",
+    "3) Định dạng: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch chính, sau đó 4-5 đoạn ngắn theo diễn biến (mỗi đoạn một cảnh/mốc). Không dùng nhãn Đầu/Giữa/Cuối, không gạch đầu dòng, không mô tả tiêu chí tóm tắt.",
+    "4) Với cảnh nhạy cảm (18+/bạo lực/cưỡng ép): thuật lại ngắn gọn, trung lập ai làm gì với ai, câu nói/mệnh lệnh chính và hệ quả — không bỏ cảnh, không thêm chi tiết ngoài văn bản.",
+    "5) Câu cuối: trạng thái cuối chương theo đúng văn bản.",
+    "6) Độ dài 300-400 từ tiếng Việt, tối đa 400. Chỉ trả về bản tóm tắt."
+  ].join("\n");
+}
+function summaryRetryNote(g){
+  return "\n\nLỖI LẦN TRƯỚC: bản tóm tắt chứa nội dung KHÔNG có trong <chuong>"+(g.bad&&g.bad.length?" (tên không có trong chương, cấm dùng: "+g.bad.join(", ")+")":"")+". Viết lại: bắt đầu bằng \"**Tóm tắt chương:**\" rồi chỉ kể lại các sự kiện có thật trong <chuong>.";
+}
+
 async function generateSummary(job, chapter, n) {
   try {
-    const body = representativeText(chapter.text, 90000);
-    const rules = ["Tóm tắt CHƯƠNG {n} theo đúng trình tự thời gian như một biên bản diễn biến — bám sát nội dung chương, không khái quát hóa, không đoán, không bịa.", "ĐỊNH DẠNG: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch quan hệ/xung đột chính của chương, sau đó 4-5 đoạn ngắn theo thứ tự diễn ra (đêm/sáng/chiều/tối...), mỗi đoạn là một cảnh hoặc một mốc thời gian. KHÔNG dùng nhãn kiểu \"Đầu/Giữa/Cuối\", KHÔNG viết dạng gạch đầu dòng danh mục (Vật phẩm/Quan hệ/Hệ quả...).", "BẮT BUỘC trong mỗi đoạn: (a) dùng TÊN ĐẦY ĐỦ của nhân vật đúng như trong truyện, tuyệt đối không viết \"một đàn ông (tên chưa rõ)\" nếu tên đã xuất hiện trong chương hay trong danh sách nhân vật; (b) ghi rõ ai làm gì với ai, ở đâu, lúc mấy giờ nếu có; (c) giữ nguyên các chi tiết cụ thể: mệnh lệnh/kịch bản/lời thoại quan trọng, giờ giấc, số hiệu phòng/tầng, vật dụng, con số, tên hợp đồng/sổ sách; (d) nêu hành động và phản ứng của nhân vật, kể cả mưu tính, do dự, thay đổi quyết định.", "Với cảnh 18+/bạo lực/cưỡng ép: tóm tắt trung thực và gọn bằng ngôn ngữ trung tính, nêu rõ ai tham gia, kiểu hành vi chính, mệnh lệnh hay câu ép lặp lại, hệ quả với nhân vật — không lược bỏ và cũng không thêm chi tiết chương không có.", "Câu cuối: nêu trạng thái kết chương (quan hệ quyền lực, kế hoạch tiếp theo, mốc thời gian sắp tới, việc còn bỏ ngỏ) — chỉ dùng thông tin có trong chương.", "Chỉ dùng thông tin có trong chương. Sửa lỗi chính tả/đánh máy theo văn bản gốc. Không đánh giá, không bình luận. Độ dài BẮT BUỘC 300-400 từ tiếng Việt, TUYỆT ĐỐI không quá 400 từ: lược chi tiết phụ, chỉ giữ mốc chính, tên, giờ giấc, số hiệu, lệnh và lời thoại then chốt. Chỉ trả về bản tóm tắt.",
-      "TUYỆT ĐỐI KHÔNG mô tả tiêu chí/phương pháp tóm tắt và KHÔNG dùng các nhãn như \"Ngắn gọn:\", \"Đủ chi tiết:\", \"Cấu trúc rõ:\", \"Trung lập:\"... Đây PHẢI là tóm tắt NỘI DUNG CÂU CHUYỆN thật sự đã xảy ra trong chương (ai làm gì, ở đâu, khi nào) — không phải mô tả cách bạn sẽ tóm tắt hay giải thích quy tắc."].join("\n");
-    const fullPrompt = rules.replace("{n}", String(n)) + "\n\nNỘI DUNG CHƯƠNG " + n + ":\n" + body;
-    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: fullPrompt }], maxTokens: 1400, temperature: 0.2 }, 2);
-    let summary = (r.text || "").trim();
-    // V12.9: nếu AI trả lời kiểu mô tả tiêu chí thay vì tóm tắt nội dung thật -> gọi lại 1 lần.
-    const looksLikeMeta = !/\*\*Tóm tắt chương:?\*\*/i.test(summary) || /^(Ngắn gọn|Súc tích|Đủ chi tiết|Cấu trúc rõ|Trung lập)\s*[:：]/im.test(summary);
-    if (looksLikeMeta) {
-      try {
-        const retryContent = fullPrompt + "\n\nCẢNH BÁO: Câu trả lời trước của bạn đã SAI — nó mô tả TIÊU CHÍ tóm tắt thay vì tóm tắt NỘI DUNG chương. Hãy viết lại: bắt đầu bằng \"**Tóm tắt chương:**\" rồi kể lại các sự kiện THẬT trong chương theo trình tự thời gian. TUYỆT ĐỐI không liệt kê tiêu chí/phương pháp.";
-        const r2 = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: retryContent }], maxTokens: 1400, temperature: 0.15 }, 1);
-        if (r2.text && r2.text.trim()) summary = r2.text.trim();
-      } catch (_) {}
+    const full = String(chapter.text || "");
+    const body = representativeText(full, 90000);
+    const names = summaryNameList(full, (job.storyState && job.storyState.characters) || []);
+    const fullPrompt = buildSummaryPrompt(body, n, names);
+    const ask = async (content, temp, tries) => {
+      const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content }], maxTokens: 1400, temperature: temp }, tries);
+      return (r.text || "").trim();
+    };
+    const looksMeta = s => !/\*\*Tóm tắt chương:?\*\*/i.test(s) || /^(Ngắn gọn|Súc tích|Đủ chi tiết|Cấu trúc rõ|Trung lập)\s*[:：]/im.test(s);
+    let summary = await ask(fullPrompt, 0.2, 2);
+    const g = summaryGrounded(summary, full);
+    if (looksMeta(summary) || !g.ok) {
+      try { const s2 = await ask(fullPrompt + summaryRetryNote(g), 0.1, 1); if (s2) summary = s2; } catch (_) {}
     }
-    // V12.10: giới hạn 300-400 từ — nếu vẫn dài thì rút gọn 1 lần, rồi cắt cứng theo câu.
     const _wc = t => (String(t).trim().match(/\S+/g) || []).length;
     if (_wc(summary) > 450) {
       try {
-        const rc = "Rút gọn bản tóm tắt sau xuống 300-400 từ tiếng Việt. Giữ dòng mở đầu \"**Tóm tắt chương:**\", giữ trình tự thời gian, tên đầy đủ, giờ giấc, số hiệu, lệnh/lời thoại then chốt; bỏ chi tiết phụ. Chỉ trả về bản đã rút gọn.\n\n" + summary;
-        const r3 = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: rc }], maxTokens: 1400, temperature: 0.15 }, 1);
-        if (r3.text && r3.text.trim() && _wc(r3.text) < _wc(summary)) summary = r3.text.trim();
+        const s3 = await ask("Rút gọn bản tóm tắt sau xuống 300-400 từ tiếng Việt. Giữ dòng mở đầu \"**Tóm tắt chương:**\", giữ trình tự thời gian, tên đầy đủ; bỏ chi tiết phụ; không thêm gì mới. Chỉ trả về bản đã rút gọn.\n\n" + summary, 0.15, 1);
+        if (s3 && _wc(s3) < _wc(summary)) summary = s3;
       } catch (_) {}
       if (_wc(summary) > 450) {
         const words = summary.split(/\s+/).slice(0, 420).join(" ");
-        const cut = Math.max(words.lastIndexOf(". "), words.lastIndexOf("。"), words.lastIndexOf("! "), words.lastIndexOf("? "));
+        const cut = Math.max(words.lastIndexOf(". "), words.lastIndexOf("! "), words.lastIndexOf("? "));
         summary = cut > words.length * 0.6 ? words.slice(0, cut + 1) : words;
       }
     }
+    if (!summaryGrounded(summary, full).ok) summary = extractiveSummary(full) || summary;
     return summary;
   } catch (_) { return ""; }
 }
