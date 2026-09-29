@@ -653,7 +653,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="section-body">
 <div class="field"><label>Mệnh lệnh chương tới <span class="hint">(brief bắt buộc — AI phải bám đầy đủ)</span></label><textarea id="directive" rows="3"></textarea></div>
 <div class="field"><label>Kiểu gợi ý chương sau <span class="hint">(áp dụng cho gợi ý tự động và nút bên dưới)</span></label><select id="hintStyle"><option value="normal">Bình thường</option><option value="resist">Có chống cự</option><option value="twist">Đảo chiều / bước ngoặt</option><option value="escalate">Leo thang</option><option value="slow">Chậm lại, đào sâu cảm xúc</option></select><button type="button" id="regenHintBtn" style="margin-top:6px">✨ Tạo lại gợi ý chương sau</button></div>
-<div class="field"><label>Gợi ý chương sau <span class="hint">(AI phải bám các chi tiết bạn ghi; không tự mở tuyến mới)</span></label><textarea id="nextChapterHint" rows="10" placeholder="VD: Chương sau nên hé lộ thân phận của X; chưa cần đưa Y quay lại."></textarea></div>
+<div class="field"><label>Gợi ý chương sau <span class="hint">(AI phải bám các chi tiết bạn ghi; không tự mở tuyến mới · khoảng 400–600 từ)</span></label><textarea id="nextChapterHint" rows="10" placeholder="VD: Chương sau nên hé lộ thân phận của X; chưa cần đưa Y quay lại."></textarea></div>
 </div>
 </div><div class="section tone-green settings-only-section" data-column="settings" data-section="">
 <div class="section-head" data-toggle=""><span>2.5. Quy Tắc Nâng Cao</span><span class="chev">▾</span></div>
@@ -2144,10 +2144,13 @@ async function callAI(prompt, opts){
       globalAbort = null;
       const choice = data.choices && data.choices[0];
       if(!choice) throw new Error("Không có phản hồi.");
+      // KHÔNG bao giờ dùng reasoning/reasoning_content làm nội dung hiển thị.
+      // Một số model reasoning (đặc biệt Aion 3.5 Mini) có thể trả phần suy luận riêng;
+      // nếu lấy fallback reasoning ở đây, giao diện sẽ hiện tiếng Anh kiểu "Let me start..."
+      // thay vì câu trả lời cuối cùng. Chỉ nhận final content/text.
       content = choice.message ? choice.message.content : choice.text;
-      if((!content || !content.trim()) && choice.message) content = choice.message.reasoning || choice.message.reasoning_content || "";
       finishReason = choice.finish_reason || null;
-      if(!content || !content.trim()) throw new Error("Phản hồi trống (finish: " + (finishReason||"?") + ").");
+      if(!content || !content.trim()) throw new Error("Phản hồi cuối rỗng (finish: " + (finishReason||"?") + "). Không dùng reasoning làm nội dung.");
     }
 
     if(!opts.skipTracking){
@@ -4604,11 +4607,61 @@ async function generateNextChapterHint(text, summary, chapterNumber){
     "", "ĐOẠN KẾT CHƯƠNG (để nối mạch):", text.slice(-1500),
     openThreads ? ("\nTHREADS ĐANG MỞ:\n" + openThreads) : "",
     openForeshadowing ? ("\nFORESHADOWING CHƯA GIẢI:\n" + openForeshadowing) : "",
-    "\nChỉ trả về nội dung gợi ý theo định dạng trên, tiếng Việt."
+    "\nNGÔN NGỮ ĐẦU RA BẮT BUỘC: 100% tiếng Việt có dấu.",
+    "KHÔNG viết phân tích, không viết quá trình suy luận, không dùng tiếng Anh để giải thích yêu cầu.",
+    "KHÔNG được bắt đầu bằng các cụm như \"For Chapter\", \"Let me start\", \"based on\", \"Requirements\" hoặc bất kỳ phần phân tích nào.",
+    "ĐỘ DÀI BẮT BUỘC: khoảng 400–600 từ, không được vượt quá 600 từ. Nếu nội dung có thể nói ngắn hơn thì vẫn phải đủ chi tiết trong khoảng này.",
+    "Chỉ trả về NỘI DUNG CUỐI CÙNG của gợi ý chương theo đúng định dạng đã yêu cầu."
   ].filter(x=>x!=="" && x!=null).join("\n");
   try{
-    const { text: hint } = await callAI(prompt, {maxTokens:1400, temperature:0.7});
-    return hint.trim();
+    // Aion 3.5 Mini là model reasoning: dành đủ ngân sách cho reasoning nhưng khóa FINAL ở khoảng 400–600 từ.
+    const { text: hint } = await callAI(prompt, {maxTokens:2800, temperature:0.55});
+    let out = hint.trim();
+    if(!out) return "";
+    // Nếu final content vẫn lẫn tiếng Anh, yêu cầu model viết lại phần FINAL bằng tiếng Việt.
+    if(detectNonVietnamese(out)){
+      const fixPrompt = [
+        "Viết lại NỘI DUNG GỢI Ý CHƯƠNG dưới đây thành 100% tiếng Việt có dấu.",
+        "Không phân tích, không giải thích, không nhắc tới prompt hay yêu cầu.",
+        "Giữ nguyên các nhân vật, sự kiện, địa điểm, trình tự và ý nghĩa; chỉ chuyển phần diễn đạt sang tiếng Việt tự nhiên.",
+        "CHỈ TRẢ VỀ BẢN GỢI Ý CUỐI CÙNG.",
+        "\nNỘI DUNG CẦN SỬA:\n" + out
+      ].join("\n");
+      try{
+        const fixed = await callAI(fixPrompt + "\n\nĐỘ DÀI: giữ trong khoảng 400–600 từ, tuyệt đối không vượt 600 từ.", {maxTokens:2400, temperature:0.25});
+        if(fixed && !detectNonVietnamese(fixed)) out = fixed.trim();
+      }catch(_){}
+    }
+
+    // Giữ gợi ý ở quy mô vừa phải: 400–600 từ. Nếu model trả quá dài, yêu cầu nén lại.
+    const countHintWords = (value)=>String(value||"").trim().split(/\s+/).filter(Boolean).length;
+    let hintWords = countHintWords(out);
+    if(hintWords > 600){
+      const compactPrompt = [
+        "RÚT GỌN GỢI Ý CHƯƠNG DƯỚI ĐÂY.",
+        "Giữ nguyên nhân vật, sự kiện, địa điểm, trình tự, xung đột và cú chốt.",
+        "Không bỏ các chi tiết quan trọng; chỉ loại bỏ diễn giải, lặp ý và câu thừa.",
+        "Giữ đúng định dạng **Gợi ý ngắn Chương ...:** và 4–6 đoạn cảnh.",
+        "ĐỘ DÀI BẮT BUỘC: 400–600 từ, tuyệt đối không vượt 600 từ.",
+        "CHỈ TRẢ BẢN GỢI Ý CUỐI CÙNG, 100% tiếng Việt có dấu.",
+        "\nGỢI Ý CẦN RÚT GỌN:\n" + out
+      ].join("\n");
+      try{
+        const compact = await callAI(compactPrompt, {maxTokens:2200, temperature:0.2});
+        if(compact && !detectNonVietnamese(compact)) out = compact.trim();
+      }catch(_){}
+      hintWords = countHintWords(out);
+    }
+
+    // Hard cap cuối cùng để không bao giờ lưu một gợi ý quá dài vào state.
+    if(hintWords > 600){
+      const words = out.split(/\s+/).filter(Boolean);
+      let clipped = words.slice(0,600).join(" ");
+      const lastStop = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("!"), clipped.lastIndexOf("?"));
+      if(lastStop > Math.floor(clipped.length*0.80)) clipped = clipped.slice(0,lastStop+1);
+      out = clipped.trim();
+    }
+    return out;
   }catch(err){ console.warn("[NextHint]", err.message); return ""; }
 }
 $ID("regenSummaryBtn").addEventListener("click", async ()=>{
