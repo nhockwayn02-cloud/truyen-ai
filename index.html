@@ -4281,39 +4281,121 @@ async function updateThreadsIncremental(text, chapterNumber, silent){ return { o
 /* ========== CURRENT STATUS ========== */
 async function updateCurrentStatusIncremental(text, chapterNumber, silent){
   if(!text) return {ok:false,reason:"empty"};
+
+  /* Current Status V2: CHANGE → VALIDATE → MERGE + EVIDENCE.
+     Không tái tạo toàn bộ status ở mỗi chương. */
   const old=state.currentStatus||"";
-  const prevSummaries=state.chapters.slice(Math.max(0,chapterNumber-4),chapterNumber).map((c,i)=>"Ch"+(Math.max(0,chapterNumber-4)+i+1)+": "+(c.summary||c.title||"")).join("\n");
+  const previousState=(state.statusState && typeof state.statusState==="object") ? JSON.parse(JSON.stringify(state.statusState)) : {};
+  if(!previousState.schemaVersion){
+    previousState.schemaVersion=2;
+    if(old && !Object.keys(previousState).length) previousState.legacyText=old;
+  }
+  if(!previousState.currentState || typeof previousState.currentState!=="object") previousState.currentState={};
+  if(!previousState.longTerm || typeof previousState.longTerm!=="object") previousState.longTerm={};
+  if(!Array.isArray(previousState.characterStates)) previousState.characterStates=[];
+  if(!Array.isArray(previousState.changeLog)) previousState.changeLog=[];
+  if(!Array.isArray(previousState.conflicts)) previousState.conflicts=[];
+
+  const prevSummaries=state.chapters.slice(Math.max(0,chapterNumber-4),chapterNumber)
+    .map((c,i)=>"Ch"+(Math.max(0,chapterNumber-4)+i+1)+": "+(c.summary||c.title||"")).join("\n");
   const body=text.length>24000?text.slice(0,9000)+"\n\n[...giữa...]\n\n"+text.slice(-11000):text;
+  const roster=(state.characters||[]).map(c=>({id:c.id,name:c.name,role:c.role||"",tier:c.tier||""}));
+  if(state.mainCharProfile?.name && !roster.some(c=>c.name===state.mainCharProfile.name))
+    roster.unshift({id:"main",name:state.mainCharProfile.name,role:"main",tier:"main"});
+
   const prompt=[
-    "Cập nhật CURRENT STATUS sau chương "+chapterNumber+".",
-    "Không xóa thông tin cũ chỉ vì chương này không nhắc lại. Chỉ thay đổi khi có bằng chứng.",
+    "CẬP NHẬT CURRENT STATUS SAU CHƯƠNG "+chapterNumber+" — CHỈ TRÍCH XUẤT THAY ĐỔI.",
+    "Dùng CHANGE → VALIDATE → MERGE. Không viết lại toàn bộ status.",
+    "Không xóa dữ liệu cũ chỉ vì không nhắc lại.",
+    "Chỉ cập nhật khi chương có bằng chứng rõ ràng.",
+    "Không tự tạo nhân vật mới; chỉ dùng ID/tên trong danh sách nhân vật.",
+    "Mỗi thay đổi phải có evidence ngắn, bám trực tiếp nội dung chương.",
+    "Mâu thuẫn chưa đủ căn cứ phải đưa vào conflicts, không ghi đè.",
+    "TIẾNG VIỆT.",
     "STATUS CŨ:",old||"(chưa có)","",
+    "DANH SÁCH NHÂN VẬT:",roster.map(c=>"- "+c.id+" | "+c.name+" | "+c.role+" | "+c.tier).join("\n")||"(không có)","",
     "TÓM TẮT CHƯƠNG GẦN:",prevSummaries||"(không)","",
     "CHƯƠNG:",body,"",
-    'Trả DUY NHẤT JSON: {"time":"","mainEvent":"","location":"","mc":"","relationships":"","powerItems":"","openConflict":"","nextGoal":"","longTermSecrets":"","rulesPromises":"","risks":"","drama":""}. Không markdown.'
+    'JSON DUY NHẤT: {"changes":{"time":{"status":"updated|unchanged","value":"","evidence":""},"situation":{"status":"updated|unchanged","value":"","evidence":""},"mainEvent":{"status":"updated|unchanged","value":"","evidence":""},"location":{"status":"updated|unchanged","value":"","evidence":""},"overall":{"status":"updated|unchanged","value":"","evidence":""},"mainCharacter":{"status":"updated|unchanged","value":"","evidence":""},"relationships":{"status":"updated|unchanged","value":"","evidence":""},"power":{"status":"updated|unchanged","value":"","evidence":""},"rules":{"status":"added|updated|unchanged","value":"","evidence":""},"conflict":{"status":"added|updated|unchanged","value":"","evidence":""},"nextGoal":{"status":"updated|unchanged","value":"","evidence":""},"knowledge":{"status":"added|updated|unchanged","value":"","evidence":""},"unresolved":{"status":"added|resolved|updated|unchanged","value":"","evidence":""},"secrets":{"status":"added|resolved|updated|unchanged","value":"","evidence":""},"weaknesses":{"status":"added|updated|unchanged","value":"","evidence":""},"characterChanges":[{"characterId":"","characterName":"","status":"updated|unchanged","changes":{"age":"","appearance":"","body":"","clothing":"","marks":"","cultivation":"","cultivationState":"","emotion":"","submission":"","ruleCompliance":"","socialStatus":"","occupation":"","residence":"","romance":"","weakness":"","goals":"","items":"","publicPersonality":"","privatePersonality":"","psychology":"","relationships":"","physicalState":"","mentalState":"","knowledge":""},"evidence":""}],"conflicts":[{"characterName":"","field":"","oldValue":"","newValue":"","description":"","evidence":""}]}}',
+    "Không điền giá trị cho trường không thay đổi. Không markdown."
   ].join("\n");
+
   try{
-    const r=await callAI(prompt,{maxTokens:6900,temperature:0.15});
+    const r=await callAI(prompt,{maxTokens:7600,temperature:0.12});
     let obj=safeJsonParse(r.text);
-    if(!obj||Array.isArray(obj)||typeof obj!=="object"){
-      const retry=await callAI("CHỈ TRẢ JSON OBJECT ĐÚNG ĐỊNH DẠNG.\n"+prompt,{maxTokens:9500,temperature:0.1});
+    if(!obj||Array.isArray(obj)||typeof obj!=="object"||!obj.changes){
+      const retry=await callAI("CHỈ TRẢ JSON OBJECT ĐÚNG SCHEMA.\n"+prompt,{maxTokens:9500,temperature:0.08});
       obj=safeJsonParse(retry.text);
     }
-    if(!obj||Array.isArray(obj)||typeof obj!=="object"){
-      if(!silent)setStatus("⚠ Status ch"+chapterNumber+": không parse được, giữ Status cũ.",false);
+    if(!obj||Array.isArray(obj)||typeof obj!=="object"||!obj.changes){
+      if(!silent)setStatus("⚠ Status ch"+chapterNumber+": không parse được change JSON, giữ Status cũ.",false);
       return {ok:false,reason:"parse"};
     }
+
+    const cs=previousState.currentState, lt=previousState.longTerm;
+    const validStatuses=["updated","added","resolved"];
+    let applied=0;
+    const setField=(target,key,item)=>{
+      if(!item||typeof item!=="object")return;
+      const st=String(item.status||"").toLowerCase(), ev=String(item.evidence||"").trim(), val=item.value;
+      if(!validStatuses.includes(st)||!ev||val==null||String(val).trim()==="")return;
+      target[key]=val; applied++;
+    };
+    ["time","situation","mainEvent","location","overall","mainCharacter","relationships","power","rules","conflict","nextGoal","knowledge","unresolved"]
+      .forEach(k=>setField(cs,k,obj.changes[k]));
+    ["secrets","weaknesses"].forEach(k=>setField(lt,k,obj.changes[k]));
+
+    const known=new Map(roster.filter(c=>c.id&&c.name).map(c=>[String(c.id),c]));
+    const byName=new Map(roster.filter(c=>c.name).map(c=>[String(c.name).trim().toLowerCase(),c]));
+    const incoming=Array.isArray(obj.changes.characterChanges)?obj.changes.characterChanges:[];
+    const chars=incoming.map(c=>{
+      const knownC=known.get(String(c.characterId||""))||byName.get(String(c.characterName||"").trim().toLowerCase());
+      if(!knownC)return null;
+      const changes={};
+      Object.entries(c.changes||{}).forEach(([k,v])=>{if(v!=null&&String(v).trim()!=="")changes[k]=v;});
+      const evidence=String(c.evidence||"").trim();
+      const accepted=Object.keys(changes).length && evidence && String(c.status||"updated").toLowerCase()==="updated";
+      return {characterId:knownC.id,name:knownC.name,status:accepted?"updated":"unchanged",changes:accepted?changes:{},evidence:accepted?evidence:""};
+    }).filter(Boolean);
+    const charMap=new Map(chars.map(c=>[c.characterId,c]));
+    roster.forEach(c=>{if(c.id&&!charMap.has(c.id))chars.push({characterId:c.id,name:c.name,status:"unchanged",changes:{},evidence:""});});
+    previousState.characterStates=chars;
+
+    const conflicts=(Array.isArray(obj.changes.conflicts)?obj.changes.conflicts:[])
+      .filter(c=>c&&String(c.evidence||"").trim())
+      .map(c=>({chapter:chapterNumber,characterName:c.characterName||"",field:c.field||"",oldValue:c.oldValue||"",newValue:c.newValue||"",description:c.description||"",evidence:String(c.evidence).trim()}));
+    previousState.conflicts=previousState.conflicts.concat(conflicts).slice(-50);
+    previousState.changeLog=previousState.changeLog.concat([{
+      chapter:chapterNumber,appliedAt:Date.now(),appliedCount:applied,conflicts:conflicts.length,changes:obj.changes
+    }]).slice(-50);
+    previousState.schemaVersion=2;
+
     const lines=["Current Status Update - Sau Chương "+chapterNumber];
-    const map=[["Thời điểm",obj.time],["Sự kiện chính",obj.mainEvent],["Địa điểm hiện tại",obj.location],["NV chính",obj.mc],["Quan hệ",obj.relationships],["Sức mạnh / vật phẩm / thông tin mới",obj.powerItems],["Xung đột đang mở",obj.openConflict],["Mục tiêu chương tới",obj.nextGoal],["Bí mật / lời hứa chưa giải",obj.longTermSecrets],["Quy tắc / thỏa thuận",obj.rulesPromises],["Điểm yếu / rủi ro",obj.risks],["Drama / quan hệ nền",obj.drama]];
-    map.forEach(([k,v])=>{if(v&&String(v).trim())lines.push("- "+k+": "+String(v).trim());});
-    if(lines.length<2){if(!silent)setStatus("⚠ Status ch"+chapterNumber+": rỗng, giữ Status cũ.",false);return {ok:false,reason:"empty"};}
+    const add=(k,v)=>{if(v!=null&&String(v).trim())lines.push("- "+k+": "+String(v).trim());};
+    add("Thời điểm hiện tại",cs.time); add("Sự kiện chính vừa xảy ra",cs.mainEvent||cs.situation);
+    add("Địa điểm",cs.location); add("Tình trạng tổng thể",cs.overall); add("Nhân vật chính",cs.mainCharacter);
+    add("Phát triển mối quan hệ",cs.relationships); add("Tiến triển sức mạnh / tu vi / kỹ năng",cs.power);
+    add("Quy tắc do nhân vật chính đặt ra",cs.rules); add("Điểm nhấn / xung đột mới",cs.conflict);
+    add("Mục tiêu / hướng chương sau",cs.nextGoal); add("Thông tin / kiến thức mới",cs.knowledge);
+    add("Vấn đề chưa giải quyết",cs.unresolved); add("Bí mật / lời hứa / sự kiện dài hạn",lt.secrets);
+    add("Điểm yếu / rủi ro",lt.weaknesses);
+    if(previousState.legacyText){ lines.push("- Current Status trước khi nâng cấp:"); lines.push(String(previousState.legacyText).trim()); }
+    if(chars.length){
+      lines.push("- Thông tin nhân vật cập nhật:");
+      chars.forEach(c=>lines.push("  • "+c.name+": "+(Object.keys(c.changes||{}).length?Object.entries(c.changes).map(([k,v])=>k+": "+v).join(" | "):"Không có thay đổi đáng kể")));
+    }
+    if(conflicts.length){
+      lines.push("- XUNG ĐỘT CẦN GIỮ LẠI, CHƯA TỰ Ý GHI ĐÈ:");
+      conflicts.forEach(c=>lines.push("  • "+(c.characterName||c.field)+": "+(c.description||c.newValue)+" [Bằng chứng: "+c.evidence+"]"));
+    }
+
+    state.statusState=previousState;
     state.currentStatus=lines.join("\n");
-    state.statusState=obj;
     state.lastStatusChapter=chapterNumber;
     state.lastMemorySyncChapter=Math.max(state.lastMemorySyncChapter||0,chapterNumber);
     persist(); if(statusBox)statusBox.textContent=state.currentStatus; captureChapterSnapshot(chapterNumber);
-    if(!silent)setStatus("Đã cập nhật Current Status → ch"+chapterNumber+".",false);
-    return {ok:true};
+    if(!silent)setStatus("Đã cập nhật Current Status → ch"+chapterNumber+" ("+applied+" thay đổi, "+conflicts.length+" xung đột).",false);
+    return {ok:true,applied,conflicts:conflicts.length};
   }catch(err){
     if(!silent)setStatus("Lỗi status: "+err.message+" — giữ Status cũ.",false);
     return {ok:false,reason:err.message};
