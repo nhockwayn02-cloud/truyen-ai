@@ -4592,21 +4592,34 @@ async function generateChapterSummary(text, chapterNumber, silent){
 const HINT_STYLES = {"normal": "Diễn tiến tự nhiên, tiếp nối mạch hiện tại.", "resist": "Nhân vật bị khống chế/yếu thế PHẢN KHÁNG rõ rệt trong chương này (hành động chống cự cụ thể); bên kia đáp trả và siết chặt hơn, hệ quả làm quan hệ quyền lực nặng thêm.", "twist": "Có một bước ngoặt/đảo chiều bất ngờ (lộ bí mật, lợi thế đổi bên, kế hoạch bị phá) nhưng vẫn hợp lý với thông tin đã có.", "escalate": "Leo thang: mức độ căng thẳng, rủi ro hoặc mức nóng cao hơn chương trước, có cú chốt gây hồi hộp.", "slow": "Nhịp chậm hơn: đào sâu nội tâm, quan hệ và hệ quả cảm xúc; ít biến cố mới."};
 async function generateNextChapterHint(text, summary, chapterNumber){
   if(!text) return "";
-  const openThreads = (state.threads||[]).filter(t=>!['paid_off','abandoned','completed'].includes(t.status)).slice(0,8).map(t=>"- "+t.desc).join("\n");
-  const openForeshadowing = (state.foreshadowing||[]).filter(f=>!['paid_off','abandoned','resolved'].includes(f.status)).slice(-8).map(f=>"- "+f.description).join("\n");
+  // Chỉ đưa các thread/foreshadowing đang mở vào prompt khi chúng thực sự liên quan đến mạch chính.
+  // Không nhồi toàn bộ tuyến phụ vào hint vì dễ khiến AI tự mở rộng phạm vi truyện.
+  const openThreads = (state.threads||[])
+    .filter(t=>!['paid_off','abandoned','completed'].includes(t.status))
+    .slice(0,3)
+    .map(t=>"- "+t.desc).join("\n");
+  const openForeshadowing = (state.foreshadowing||[])
+    .filter(f=>!['paid_off','abandoned','resolved'].includes(f.status))
+    .slice(-3)
+    .map(f=>"- "+f.description).join("\n");
   const names = (state.characters||[]).filter(c=>!c.dead).slice(0,40).map(c=>c.name).filter(Boolean).join(", ");
   const styleKey = state.hintStyle || "normal";
   const prompt = [
     "Bạn vừa đọc xong CHƯƠNG " + chapterNumber + " của một truyện dài kỳ. Hãy viết GỢI Ý CHI TIẾT cho CHƯƠNG " + (chapterNumber+1) + ".",
     "ĐỊNH DẠNG: mở đầu bằng dòng \"**Gợi ý ngắn Chương " + (chapterNumber+1) + ":**\", sau đó 4-6 đoạn ngắn, mỗi đoạn là một cảnh/nhịp truyện theo thứ tự: (1) mở chương — nối TRỰC TIẾP từ đoạn kết chương trước, (2) cảnh chính, (3) cảnh phát triển/căng thẳng, (4) cú chốt cuối chương.",
     "Mỗi đoạn phải dùng TÊN NHÂN VẬT cụ thể, nêu rõ hành động, địa điểm, giờ giấc nếu có, xung đột, cảm xúc và hệ quả — KHÔNG nói chung chung. Các mốc đã hẹn trong chương trước (giờ họp, lệnh, hạn chót) phải được xử lý.",
-    "Bám sát giọng điệu, thể loại, mức độ nóng/18+ và cách xưng hô của chính truyện; tiếp nối thread/foreshadowing đang mở; không tự mở tuyến mới lạc đề; không mâu thuẫn dữ kiện đã có.",
+    "THỨ TỰ ƯU TIÊN TUYỆT ĐỐI: (1) mạch truyện chính đang diễn ra và đoạn kết chương vừa viết, (2) yêu cầu/mệnh lệnh người dùng, (3) nhân vật chính và quan hệ trung tâm, (4) nếu đang có tuyến trưởng thành/18+ là trọng tâm thì phải tiếp tục đúng tuyến đó và tập trung vào diễn biến trực tiếp của tuyến chính, (5) hậu quả trực tiếp của chương vừa viết, (6) chỉ dùng THREADS/FORESHADOWING nếu chúng liên quan trực tiếp đến 5 mục trên.",
+    "KHÔNG ĐƯỢC biến GỢI Ý CHƯƠNG SAU thành kế hoạch mở rộng thế giới hoặc mở nhiều tuyến phụ. Không mở tuyến truyện mới, không tự tạo mục tiêu mới, không đưa thêm nhân vật quan trọng, địa điểm lớn hoặc bí mật mới chỉ để làm truyện phong phú hơn.",
+    "Nếu có nhiều thread/foreshadowing đang mở, chỉ chọn TỐI ĐA 1 thread và 1 foreshadowing có liên quan trực tiếp nhất đến mạch chính. Những mục còn lại phải bỏ qua trong gợi ý này.",
+    "Nếu chương vừa viết đang tập trung vào một quan hệ/tuyến chính cụ thể, chương sau phải tiếp tục hoặc xử lý hậu quả của chính tuyến đó trước; KHÔNG chuyển trọng tâm sang tuyến phụ chỉ vì thread đó đang mở.",
+    "Nếu truyện đang bật 18+ nhưng chương vừa viết không có tuyến trưởng thành là trọng tâm, không được tự ép thêm tuyến trưởng thành mới. Ngược lại, nếu mạch chính hiện tại đã đặt tuyến trưởng thành làm trọng tâm, phải ưu tiên tiếp nối mạch đó thay vì mở tuyến khác.",
+    "Bám sát giọng điệu, thể loại, cách xưng hô và dữ kiện của chính truyện; không mâu thuẫn dữ kiện đã có.",
     "HƯỚNG CHƯƠNG SAU: " + (HINT_STYLES[styleKey] || HINT_STYLES.normal),
     names ? ("NHÂN VẬT (dùng đúng tên): " + names) : "",
     "", "TÓM TẮT CHƯƠNG VỪA VIẾT:", summary || text.slice(-2000),
     "", "ĐOẠN KẾT CHƯƠNG (để nối mạch):", text.slice(-1500),
-    openThreads ? ("\nTHREADS ĐANG MỞ:\n" + openThreads) : "",
-    openForeshadowing ? ("\nFORESHADOWING CHƯA GIẢI:\n" + openForeshadowing) : "",
+    openThreads ? ("\nTHREADS ĐANG MỞ — CHỈ THAM KHẢO NẾU LIÊN QUAN TRỰC TIẾP:\n" + openThreads) : "",
+    openForeshadowing ? ("\nFORESHADOWING — CHỈ THAM KHẢO NẾU LIÊN QUAN TRỰC TIẾP:\n" + openForeshadowing) : "",
     "\nNGÔN NGỮ ĐẦU RA BẮT BUỘC: 100% tiếng Việt có dấu.",
     "KHÔNG viết phân tích, không viết quá trình suy luận, không dùng tiếng Anh để giải thích yêu cầu.",
     "KHÔNG được bắt đầu bằng các cụm như \"For Chapter\", \"Let me start\", \"based on\", \"Requirements\" hoặc bất kỳ phần phân tích nào.",
