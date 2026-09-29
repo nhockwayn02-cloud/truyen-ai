@@ -1099,7 +1099,213 @@ async function updateWorld(job, chapter, n, state) {
   return res;
 }
 
+function normalizeStatusState(state, n) {
+  const legacy = (state && state.statusState && typeof state.statusState === "object") ? state.statusState : {};
+  const out = JSON.parse(JSON.stringify(legacy || {}));
+  if (!out.schemaVersion) {
+    out.schemaVersion = 2;
+    if (state && state.currentStatus && !Object.keys(legacy || {}).length) out.legacyText = String(state.currentStatus);
+  }
+  if (!out.currentState || typeof out.currentState !== "object") out.currentState = {};
+  if (!out.longTerm || typeof out.longTerm !== "object") out.longTerm = {};
+  if (!Array.isArray(out.characterStates)) out.characterStates = [];
+  if (!Array.isArray(out.changeLog)) out.changeLog = [];
+  if (!Array.isArray(out.conflicts)) out.conflicts = [];
+  if (!out.currentState.time && legacy.time) out.currentState.time = legacy.time;
+  if (!out.currentState.situation && legacy.currentSituation) out.currentState.situation = legacy.currentSituation;
+  if (!out.currentState.location && legacy.locations) out.currentState.location = legacy.locations;
+  if (!out.currentState.mainCharacter && legacy.mainCharacter) out.currentState.mainCharacter = legacy.mainCharacter;
+  if (!out.currentState.power && legacy.power) out.currentState.power = legacy.power;
+  if (!out.currentState.relationships && legacy.relationships) out.currentState.relationships = legacy.relationships;
+  if (!out.currentState.knowledge && legacy.knowledge) out.currentState.knowledge = legacy.knowledge;
+  if (!out.currentState.unresolved && legacy.unresolved) out.currentState.unresolved = legacy.unresolved;
+  if (!out.currentState.nextHooks && legacy.nextHooks) out.currentState.nextHooks = legacy.nextHooks;
+  if (!out.longTerm.secrets && legacy.knowledge) out.longTerm.secrets = legacy.knowledge;
+  return out;
+}
+
+function statusCharacterRoster(state) {
+  const list = [];
+  const seen = new Set();
+  const add = (c, fallbackName = "") => {
+    if (!c || typeof c !== "object") return;
+    const name = String(c.name || fallbackName || "").trim();
+    if (!name) return;
+    const id = String(c.id || "name:" + normalizeName(name));
+    if (seen.has(id)) return;
+    seen.add(id);
+    list.push({
+      id, name,
+      tier: c.tier || "",
+      role: c.role || "",
+      age: c.age || "",
+      appearance: c.appearance || "",
+      currentLocation: c.currentLocation || "",
+      physicalState: c.physicalState || "",
+      mentalState: c.mentalState || "",
+      occupation: c.occupation || "",
+      goals: c.goals || "",
+      weakness: c.weakness || "",
+      strength: c.strength || "",
+      personality: c.personality || "",
+      relationships: c.relationships || []
+    });
+  };
+  add(state.mainCharProfile, "Nhân vật chính");
+  (Array.isArray(state.characters) ? state.characters : []).forEach(c => add(c));
+  return list;
+}
+
+function formatStatusV2(status, n) {
+  const cs = status.currentState || {};
+  const lt = status.longTerm || {};
+  const lines = [`Current Status Update - Sau Chương ${n}`];
+  const add = (label, value) => {
+    if (value == null) return;
+    if (Array.isArray(value)) value = value.map(x => typeof x === "string" ? x : JSON.stringify(x)).join("; ");
+    if (typeof value === "object") value = JSON.stringify(value);
+    if (String(value).trim()) lines.push(`- ${label}: ${String(value).trim()}`);
+  };
+  add("Thời điểm hiện tại", cs.time);
+  add("Sự kiện chính vừa xảy ra", cs.mainEvent || cs.situation);
+  add("Địa điểm", cs.location);
+  add("Tình trạng tổng thể", cs.overall);
+  add("Nhân vật chính", cs.mainCharacter);
+  add("Phát triển mối quan hệ", cs.relationships);
+  add("Tiến triển sức mạnh / tu vi / kỹ năng", cs.power);
+  add("Quy tắc do nhân vật chính đặt ra", cs.rules);
+  add("Điểm nhấn / xung đột mới", cs.conflict);
+  add("Mục tiêu / hướng chương sau", cs.nextGoal || cs.nextHooks);
+  add("Thông tin / kiến thức mới", cs.knowledge);
+  add("Vấn đề chưa giải quyết", cs.unresolved);
+  add("Bí mật / lời hứa / sự kiện dài hạn", lt.secrets);
+  add("Quy tắc / thỏa thuận đặc biệt", lt.rules);
+  add("Điểm yếu / rủi ro", lt.weaknesses);
+
+  if (Array.isArray(status.characterStates) && status.characterStates.length) {
+    lines.push("- Thông tin nhân vật cập nhật:");
+    status.characterStates.forEach(c => {
+      const label = c.name || c.characterId || "Nhân vật";
+      if (c.status === "unchanged" && (!c.changes || !Object.keys(c.changes).length)) {
+        lines.push(`  • ${label}: Không có thay đổi đáng kể`);
+        return;
+      }
+      const changes = c.changes || {};
+      const parts = Object.keys(changes).map(k => `${k}: ${typeof changes[k] === "object" ? JSON.stringify(changes[k]) : changes[k]}`).filter(Boolean);
+      lines.push(`  • ${label}: ${parts.length ? parts.join(" | ") : "Không có thay đổi đáng kể"}`);
+    });
+  }
+  if (status.legacyText) {
+    lines.push("- Current Status trước khi nâng cấp:");
+    lines.push(String(status.legacyText).trim());
+  }
+  if (Array.isArray(status.conflicts) && status.conflicts.length) {
+    lines.push("- XUNG ĐỘT CẦN GIỮ LẠI, CHƯA TỰ Ý GHI ĐÈ:");
+    status.conflicts.slice(-20).forEach(c => {
+      lines.push(`  • ${c.characterName || c.field || "Status"}: ${c.description || c.newValue || ""}${c.evidence ? ` [Bằng chứng: ${c.evidence}]` : ""}`);
+    });
+  }
+  return lines.join("\n");
+}
+
+function mergeStatusChanges(state, n, extraction) {
+  const status = normalizeStatusState(state, n);
+  const changes = extraction && extraction.changes && typeof extraction.changes === "object" ? extraction.changes : {};
+  const setIfValid = (target, key, item) => {
+    if (!item || typeof item !== "object") return false;
+    const statusName = String(item.status || "").toLowerCase();
+    const value = item.value;
+    const evidence = String(item.evidence || "").trim();
+    if (!evidence || !["updated", "added", "resolved"].includes(statusName)) return false;
+    if (value == null || String(value).trim() === "") return false;
+    target[key] = value;
+    return true;
+  };
+
+  const fieldMap = {
+    time: "time", situation: "situation", mainEvent: "mainEvent", location: "location",
+    overall: "overall", mainCharacter: "mainCharacter", relationships: "relationships",
+    power: "power", rules: "rules", conflict: "conflict", nextGoal: "nextGoal",
+    knowledge: "knowledge", unresolved: "unresolved"
+  };
+  let applied = 0;
+  Object.keys(fieldMap).forEach(k => {
+    if (setIfValid(status.currentState, fieldMap[k], changes[k])) applied++;
+  });
+
+  const ltMap = {
+    secrets: "secrets", rules: "rules", weaknesses: "weaknesses"
+  };
+  Object.keys(ltMap).forEach(k => {
+    if (setIfValid(status.longTerm, ltMap[k], changes[k])) applied++;
+  });
+
+  const roster = statusCharacterRoster(state);
+  const rosterById = new Map(roster.map(c => [c.id, c]));
+  const incomingChars = Array.isArray(changes.characterChanges) ? changes.characterChanges : [];
+  const normalizedChars = [];
+  incomingChars.forEach(c => {
+    if (!c || typeof c !== "object") return;
+    const id = String(c.characterId || "");
+    const name = String(c.characterName || c.name || "").trim();
+    const known = (id && rosterById.get(id)) || roster.find(x => normalizeName(x.name) === normalizeName(name));
+    if (!known) return; // Không cho AI tự tạo nhân vật mới trong Current Status.
+    const cleanChanges = {};
+    if (c.changes && typeof c.changes === "object") {
+      Object.keys(c.changes).forEach(k => {
+        const v = c.changes[k];
+        if (v != null && String(v).trim() !== "") cleanChanges[k] = v;
+      });
+    }
+    const evidence = String(c.evidence || "").trim();
+    const accepted = Object.keys(cleanChanges).length && evidence && String(c.status || "updated").toLowerCase() === "updated";
+    const item = {
+      characterId: known.id,
+      name: known.name,
+      status: accepted ? "updated" : "unchanged",
+      changes: accepted ? cleanChanges : {},
+      evidence: accepted ? evidence : ""
+    };
+    normalizedChars.push(item);
+    if (accepted) applied++;
+  });
+
+  // Bắt buộc kiểm kê tất cả nhân vật hiện có; nhân vật không đổi không bị xóa.
+  const byId = new Map(normalizedChars.map(x => [x.characterId, x]));
+  roster.forEach(c => {
+    if (!byId.has(c.id)) normalizedChars.push({ characterId: c.id, name: c.name, status: "unchanged", changes: {}, evidence: "" });
+  });
+  status.characterStates = normalizedChars;
+
+  const conflicts = Array.isArray(changes.conflicts) ? changes.conflicts : [];
+  const validatedConflicts = conflicts.filter(c => c && typeof c === "object" && String(c.evidence || "").trim()).map(c => ({
+    chapter: n,
+    characterName: c.characterName || "",
+    field: c.field || "",
+    oldValue: c.oldValue || "",
+    newValue: c.newValue || "",
+    description: c.description || "",
+    evidence: String(c.evidence).trim()
+  }));
+  if (validatedConflicts.length) status.conflicts.push(...validatedConflicts);
+
+  const log = {
+    chapter: n,
+    appliedAt: Date.now(),
+    appliedCount: applied,
+    conflicts: validatedConflicts.length,
+    changes: changes
+  };
+  status.changeLog.push(log);
+  status.changeLog = status.changeLog.slice(-50);
+  status.conflicts = status.conflicts.slice(-50);
+  status.schemaVersion = 2;
+  return { status, applied, conflicts: validatedConflicts.length };
+}
+
 function formatStatus(obj, n) {
+  // Giữ hàm cũ để dữ liệu legacy vẫn đọc được; dữ liệu mới dùng formatStatusV2.
+  if (obj && obj.schemaVersion >= 2 && obj.currentState) return formatStatusV2(obj, n);
   const lines = [`Current Status Update - Sau Chương ${n}`];
   const map = [
     ["Tình hình chung", obj.currentSituation], ["Nhân vật chính", obj.mainCharacter], ["Nhân vật liên quan", obj.characters],
@@ -1109,34 +1315,110 @@ function formatStatus(obj, n) {
   map.forEach(([k, v]) => { if (v) lines.push(`- ${k}: ${v}`); });
   return lines.join("\n");
 }
+
 async function updateCurrentStatus(job, chapter, n, state) {
   const res = { ok: false, notes: [], problems: [] };
   if (timeLeft() < 60000) { res.notes.push("Status: BỎ QUA vì sắp hết thời gian job"); res.problems.push("Status: bỏ qua vì hết thời gian"); return res; }
+
   const previous = state.currentStatus || "(chưa có)";
-  const source = ["STATUS CŨ:", previous, "", "TÓM TẮT CHƯƠNG:", chapter.summary || "", "", "ĐOẠN CUỐI:", chapter.text.slice(-9000)].join("\n");
-  const keys = ["currentSituation", "mainCharacter", "characters", "locations", "power", "relationships", "knowledge", "unresolved", "nextHooks"];
+  const roster = statusCharacterRoster(state);
+  const rosterText = roster.length ? roster.map(c => `- ${c.id} | ${c.name} | vai trò:${c.role} | tier:${c.tier}`).join("\n") : "(chưa có danh sách nhân vật)";
+  const source = [
+    "CURRENT STATUS HIỆN TẠI:", previous,
+    "",
+    "DANH SÁCH NHÂN VẬT ĐÃ TỒN TẠI (KHÔNG ĐƯỢC TỰ TẠO NHÂN VẬT MỚI):", rosterText,
+    "",
+    "TÓM TẮT CHƯƠNG:", chapter.summary || "",
+    "",
+    "ĐOẠN CUỐI CHƯƠNG:", chapter.text.slice(-9000)
+  ].join("\n");
+
+  const keys = ["changes"];
   try {
-    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "user", content: [
-      `Cập nhật CURRENT STATUS sau chương ${n}. Chỉ thay đổi những gì chương chứng minh. Không xóa thông tin cũ chỉ vì không nhắc lại. Mỗi trường là MỘT chuỗi văn bản ngắn (không dùng mảng), không dùng dấu " bên trong chuỗi.`,
-      source,
-      'Trả DUY NHẤT JSON: {"currentSituation":"","mainCharacter":"","characters":"","locations":"","power":"","relationships":"","knowledge":"","unresolved":"","nextHooks":""}'
-    ].join("\n\n") }], maxTokens: 5750, temperature: 0.15 }, 2);
+    const r = await callExtract({
+      endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model,
+      messages: [{
+        role: "user",
+        content: [
+          `CẬP NHẬT CURRENT STATUS SAU CHƯƠNG ${n} — CHỈ TRÍCH XUẤT THAY ĐỔI.`,
+          "Đây là hệ thống CHANGE → VALIDATE → MERGE. TUYỆT ĐỐI không viết lại toàn bộ Current Status.",
+          "1) Chỉ đánh dấu UPDATED/ADDED/RESOLVED khi chương có bằng chứng rõ ràng.",
+          "2) Không được xóa dữ liệu cũ chỉ vì chương không nhắc lại.",
+          "3) Không được tự tạo nhân vật mới. Chỉ cập nhật nhân vật có trong DANH SÁCH NHÂN VẬT.",
+          "4) Mỗi thay đổi phải có evidence là mô tả ngắn, bám trực tiếp vào nội dung chương.",
+          "5) Nếu thông tin mới mâu thuẫn với dữ liệu cũ mà chưa đủ căn cứ để ghi đè, đưa vào conflicts thay vì cập nhật.",
+          "6) Nhân vật không thay đổi phải được ghi status=unchanged hoặc để hệ thống tự bổ sung; không xóa hồ sơ cũ.",
+          "7) Tất cả output bằng TIẾNG VIỆT.",
+          source,
+          `Trả DUY NHẤT JSON theo schema:
+{
+  "changes": {
+    "time":{"status":"updated|unchanged","value":"","evidence":""},
+    "situation":{"status":"updated|unchanged","value":"","evidence":""},
+    "mainEvent":{"status":"updated|unchanged","value":"","evidence":""},
+    "location":{"status":"updated|unchanged","value":"","evidence":""},
+    "overall":{"status":"updated|unchanged","value":"","evidence":""},
+    "mainCharacter":{"status":"updated|unchanged","value":"","evidence":""},
+    "relationships":{"status":"updated|unchanged","value":"","evidence":""},
+    "power":{"status":"updated|unchanged","value":"","evidence":""},
+    "rules":{"status":"added|updated|unchanged","value":"","evidence":""},
+    "conflict":{"status":"added|updated|unchanged","value":"","evidence":""},
+    "nextGoal":{"status":"updated|unchanged","value":"","evidence":""},
+    "knowledge":{"status":"added|updated|unchanged","value":"","evidence":""},
+    "unresolved":{"status":"added|resolved|updated|unchanged","value":"","evidence":""},
+    "secrets":{"status":"added|resolved|updated|unchanged","value":"","evidence":""},
+    "weaknesses":{"status":"added|updated|unchanged","value":"","evidence":""},
+    "characterChanges":[
+      {
+        "characterId":"",
+        "characterName":"",
+        "status":"updated|unchanged",
+        "changes":{"age":"","appearance":"","body":"","clothing":"","marks":"","cultivation":"","cultivationState":"","emotion":"","submission":"","ruleCompliance":"","socialStatus":"","occupation":"","residence":"","romance":"","weakness":"","goals":"","items":"","publicPersonality":"","privatePersonality":"","psychology":"","relationships":"","physicalState":"","mentalState":"","knowledge":""},
+        "evidence":""
+      }
+    ],
+    "conflicts":[
+      {"characterName":"","field":"","oldValue":"","newValue":"","description":"","evidence":""}
+    ]
+  }
+}`,
+          "Không điền giá trị cho trường không thay đổi. Không dùng null cho thay đổi. Không markdown."
+        ].join("\n\n")
+      }],
+      maxTokens: 7600, temperature: 0.12
+    }, 2);
+
     const parsed = await parseObjectWithRepair(job, r.text, keys);
-    const obj = parsed.obj;
-    if (!obj) { res.notes.push(`Status: KHÔNG đọc được JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`); res.problems.push("Status: không đọc được JSON; Status cũ được giữ nguyên"); return res; }
-    const str = (v) => Array.isArray(v) ? v.map(x => typeof x === "string" ? x : JSON.stringify(x)).join("; ") : (v && typeof v === "object" ? JSON.stringify(v) : String(v || "").trim());
-    const merged = {};
-    keys.forEach(k => { merged[k] = str(obj[k]); });
-    const filled = keys.filter(k => merged[k]).length;
-    if (!filled) { res.notes.push("Status: JSON hợp lệ nhưng mọi trường đều rỗng"); res.problems.push("Status: model trả rỗng; Status cũ được giữ nguyên"); return res; }
-    state.statusState = merged;
-    state.currentStatus = formatStatus(merged, n);
+    const extraction = parsed.obj;
+    if (!extraction || !extraction.changes || typeof extraction.changes !== "object") {
+      res.notes.push(`Status: KHÔNG đọc được change JSON (${fin(r)}, đầu: "${sampleOf(r.text)}")`);
+      res.problems.push("Status: change extraction lỗi; Status cũ được giữ nguyên");
+      return res;
+    }
+
+    const merged = mergeStatusChanges(state, n, extraction);
+    if (!merged.applied && !merged.conflicts) {
+      // Không coi output rỗng là lý do để xóa/ghi đè Current Status.
+      res.notes.push("Status: không có thay đổi có bằng chứng; giữ nguyên trạng thái cũ");
+      state.statusState = merged.status;
+      state.currentStatus = formatStatusV2(merged.status, n);
+      state.lastStatusChapter = n;
+      res.ok = true;
+      return res;
+    }
+
+    state.statusState = merged.status;
+    state.currentStatus = formatStatusV2(merged.status, n);
     state.lastStatusChapter = n;
     res.ok = true;
-    res.notes.push(`Status: ${fin(r)}, parse=${parsed.method || "?"}, ${filled}/${keys.length} trường có dữ liệu`);
-    if (r.finishReason === "length") res.problems.push("Status: model bị cắt cụt");
+    res.notes.push(`Status: CHANGE→VALIDATE→MERGE, áp dụng ${merged.applied} thay đổi, ${merged.conflicts} xung đột; ${fin(r)}, parse=${parsed.method || "?"}`);
+    if (r.finishReason === "length") res.problems.push("Status: model bị cắt cụt; chỉ merge thay đổi hợp lệ đã đọc được");
     return res;
-  } catch (e) { res.notes.push(`Status: LỖI — ${sampleOf(e.message, 160)}`); res.problems.push("Status: lỗi gọi model; Status cũ được giữ nguyên"); return res; }
+  } catch (e) {
+    res.notes.push(`Status: LỖI — ${sampleOf(e.message, 160)}`);
+    res.problems.push("Status: lỗi gọi model; Status cũ được giữ nguyên");
+    return res;
+  }
 }
 
 async function updateLongMemory(job, chapter, n, state) {
