@@ -4035,9 +4035,18 @@ function mergeCharacterUpdate(update, chapterNumber){
     if(accumulative.includes(key)){
       const old=String(c[key]||"").trim();
       if(!old)c[key]=value;
-      else if(normalizeName(old)!==normalizeName(value) && !normalizeName(old).includes(normalizeName(value))) c[key]=(old+"; "+value).slice(0,1800);
+      else if(normalizeName(old)!==normalizeName(value) && !normalizeName(old).includes(normalizeName(value))){
+        /* V12.10: bỏ đoạn trùng ý; khi đầy (2500) thì bỏ đoạn CŨ NHẤT thay vì cắt mất thông tin mới. */
+        const no=normalizeName(old);
+        const fresh=value.split(/;\s*/).filter(sg=>sg.trim() && !no.includes(normalizeName(sg)));
+        if(fresh.length){
+          const parts=old.split(/;\s*/).concat(fresh);
+          while(parts.length>1 && parts.join("; ").length>2500) parts.shift();
+          c[key]=parts.join("; ").slice(-2500);
+        }
+      }
     }else c[key]=update[key];
-    if(explicitCoreChange && CHARACTER_CORE_LOCK_FIELDS.includes(key)){
+    if((explicitCoreChange || c.coreLocked===false) && CHARACTER_CORE_LOCK_FIELDS.includes(key)){
       if(!c.coreIdentity || typeof c.coreIdentity!=="object") c.coreIdentity={};
       c.coreIdentity[key]=c[key];
     }
@@ -4100,8 +4109,9 @@ const CHAR_JSON_FORMAT_HINT = [
   '}]',
   '',
   'QUY TẮC BẮT BUỘC:',
-  '- HỒ SƠ CỐT LÕI (name, age, gender, appearance, personality, goals) là dữ liệu gốc do người dùng xác lập. Nếu chương không mô tả một thay đổi rõ ràng và có bằng chứng trực tiếp, TUYỆT ĐỐI KHÔNG viết giá trị mới cho các trường này.',
-  '- Không được đổi "tổng giám đốc kiêu ngạo", tính cách, ngoại hình, nghề/vị trí hay mục tiêu gốc chỉ vì cách diễn giải của AI khác đi. Nếu không có thay đổi thực sự trong truyện, để trống.',
+  '- CHỈ với NV ghi [KHÓA HỒ SƠ GỐC]: hồ sơ cốt lõi (name, age, gender, appearance, personality, goals) là dữ liệu gốc của người dùng; không viết giá trị mới cho các trường này trừ khi chương mô tả một thay đổi rõ ràng có bằng chứng trực tiếp.',
+  '- Với NV ghi [MỞ KHÓA]: BẮT BUỘC bổ sung appearance/personality/goals bằng các chi tiết CỤ THỂ, MỚI xuất hiện trong chương (mỗi trường 30-60 từ, không lặp lại mục "hiện có"); nếu chương không có gì mới thì để trống.',
+  '- Với NV bị KHÓA: không đổi tính cách, ngoại hình, nghề/vị trí hay mục tiêu gốc chỉ vì cách diễn giải của AI khác đi.',
   '- Chỉ dùng explicitCoreChange=true khi có thay đổi cốt lõi xảy ra thật trong truyện và changeEvidence phải nêu bằng chứng cụ thể; nếu không thì KHÔNG đổi hồ sơ gốc.',
   '- Nếu một trường không có thông tin MỚI/thay đổi thật sự trong chương này → để trống ("") hoặc bỏ qua trường đó, ĐỪNG bịa hay đoán để điền cho đủ.',
   '- Không được suy đoán cảm xúc/kiến thức/bí mật nếu chương không có bằng chứng — thà bỏ trống còn hơn đoán sai.',
@@ -4119,7 +4129,15 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
   }
   const mcName=(state.mainCharProfile&&state.mainCharProfile.name)||"";
   let nNew=0,nUpd=0,failed=0,repaired=0;
-  const nameList=state.characters.slice(0,100).map(c=>"- "+c.name+(c.dead?" [ĐÃ CHẾT]":"")).join("\n")||"(chưa có)";
+  const nameList=state.characters.slice(0,100).map(c=>{
+    const locked=c.coreLocked!==false;
+    let line="- "+c.name+(c.dead?" [ĐÃ CHẾT]":"")+(locked?" [KHÓA HỒ SƠ GỐC]":" [MỞ KHÓA: được cập nhật ngoại hình/tính cách/mục tiêu]");
+    if(!locked){
+      const cur=["appearance","personality","goals"].map(k=>c[k]?k+": "+String(c[k]).slice(-260):"").filter(Boolean).join(" | ");
+      if(cur) line+="\n    hiện có -> "+cur;
+    }
+    return line;
+  }).join("\n")||"(chưa có)";
   for(let i=0;i<chunks.length;i++){
     const prompt=[
       "CẬP NHẬT NHÂN VẬT SAU CHƯƠNG "+chapterNumber+" — PHẦN "+(i+1)+"/"+chunks.length+".",
@@ -4128,7 +4146,7 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
       "Tên NV đã có:",nameList,
       "NỘI DUNG:",chunks[i],
       CHAR_JSON_FORMAT_HINT,
-      "Mỗi object ngắn gọn. Không cần lặp lại hồ sơ cũ nếu phần này không làm thay đổi nó."
+      "Mỗi trường mô tả cụ thể, súc tích. Không lặp lại nội dung \"hiện có\"; chỉ thêm chi tiết mới."
     ].filter(Boolean).join("\n\n");
     try{
       const r=await callAI(prompt,{maxTokens:9200,temperature:0.2});
