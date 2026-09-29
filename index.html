@@ -1078,9 +1078,17 @@ function safeJsonParse(raw){
   if(repaired.length) return repaired;
   return null;
 }
+function stripForeign(text) {
+  // V12.10: dọn chữ Hán/Nhật/Hàn/Cyrillic/Thái/Ả Rập/Hindi còn sót (kể cả khi dưới ngưỡng viết lại).
+  if (!text) return text;
+  let t = String(text)
+    .replace(/，/g, ", ").replace(/。/g, ". ").replace(/！/g, "! ").replace(/？/g, "? ").replace(/：/g, ": ").replace(/、/g, ", ")
+    .replace(/[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0E00-\u0E7F\u0600-\u06FF\u0900-\u097F]+/g, "");
+  return t.replace(/[ \t]{2,}/g, " ").replace(/ +([,.!?;:])/g, "$1").replace(/\( *\)|“ *”|" *"/g, "");
+}
 function detectNonVietnamese(text){
   if(!text) return false;
-  const foreign = (String(text).match(/[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF]/g) || []).length;
+  const foreign = (String(text).match(/[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0E00-\u0E7F\u0600-\u06FF\u0900-\u097F]/g) || []).length;
   const total = String(text).replace(/\s/g,"").length || 1;
   return (foreign / total) > 0.005;
 }
@@ -4620,6 +4628,7 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
         }catch(e){}
         if(detectNonVietnamese(contText)) break;
       }
+      contText = stripForeign(contText);
       let cleaned = contText.trim();
       const lastSentences = tail.slice(-200).replace(/\s+/g, " ");
       if(cleaned.slice(0, 120).replace(/\s+/g, " ").includes(lastSentences.slice(-80))){
@@ -5147,6 +5156,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       }catch(e){}
     }
 
+    rawText = stripForeign(rawText);
     const titleMatch = rawText.match(/TIÊU ĐỀ:\s*(.+)/i);
     const bodyMatch = rawText.match(/NỘI DUNG:\s*([\s\S]*)/i);
 
@@ -5373,6 +5383,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     if(detectNonVietnamese(contText)){
       try{ const r2 = await callAI(prompt + "\n\nBẮT BUỘC 100% TIẾNG VIỆT.", {maxTokens:12000, temperature:0.9, modelOverride: targetModel}); contText = r2.text; contFinish = r2.finishReason; }catch(e){}
     }
+    contText = stripForeign(contText);
     if(state.spellCheckEnabled && contText){
       const fixed = await polishVietnamese(contText, { modelOverride: state.model });
       if(fixed) contText = fixed;
