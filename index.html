@@ -1187,7 +1187,7 @@ function dropRestartedContinuation(baseText, contText) {
   }
   return paras.slice(0, cut).join("\n\n");
 }
-const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf"]);
+const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker"]);
 const _VN_SYL = /^(ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdghklmnpqrstvx])?[aeiouy]{1,3}(ng|nh|ch|[cmnpt])?$/;
 // Liệt kê từ Latinh lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo.
 function findStrayWords(text) {
@@ -3115,6 +3115,50 @@ function showVersionsModal(){
 $ID("versionsBtn").addEventListener("click", showVersionsModal);
 
 /* ========== POLISH ========== */
+
+/* V12.15: sửa từ lạ (Latinh vô nghĩa/tiếng Anh chen giữa câu) chỉ trên các đoạn bị lỗi — rẻ hơn polish cả chương */
+async function fixStrayWordsInText(text, opts){
+  opts = opts || {};
+  const stray = findStrayWords(text);
+  if(!stray.length) return { text: text, fixed: 0, remaining: [] };
+  const paras = String(text).split(/\n\n/);
+  const idxs = [];
+  paras.forEach((p, i)=>{ const low = p.toLowerCase(); if(stray.some(w => low.includes(w.toLowerCase()))) idxs.push(i); });
+  if(!idxs.length) return { text: text, fixed: 0, remaining: stray };
+  const pronounBlock = state.pronounRules ? ("\nQUY TẮC XƯNG HÔ:\n" + state.pronounRules) : "";
+  let fixed = 0;
+  for(let start = 0; start < idxs.length; start += 8){
+    const batch = idxs.slice(start, start + 8);
+    const body = batch.map((i, k) => "##" + (k+1) + "\n" + paras[i]).join("\n");
+    const prompt = [
+      "Các đoạn truyện tiếng Việt dưới đây bị lỗi: có từ lạ (tiếng Anh hoặc chữ vô nghĩa) chen giữa câu.",
+      "Từ lạ cần xử lý: " + stray.join(", "),
+      "NHIỆM VỤ: chỉ thay các từ lạ đó bằng từ/cụm tiếng Việt tự nhiên, hợp ngữ cảnh (hoặc bỏ nếu thừa). Giữ NGUYÊN mọi chữ khác, không thêm/bớt ý, không viết lại câu, không đổi tên riêng.",
+      pronounBlock,
+      "ĐỊNH DẠNG TRẢ VỀ: mỗi đoạn bắt đầu bằng đúng dòng ##1, ##2,... rồi nội dung đã sửa. Không giải thích.",
+      "",
+      body
+    ].join("\n");
+    try{
+      const { text: out } = await callAI(prompt, {
+        maxTokens: Math.min(12000, Math.max(1500, Math.ceil(body.length/2) + 600)),
+        temperature: 0.2, modelOverride: opts.modelOverride, frequency_penalty: 0, presence_penalty: 0
+      });
+      const parts = String(out || "").split(/^##(\d+)[ \t]*$/m);
+      for(let k = 1; k < parts.length; k += 2){
+        const n = parseInt(parts[k], 10) - 1; const fixedPara = (parts[k+1] || "").trim();
+        if(n < 0 || n >= batch.length || !fixedPara) continue;
+        const orig = paras[batch[n]];
+        if(fixedPara.length < orig.length * 0.7 || fixedPara.length > orig.length * 1.3) continue;
+        if(detectNonVietnamese(fixedPara)) continue;
+        if(fixedPara !== orig){ paras[batch[n]] = fixedPara; fixed++; }
+      }
+    }catch(e){ console.warn("[fixStray]", e.message); }
+  }
+  const outText = paras.join("\n\n");
+  return { text: outText, fixed: fixed, remaining: findStrayWords(outText) };
+}
+
 async function polishVietnamese(text, opts){
   opts = opts || {};
   if(!text || text.trim().length < 20) return text;
@@ -3130,6 +3174,7 @@ async function polishVietnamese(text, opts){
     "5. GIẢM MÙI AI: thay câu máy móc ('cô ấy cảm thấy...', 'anh ta nhận ra rằng...', 'một cảm giác lạ lùng...') bằng diễn đạt tự nhiên hơn.",
     "6. Giữ nhịp câu đa dạng.",
     "7. KHÔNG thêm/bớt sự kiện, không tóm tắt, không viết lại hoàn toàn.",
+    (function(){ const st = findStrayWords(text); return st.length ? ("8. BẮT BUỘC thay các từ lạ sau bằng tiếng Việt hợp ngữ cảnh: " + st.slice(0,10).join(", ")) : ""; })(),
     pronounBlock,
     "",
     "CHỈ TRẢ VỀ nội dung đã sửa, không giải thích, không markdown.",
@@ -5995,6 +6040,15 @@ $ID("rescanFromBtn").addEventListener("click", ()=>{
 });
 
 /* ========== SPLIT / MERGE / INSERT ========== */
+async function offerFixStray(idx, stray){
+  const c = state.chapters[idx]; if(!c) return;
+  const ok = await showConfirm("Phát hiện từ lạ: " + stray.slice(0,8).join(", ") + ".\nĐể AI sửa các đoạn chứa từ lạ (chỉ những đoạn đó, không viết lại cả chương)?", { okText: "Sửa từ lạ" });
+  if(!ok) return;
+  setStatus("Đang sửa từ lạ…", true);
+  const r = await fixStrayWordsInText(c.text, { modelOverride: state.model });
+  if(r.fixed > 0){ c.text = r.text; c.wordCount = countWords(r.text); persist(); renderCurrentChapter(); }
+  setStatus(r.fixed > 0 ? ("Đã sửa " + r.fixed + " đoạn." + (r.remaining.length ? " Còn từ lạ: " + r.remaining.slice(0,8).join(", ") + "." : "")) : "AI không sửa được đoạn nào, hãy sửa tay.", false);
+}
 $ID("fmtParaBtn").addEventListener("click", async ()=>{
   const idx = state.currentChapterIndex;
   if(idx < 0){ setStatus("Chưa có chương.", false); return; }
@@ -6004,7 +6058,7 @@ $ID("fmtParaBtn").addEventListener("click", async ()=>{
   const next = formatParagraphs(deduped);
   const stray = findStrayWords(next);
   const strayMsg = stray.length ? " Từ lạ cần kiểm tra: " + stray.slice(0,8).join(", ") + "." : "";
-  if(next === String(c.text||"").trim()){ setStatus("Chương này đã ngắt đoạn ổn rồi." + strayMsg, false); return; }
+  if(next === String(c.text||"").trim()){ setStatus("Chương này đã ngắt đoạn ổn rồi." + strayMsg, false); if(stray.length){ await offerFixStray(idx, stray); } return; }
   if(cutDup){
     const ok = await showConfirm("Phát hiện chương bị viết lặp lại từ đầu. Cắt bỏ phần lặp (còn ~" + countWords(next) + " từ)?", { okText: "Cắt phần lặp" });
     if(!ok){ c.text = formatParagraphs(c.text); c.wordCount = countWords(c.text); persist(); renderCurrentChapter(); setStatus("Đã ngắt đoạn (giữ nguyên phần lặp)." + strayMsg, false); return; }
@@ -6012,6 +6066,7 @@ $ID("fmtParaBtn").addEventListener("click", async ()=>{
   c.text = next; c.wordCount = countWords(next);
   persist(); renderCurrentChapter();
   setStatus((cutDup ? "Đã cắt phần lặp và ngắt đoạn chương " : "Đã ngắt đoạn chương ") + (idx+1) + "." + strayMsg, false);
+  if(stray.length){ await offerFixStray(idx, stray); }
 });
 $ID("splitChapterBtn").addEventListener("click", async ()=>{
   const idx = state.currentChapterIndex;
