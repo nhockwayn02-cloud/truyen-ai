@@ -72,22 +72,32 @@ function decryptText(record) {
   return Buffer.concat([decipher.update(Buffer.from(dataS, "base64url")), decipher.final()]).toString("utf8");
 }
 
+// <<SHARED-CORE:BEGIN>> (tự sinh từ shared/core.js — KHÔNG sửa tay; chạy: node scripts/sync-shared.js)
 function countWords(text) { return (text || "").trim().split(/\s+/).filter(Boolean).length; }
 
-// V12.3: hard cap để mục tiêu 5.000 từ không biến thành 8.000+ từ.
-function chapterWordLimits(state) {
-  const target = Math.min(Math.max(Number(state?.minChapterWords) || 5000, 500), 6000);
+function normalizeName(s) {
+  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function chapterWordLimits(st) {
+  // Client gọi không tham số (dùng state toàn cục); worker truyền state của job.
+  if (!st && typeof state !== "undefined") st = state;
+  const target = Math.min(Math.max(Number(st && st.minChapterWords) || 5000, 500), 6000);
   return { target, hardMax: Math.ceil(target * 1.15) };
 }
+
 function trimToWordLimit(text, maxWords) {
+  // V12.14: cắt theo vị trí ký tự để GIỮ NGUYÊN xuống dòng/đoạn (bản cũ split+join làm mất toàn bộ đoạn văn/thoại).
   const s = String(text || "").trim();
   if (!s || countWords(s) <= maxWords) return { text: s, trimmed: false };
-  const words = s.split(/\s+/);
-  let out = words.slice(0, maxWords).join(" ");
+  const re = /\S+/g; let mt, n = 0, end = 0;
+  while ((mt = re.exec(s))) { n++; end = mt.index + mt[0].length; if (n >= maxWords) break; }
+  let out = s.slice(0, end);
   const m = out.match(/^([\s\S]*[.!?…][”"’']?)(?:\s|$)/);
   if (m && countWords(m[1]) >= Math.max(1, maxWords - 180)) out = m[1];
   return { text: out.trim(), trimmed: true };
 }
+
 function stripForeign(text) {
   // V12.10: dọn chữ Hán/Nhật/Hàn/Cyrillic/Thái/Ả Rập/Hindi còn sót (kể cả khi dưới ngưỡng viết lại).
   if (!text) return text;
@@ -96,15 +106,105 @@ function stripForeign(text) {
     .replace(/[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0E00-\u0E7F\u0600-\u06FF\u0900-\u097F]+/g, "");
   return t.replace(/[ \t]{2,}/g, " ").replace(/ +([,.!?;:])/g, "$1").replace(/\( *\)|“ *”|" *"/g, "");
 }
+
 function detectNonVietnamese(text) {
   if (!text) return false;
   const foreign = (String(text).match(/[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0E00-\u0E7F\u0600-\u06FF\u0900-\u097F]/g) || []).length;
   const total = String(text).replace(/\s/g, "").length || 1;
   return (foreign / total) > 0.005;
 }
-function normalizeName(s) {
-  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+
+function normalizeChapterMatureFocus(v) {
+  const x = String(v || "none").toLowerCase();
+  return x === "primary" || x === "secondary" ? x : "none";
 }
+
+const NSFW_KEYWORDS = [
+  "cảnh nóng", "cảnh sex", "cảnh 18", "cảnh 18+", "làm tình", "ân ái", "giao hợp", "sex", "sexx", "sexy", "nsfw", "erotic", "erotica", "porn", "âu yếm", "vuốt ve", "mơn trớn", "ve vuốt", "hôn sâu", "hôn môi", "hôn cổ", "cởi đồ", "cởi áo", "cởi quần", "không mặc", "khỏa thân", "trần truồng", "nude", "sờ soạng", "sờ ngực", "sờ mông", "nắn bóp", "liếm", "thổi kèn", "dương vật", "âm đạo", "âm hộ", "núm vú", "háng", "cặc", "lồn", "thúc mạnh", "xuất tinh", "orgasm", "cao trào", "khoái cảm", "doggy", "missionary", "cowgirl", "oral", "blowjob", "handjob", "viết nóng", "viết 18", "tăng nhiệt", "nóng hơn", "cảnh ân ái", "đêm tân hôn", "mất trinh", "đoạt mất", "chiếm đoạt cơ thể", "ham muốn", "dục vọng", "nứng", "rên rỉ", "rên la", "rên ưỡn", "quan hệ tình dục", "quan hệ xác thịt", "bóp mông"
+];
+
+const _NSFW_RE = new RegExp("(?<![\\p{L}\\p{N}])(?:" + NSFW_KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")(?![\\p{L}\\p{N}])", "iu");
+
+function textHasNsfwKeyword(text) {
+  if (!text) return false;
+  return _NSFW_RE.test(String(text).normalize("NFC"));
+}
+
+function parseAgeNum(a) { const m = String(a == null ? "" : a).match(/\d{1,4}/); return m ? parseInt(m[0], 10) : null; }
+
+function underageNames(s) {
+  const out = []; const chk = (n, a) => { const v = parseAgeNum(a); if (n && v !== null && v < 18) out.push(String(n)); };
+  chk(s.mainCharProfile && s.mainCharProfile.name, s.mainCharProfile && s.mainCharProfile.age);
+  (s.characters || []).forEach(c => chk(c && c.name, c && c.age));
+  return out;
+}
+
+function ageGuardPrompt(s) {
+  const u = underageNames(s);
+  return "RÀO CHẮN TUỔI (bắt buộc): chỉ nhân vật đã trưởng thành (từ 18 tuổi trở lên) mới được tham gia cảnh tình dục/khiêu dâm. Tuyệt đối không viết nội dung tình dục với nhân vật dưới 18 tuổi hoặc được mô tả như trẻ em."
+    + (u.length ? (" Nhân vật KHÔNG được xuất hiện trong cảnh 18+: " + u.join(", ") + ".") : "");
+}
+
+function _sumNorm(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim(); }
+
+function summaryNameList(text, characters){
+  const nt=_sumNorm(text);
+  return (characters||[]).map(c=>c&&c.name).filter(Boolean).filter(n=>nt.includes(_sumNorm(n))).slice(0,40);
+}
+
+function _sumNameGrounded(name, text){
+  const toks=String(name).split(/\s+/).filter(Boolean);
+  let hit=0;
+  toks.forEach(t=>{ try{ if(new RegExp("(^|[^\\p{L}])"+t+"(?![\\p{L}])","u").test(text)) hit++; }catch(_){} });
+  return hit >= Math.ceil(toks.length/2);
+}
+
+function summaryGrounded(summary, text){
+  const names=[]; const bad=[]; let good=0;
+  (String(summary).match(/(?:\p{Lu}\p{Ll}+)(?:\s+\p{Lu}\p{Ll}+)+/gu)||[]).forEach(nm=>{
+    if(names.includes(nm)) return; names.push(nm);
+    if(_sumNameGrounded(nm, text)) good++; else bad.push(nm);
+  });
+  const nameOk = names.length<2 || bad.length/names.length <= 0.34;
+  const tw=new Set((_sumNorm(text).match(/[a-z0-9]{2,}/g)||[]));
+  const sw=(_sumNorm(summary).match(/[a-z]{4,}/g)||[]);
+  const ov = sw.length ? sw.filter(w=>tw.has(w)).length/sw.length : 1;
+  return { ok: nameOk && ov>=0.4, bad, ov };
+}
+
+function extractiveSummary(text){
+  const paras=String(text||"").split(/\n+/).map(p=>p.trim()).filter(p=>p.length>60);
+  if(!paras.length) return "";
+  const pick=Math.min(9, paras.length); const out=[];
+  for(let i=0;i<pick;i++){
+    const p=paras[Math.floor(i*paras.length/pick)];
+    const w=p.split(/\s+/); let seg=w.slice(0,45).join(" ");
+    if(w.length>45){ const k=Math.max(seg.lastIndexOf(". "),seg.lastIndexOf("! "),seg.lastIndexOf("? ")); if(k>seg.length*0.4) seg=seg.slice(0,k+1); }
+    out.push(seg);
+  }
+  return "**Tóm tắt chương:** (trích tự động từ văn bản)\n\n"+out.join("\n\n");
+}
+
+function buildSummaryPrompt(text, n, names){
+  return [
+    "Bạn là bộ máy tóm tắt. Chỉ được dựa vào văn bản trong thẻ <chuong>; không có kiến thức nào khác về truyện này.",
+    "<chuong>", text, "</chuong>",
+    "NHIỆM VỤ: tóm tắt CHƯƠNG "+n+" trên đây theo đúng trình tự diễn ra.",
+    "1) Chỉ dùng nhân vật, địa điểm, đồ vật, giờ giấc, lời thoại CÓ trong <chuong>. Không thêm, không suy diễn. Nếu chương không nêu giờ giấc hay chức danh thì KHÔNG ghi.",
+    names && names.length ? "2) Tên nhân vật xuất hiện trong chương (chỉ dùng đúng các tên này): "+names.join(", ")+"." : "2) Dùng đúng tên nhân vật như viết trong chương.",
+    "3) Định dạng: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch chính, sau đó 4-5 đoạn ngắn theo diễn biến (mỗi đoạn một cảnh/mốc). Không dùng nhãn Đầu/Giữa/Cuối, không gạch đầu dòng, không mô tả tiêu chí tóm tắt.",
+    "4) Với cảnh nhạy cảm (18+/bạo lực/cưỡng ép): thuật lại ngắn gọn, trung lập ai làm gì với ai, câu nói/mệnh lệnh chính và hệ quả — không bỏ cảnh, không thêm chi tiết ngoài văn bản.",
+    "5) Câu cuối: trạng thái cuối chương theo đúng văn bản.",
+    "6) Độ dài 300-400 từ tiếng Việt, tối đa 400. Chỉ trả về bản tóm tắt."
+  ].join("\n");
+}
+
+function summaryRetryNote(g){
+  return "\n\nLỖI LẦN TRƯỚC: bản tóm tắt chứa nội dung KHÔNG có trong <chuong>"+(g.bad&&g.bad.length?" (tên không có trong chương, cấm dùng: "+g.bad.join(", ")+")":"")+". Viết lại: bắt đầu bằng \"**Tóm tắt chương:**\" rồi chỉ kể lại các sự kiện có thật trong <chuong>.";
+}
+// <<SHARED-CORE:END>>
+// V12.3: hard cap để mục tiêu 5.000 từ không biến thành 8.000+ từ.
+
 function stripFences(raw) {
   return String(raw || "")
     .replace(/```(?:json|JSON)?/g, "")
@@ -358,18 +458,6 @@ const EROTIC_STYLE_PROMPT = [
 ].join("\n");
 
 // v11 — Rào chắn tuổi (đồng bộ nguyên văn với index.html).
-function parseAgeNum(a) { const m = String(a == null ? "" : a).match(/\d{1,4}/); return m ? parseInt(m[0], 10) : null; }
-function underageNames(s) {
-  const out = []; const chk = (n, a) => { const v = parseAgeNum(a); if (n && v !== null && v < 18) out.push(String(n)); };
-  chk(s.mainCharProfile && s.mainCharProfile.name, s.mainCharProfile && s.mainCharProfile.age);
-  (s.characters || []).forEach(c => chk(c && c.name, c && c.age));
-  return out;
-}
-function ageGuardPrompt(s) {
-  const u = underageNames(s);
-  return "RÀO CHẮN TUỔI (bắt buộc): chỉ nhân vật đã trưởng thành (từ 18 tuổi trở lên) mới được tham gia cảnh tình dục/khiêu dâm. Tuyệt đối không viết nội dung tình dục với nhân vật dưới 18 tuổi hoặc được mô tả như trẻ em."
-    + (u.length ? (" Nhân vật KHÔNG được xuất hiện trong cảnh 18+: " + u.join(", ") + ".") : "");
-}
 
 const EXPLICIT_PROMPTS = {
   subtle: "CẢNH 18+: Nhẹ nhàng — fade-to-black sau khi hôn, gợi ý chứ không tả. Cảm xúc chiếm ưu thế.",
@@ -380,34 +468,15 @@ const EXPLICIT_PROMPTS = {
 };
 
 /* ===== NSFW KEYWORD DETECT — đồng bộ với index.html, thay cho danh sách 6 từ cũ (quá hẹp) ===== */
-const NSFW_KEYWORDS = [
-  "cảnh nóng","cảnh sex","cảnh 18","cảnh 18+","quan hệ","làm tình","ân ái","giao hợp",
-  "sex","sexx","sexy","nsfw","erotic","erotica","porn",
-  "âu yếm","vuốt ve","mơn trớn","ve vuốt","hôn sâu","hôn môi","hôn cổ",
-  "cởi đồ","cởi áo","cởi quần","không mặc","khỏa thân","trần truồng","nude",
-  "sờ soạng","sờ ngực","sờ mông","nắn bóp","liếm","bú","thổi kèn",
-  "dương vật","âm đạo","âm hộ","ngực","núm vú","mông","háng","cặc","lồn",
-  "thúc","thúc mạnh","xuất tinh","orgasm","cao trào","khoái cảm",
-  "doggy","missionary","cowgirl","oral","blowjob","handjob",
-  "viết nóng","viết 18","tăng nhiệt","nóng hơn","cảnh ân ái","đêm tân hôn",
-  "lần đầu","mất trinh","đoạt mất","chiếm đoạt cơ thể","ham muốn",
-  "dục vọng","kích thích","nứng","phê","rên rỉ","rên la","rên ưỡn"
-];
-function textHasNsfwKeyword(text) {
-  if (!text) return false;
-  const t = String(text).toLowerCase().normalize("NFC");
-  return NSFW_KEYWORDS.some(k => t.includes(k));
-}
+
+// V12.14: khớp theo TỪ nguyên vẹn (Unicode), không khớp chuỗi con — tránh "cà phê", "cây bút", "phản kháng"... bị nhận nhầm là 18+.
 
 /* v10.2.2: worker trước đây chỉ ép NSFW khi bắt được từ khóa trong directive/hint/tiêu đề —
  * không có bước "chấm nhiệt độ" như bản viết trực tiếp (index.html detectHeatLevel()).
  * Hệ quả: nếu cảnh nóng phát sinh tự nhiên từ mạch truyện (không có từ khóa tường minh
  * trong Mệnh lệnh/Định hướng), job nền âm thầm dùng model thường thay vì model NSFW dù
  * chế độ đang để "auto". Hàm dưới đây đồng bộ với client: chấm 0-10, so với ngưỡng đã cấu hình. */
-function normalizeChapterMatureFocus(v) {
-  const x = String(v || "none").toLowerCase();
-  return x === "primary" || x === "secondary" ? x : "none";
-}
+
 function normalizeStoryControl(state) {
   const sc = (state && state.storyControl && typeof state.storyControl === "object") ? state.storyControl : {};
   return {
@@ -794,7 +863,8 @@ async function generateOneChapter(job) {
   let truncated = result.finishReason === "length";
   const issues = [];
   let attempts = 0;
-  chapter.control = { focus: matureFocus, maxMainEvents: normalizeStoryControl(state).maxMainEvents, maxNamedCharacters: normalizeStoryControl(state).maxNamedCharacters, noRetcon: normalizeStoryControl(state).noRetcon };
+  const _sc = normalizeStoryControl(state);
+  const control = { focus: matureFocus, maxMainEvents: _sc.maxMainEvents, maxNamedCharacters: _sc.maxNamedCharacters, noRetcon: _sc.noRetcon };
 
   // V12.2: nếu là nhánh trưởng thành, cho phép tối đa 8 lượt nối tiếp bất kể cấu hình cũ
   // chỉ đặt 4. Mỗi lượt vẫn dùng chính model đã route ở trên.
@@ -849,61 +919,10 @@ async function generateOneChapter(job) {
   if (finalCap.trimmed) issues.push(`Đã khóa độ dài: tối đa ${maxWords} từ`);
   const wordCount = countWords(text);
   if (wordCount < minWords * 0.9) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
-  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.3", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords };
+  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.3", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords, control };
 }
 
 /* V12.10: chống tóm tắt bịa — kiểm tra tên/từ trong bản tóm tắt có thật trong chương không. */
-function _sumNorm(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim(); }
-function summaryNameList(text, characters){
-  const nt=_sumNorm(text);
-  return (characters||[]).map(c=>c&&c.name).filter(Boolean).filter(n=>nt.includes(_sumNorm(n))).slice(0,40);
-}
-function _sumNameGrounded(name, text){
-  const toks=String(name).split(/\s+/).filter(Boolean);
-  let hit=0;
-  toks.forEach(t=>{ try{ if(new RegExp("(^|[^\\p{L}])"+t+"(?![\\p{L}])","u").test(text)) hit++; }catch(_){} });
-  return hit >= Math.ceil(toks.length/2);
-}
-function summaryGrounded(summary, text){
-  const names=[]; const bad=[]; let good=0;
-  (String(summary).match(/(?:\p{Lu}\p{Ll}+)(?:\s+\p{Lu}\p{Ll}+)+/gu)||[]).forEach(nm=>{
-    if(names.includes(nm)) return; names.push(nm);
-    if(_sumNameGrounded(nm, text)) good++; else bad.push(nm);
-  });
-  const nameOk = names.length<2 || bad.length/names.length <= 0.34;
-  const tw=new Set((_sumNorm(text).match(/[a-z0-9]{2,}/g)||[]));
-  const sw=(_sumNorm(summary).match(/[a-z]{4,}/g)||[]);
-  const ov = sw.length ? sw.filter(w=>tw.has(w)).length/sw.length : 1;
-  return { ok: nameOk && ov>=0.4, bad, ov };
-}
-function extractiveSummary(text){
-  const paras=String(text||"").split(/\n+/).map(p=>p.trim()).filter(p=>p.length>60);
-  if(!paras.length) return "";
-  const pick=Math.min(9, paras.length); const out=[];
-  for(let i=0;i<pick;i++){
-    const p=paras[Math.floor(i*paras.length/pick)];
-    const w=p.split(/\s+/); let seg=w.slice(0,45).join(" ");
-    if(w.length>45){ const k=Math.max(seg.lastIndexOf(". "),seg.lastIndexOf("! "),seg.lastIndexOf("? ")); if(k>seg.length*0.4) seg=seg.slice(0,k+1); }
-    out.push(seg);
-  }
-  return "**Tóm tắt chương:** (trích tự động từ văn bản)\n\n"+out.join("\n\n");
-}
-function buildSummaryPrompt(text, n, names){
-  return [
-    "Bạn là bộ máy tóm tắt. Chỉ được dựa vào văn bản trong thẻ <chuong>; không có kiến thức nào khác về truyện này.",
-    "<chuong>", text, "</chuong>",
-    "NHIỆM VỤ: tóm tắt CHƯƠNG "+n+" trên đây theo đúng trình tự diễn ra.",
-    "1) Chỉ dùng nhân vật, địa điểm, đồ vật, giờ giấc, lời thoại CÓ trong <chuong>. Không thêm, không suy diễn. Nếu chương không nêu giờ giấc hay chức danh thì KHÔNG ghi.",
-    names && names.length ? "2) Tên nhân vật xuất hiện trong chương (chỉ dùng đúng các tên này): "+names.join(", ")+"." : "2) Dùng đúng tên nhân vật như viết trong chương.",
-    "3) Định dạng: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch chính, sau đó 4-5 đoạn ngắn theo diễn biến (mỗi đoạn một cảnh/mốc). Không dùng nhãn Đầu/Giữa/Cuối, không gạch đầu dòng, không mô tả tiêu chí tóm tắt.",
-    "4) Với cảnh nhạy cảm (18+/bạo lực/cưỡng ép): thuật lại ngắn gọn, trung lập ai làm gì với ai, câu nói/mệnh lệnh chính và hệ quả — không bỏ cảnh, không thêm chi tiết ngoài văn bản.",
-    "5) Câu cuối: trạng thái cuối chương theo đúng văn bản.",
-    "6) Độ dài 300-400 từ tiếng Việt, tối đa 400. Chỉ trả về bản tóm tắt."
-  ].join("\n");
-}
-function summaryRetryNote(g){
-  return "\n\nLỖI LẦN TRƯỚC: bản tóm tắt chứa nội dung KHÔNG có trong <chuong>"+(g.bad&&g.bad.length?" (tên không có trong chương, cấm dùng: "+g.bad.join(", ")+")":"")+". Viết lại: bắt đầu bằng \"**Tóm tắt chương:**\" rồi chỉ kể lại các sự kiện có thật trong <chuong>.";
-}
 
 async function generateSummary(job, chapter, n) {
   try {

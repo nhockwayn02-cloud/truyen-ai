@@ -1,5 +1,6 @@
 const { getStore, connectLambda } = require("@netlify/blobs");
 const crypto = require("crypto");
+const sec = require("../../lib/security");
 
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -14,7 +15,8 @@ function getJobStore(event) {
 }
 function hashSecret(v) { return crypto.createHash("sha256").update(String(v || "")).digest("hex"); }
 function jsonResponse(statusCode, obj) {
-  return { statusCode, headers: { "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Methods":"POST, OPTIONS", "Access-Control-Allow-Headers":"Content-Type", "Content-Type":"application/json" }, body: JSON.stringify(obj) };
+  // ALLOWED_ORIGIN (tuỳ chọn): đặt đúng địa chỉ site của bạn để chặn trang lạ gọi API từ trình duyệt.
+  return { statusCode, headers: { "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*", "Access-Control-Allow-Methods":"POST, OPTIONS", "Access-Control-Allow-Headers":"Content-Type, X-App-Passcode", "Content-Type":"application/json" }, body: JSON.stringify(obj) };
 }
 function encryptApiKey(apiKey) {
   const secret = process.env.JOB_SECRET || process.env.NETLIFY_JOB_SECRET || process.env.NETLIFY_API_TOKEN || "";
@@ -35,10 +37,15 @@ exports.handler = async (event) => {
     const body = JSON.parse(event.body || "{}");
     const storyState = body.storyState;
     const apiKey = String(body.apiKey || "").trim().replace(/^bearer\s+/i, "").replace(/^["']|["']$/g, "");
+    const pass = sec.checkPasscode(event, body);
+    if (!pass.ok) return jsonResponse(401, { error:"Sai hoặc thiếu mã truy cập (APP_PASSCODE).", needPasscode:true });
     if (!storyState || !apiKey) return jsonResponse(400, { error:"Thiếu storyState hoặc API key" });
+    const ep = sec.validateEndpoint(body.apiEndpoint || DEFAULT_ENDPOINT);
+    if (!ep.ok) return jsonResponse(400, { error: ep.error });
     if (JSON.stringify(storyState).length > 8_000_000) return jsonResponse(413, { error:"Story state quá lớn. Hãy backup/nén chương cũ trước khi gửi background." });
 
     const store = getJobStore(event);
+    await sec.purgeOldJobs(store); // xoá job quá hạn (mặc định 48 giờ, chỉnh bằng JOB_TTL_HOURS)
     const jobId = "job_" + Date.now().toString(36) + "_" + crypto.randomBytes(6).toString("hex");
     const accessToken = genSecret();
     const workerToken = genSecret();
@@ -52,7 +59,7 @@ exports.handler = async (event) => {
       status:"pending",
       createdAt:now,
       updatedAt:now,
-      apiEndpoint:body.apiEndpoint || DEFAULT_ENDPOINT,
+      apiEndpoint:ep.url,
       model:body.model || "deepseek/deepseek-v3.2",
       modelNsfw:body.modelNsfw || "aion-labs/aion-2.0",
       forceNsfw:!!body.forceNsfw,
@@ -88,6 +95,7 @@ exports.handler = async (event) => {
       success:true,
       jobId,
       accessToken,
+      warnings: sec.securityWarnings(),
       message:"Job đã được tạo. Có thể đóng/tắt iPhone; khi mở lại app sẽ tự kiểm tra và đồng bộ."
     });
   } catch (err) {

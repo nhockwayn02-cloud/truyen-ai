@@ -12,7 +12,7 @@ function getJobStore(event) {
 }
 function hashSecret(v){ return crypto.createHash("sha256").update(String(v||"")).digest("hex"); }
 function equalHash(a,b){ try{return crypto.timingSafeEqual(Buffer.from(a||""),Buffer.from(b||""));}catch(_){return false;} }
-function jsonResponse(statusCode,obj){return {statusCode,headers:{"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Content-Type":"application/json"},body:JSON.stringify(obj)};}
+function jsonResponse(statusCode,obj){return {statusCode,headers:{"Access-Control-Allow-Origin":process.env.ALLOWED_ORIGIN||"*","Access-Control-Allow-Methods":"GET, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Content-Type":"application/json"},body:JSON.stringify(obj)};}
 
 exports.handler = async (event) => {
   if(event.httpMethod === "OPTIONS") return jsonResponse(204,{});
@@ -26,6 +26,11 @@ exports.handler = async (event) => {
     if(!job) return jsonResponse(404,{error:"Job not found"});
     if(job.accessTokenHash && !equalHash(job.accessTokenHash,hashSecret(accessToken))) return jsonResponse(403,{error:"Token không hợp lệ"});
 
+    // ack=1: client đã đồng bộ xong -> xoá job (truyện + dữ liệu) khỏi Blobs ngay, không đợi hết hạn.
+    if(event.queryStringParameters?.ack==="1"){
+      if(job.status==="completed"||job.status==="failed"){ try{ await store.delete(jobId); }catch(_){} return jsonResponse(200,{deleted:true,jobId}); }
+      return jsonResponse(409,{error:"Job chưa kết thúc, không thể xoá."});
+    }
     const safe={
       schemaVersion:job.schemaVersion||10.2,
       jobId:job.jobId,
