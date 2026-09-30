@@ -159,16 +159,11 @@ function formatParagraphs(text) {
   const paras = [];
   for (const raw of src.split(/\n+/)) {
     const block = raw.trim(); if (!block) continue;
-    if (block.length <= 500 && !/[“"]/.test(block.slice(1)) ) { paras.push(block); continue; }
-    if (block.length <= 500 && OPEN.test(block)) { paras.push(block); continue; }
-    if (block.length <= 500) {
-      // đoạn vừa có thoại xen lẫn: vẫn tách thoại ra nếu câu bắt đầu bằng ngoặc/gạch
-      const ss = splitSentences(block);
-      if (!ss.some((s, i) => i > 0 && OPEN.test(s))) { paras.push(block); continue; }
-    }
+    const sents = splitSentences(block);
+    if (block.length <= 500 && !sents.some((x, i) => i > 0 && OPEN.test(x))) { paras.push(block); continue; }
     let cur = [], len = 0, curDialog = false;
     const flush = () => { if (cur.length) paras.push(cur.join(" ")); cur = []; len = 0; curDialog = false; };
-    for (const s of splitSentences(block)) {
+    for (const s of sents) {
       const dlg = OPEN.test(s);
       if (dlg && cur.length) flush();
       if (!dlg && curDialog) flush();
@@ -210,7 +205,7 @@ function dedupeRepeatedScene(text) {
   };
   for (let i = 3; i < info.length - 1; i++) {
     const j = isDup(i, 0);
-    if (j < 0) continue;
+    if (j < 0 || j > 2) continue; // chỉ coi là 'viết lại từ đầu' khi trùng với các đoạn mở đầu chương
     // xác nhận: đoạn kế tiếp cũng trùng với một đoạn nằm sau j (tránh nhầm câu lặp có chủ đích)
     let ok = false;
     for (let k = i + 1; k <= Math.min(i + 2, info.length - 1) && !ok; k++) {
@@ -229,21 +224,22 @@ function dropRestartedContinuation(baseText, contText) {
   const paras = cont.split(/\n\s*\n+|\n/).map(p => p.trim()).filter(Boolean);
   let cut = paras.length;
   for (let i = 0; i < paras.length; i++) {
-    const w = _normWords(paras[i]); if (w.length < 8) continue;
-    if (_sim(_grams(w, 3), baseG) >= 0.6) { cut = i; break; }
+    const w = _normWords(paras[i]); if (w.length < 15) continue;
+    if (_sim(_grams(w, 3), baseG) >= 0.7) { cut = i; break; }
   }
   return paras.slice(0, cut).join("\n\n");
 }
 const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker"]);
 const _VN_SYL = /^(ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdghklmnpqrstvx])?[aeiouy]{1,3}(ng|nh|ch|[cmnpt])?$/;
 // Liệt kê từ Latinh lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo.
-function findStrayWords(text) {
+function findStrayWords(text, allowNames) {
   const out = []; const seen = new Set();
+  const allow = new Set(_normWords((allowNames || []).join(" ")).map(w => w.normalize("NFD").replace(/[\u0300-\u036f]/g, "")));
   const toks = String(text || "").match(/\p{L}+/gu) || [];
   for (const t of toks) {
     if (t.length < 4 || !/^[A-Za-z]+$/.test(t)) continue;
     const low = t.toLowerCase();
-    if (_VN_OK.has(low) || _VN_SYL.test(low) || seen.has(low)) continue;
+    if (_VN_OK.has(low) || _VN_SYL.test(low) || seen.has(low) || allow.has(low)) continue;
     seen.add(low); out.push(t);
     if (out.length >= 12) break;
   }
