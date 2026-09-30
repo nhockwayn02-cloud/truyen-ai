@@ -131,3 +131,52 @@ function buildSummaryPrompt(text, n, names){
 function summaryRetryNote(g){
   return "\n\nLỖI LẦN TRƯỚC: bản tóm tắt chứa nội dung KHÔNG có trong <chuong>"+(g.bad&&g.bad.length?" (tên không có trong chương, cấm dùng: "+g.bad.join(", ")+")":"")+". Viết lại: bắt đầu bằng \"**Tóm tắt chương:**\" rồi chỉ kể lại các sự kiện có thật trong <chuong>.";
 }
+
+function formatParagraphs(text) {
+  // V12.15: tự ngắt đoạn khi AI trả về khối văn đặc; mỗi lượt thoại một đoạn riêng; các đoạn cách nhau 1 dòng trống.
+  const src = String(text || "").replace(/\r\n?/g, "\n").trim();
+  if (!src) return src;
+  const OPEN = /^[“"«‘'—–-]\s*/;
+  const isTerm = c => ".!?…".indexOf(c) >= 0;
+  const splitSentences = block => {
+    const out = []; let cur = "", q = false;
+    for (let i = 0; i < block.length; i++) {
+      const ch = block[i]; cur += ch;
+      if (ch === "“") q = true; else if (ch === "”") q = false; else if (ch === '"') q = !q;
+      if (q) continue;
+      let j = i; while (j + 1 < block.length && /["”’'»)]/.test(block[j + 1])) { j++; cur += block[j]; }
+      const last = cur.replace(/["”’'»)\s]+$/, "").slice(-1);
+      if (isTerm(last) && (j === i ? isTerm(ch) : true) && /\s/.test(block[j + 1] || " ")) {
+        let k = j + 1; while (k < block.length && /\s/.test(block[k])) k++;
+        const nx = block.slice(k, k + 1);
+        if (!nx || /[\p{Lu}“"«‘—–-]/u.test(nx)) { out.push(cur.trim()); cur = ""; }
+        i = j;
+      } else i = j;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  };
+  const paras = [];
+  for (const raw of src.split(/\n+/)) {
+    const block = raw.trim(); if (!block) continue;
+    if (block.length <= 500 && !/[“"]/.test(block.slice(1)) ) { paras.push(block); continue; }
+    if (block.length <= 500 && OPEN.test(block)) { paras.push(block); continue; }
+    if (block.length <= 500) {
+      // đoạn vừa có thoại xen lẫn: vẫn tách thoại ra nếu câu bắt đầu bằng ngoặc/gạch
+      const ss = splitSentences(block);
+      if (!ss.some((s, i) => i > 0 && OPEN.test(s))) { paras.push(block); continue; }
+    }
+    let cur = [], len = 0, curDialog = false;
+    const flush = () => { if (cur.length) paras.push(cur.join(" ")); cur = []; len = 0; curDialog = false; };
+    for (const s of splitSentences(block)) {
+      const dlg = OPEN.test(s);
+      if (dlg && cur.length) flush();
+      if (!dlg && curDialog) flush();
+      cur.push(s); len += s.length; curDialog = dlg || curDialog;
+      if (curDialog) { if (/["”’»][^“"]{0,80}$/.test(s) || /[.!?…]$/.test(s)) flush(); }
+      else if (cur.length >= 3 || len >= 320) flush();
+    }
+    flush();
+  }
+  return paras.join("\n\n");
+}
