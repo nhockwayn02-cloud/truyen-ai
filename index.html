@@ -775,6 +775,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="search-wrap"><input id="chapterSearch" placeholder="Tìm trong tiêu đề + nội dung..." type="text"/></div>
 </div>
 <div class="toolbar-right">
+<button class="btn btn-ghost" id="fmtParaBtn" title="Tự ngắt đoạn chương này">¶ Ngắt đoạn</button>
 <button class="btn btn-ghost" id="splitChapterBtn" title="Tách chương">✂ Tách</button>
 <button class="btn btn-ghost" id="mergeChapterBtn" title="Gộp chương">⊕ Gộp</button>
 <button class="btn btn-ghost" id="insertChapterBtn" title="Chèn chương trống">＋ Chèn</button>
@@ -1082,6 +1083,55 @@ function buildSummaryPrompt(text, n, names){
 
 function summaryRetryNote(g){
   return "\n\nLỖI LẦN TRƯỚC: bản tóm tắt chứa nội dung KHÔNG có trong <chuong>"+(g.bad&&g.bad.length?" (tên không có trong chương, cấm dùng: "+g.bad.join(", ")+")":"")+". Viết lại: bắt đầu bằng \"**Tóm tắt chương:**\" rồi chỉ kể lại các sự kiện có thật trong <chuong>.";
+}
+
+function formatParagraphs(text) {
+  // V12.15: tự ngắt đoạn khi AI trả về khối văn đặc; mỗi lượt thoại một đoạn riêng; các đoạn cách nhau 1 dòng trống.
+  const src = String(text || "").replace(/\r\n?/g, "\n").trim();
+  if (!src) return src;
+  const OPEN = /^[“"«‘'—–-]\s*/;
+  const isTerm = c => ".!?…".indexOf(c) >= 0;
+  const splitSentences = block => {
+    const out = []; let cur = "", q = false;
+    for (let i = 0; i < block.length; i++) {
+      const ch = block[i]; cur += ch;
+      if (ch === "“") q = true; else if (ch === "”") q = false; else if (ch === '"') q = !q;
+      if (q) continue;
+      let j = i; while (j + 1 < block.length && /["”’'»)]/.test(block[j + 1])) { j++; cur += block[j]; }
+      const last = cur.replace(/["”’'»)\s]+$/, "").slice(-1);
+      if (isTerm(last) && (j === i ? isTerm(ch) : true) && /\s/.test(block[j + 1] || " ")) {
+        let k = j + 1; while (k < block.length && /\s/.test(block[k])) k++;
+        const nx = block.slice(k, k + 1);
+        if (!nx || /[\p{Lu}“"«‘—–-]/u.test(nx)) { out.push(cur.trim()); cur = ""; }
+        i = j;
+      } else i = j;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  };
+  const paras = [];
+  for (const raw of src.split(/\n+/)) {
+    const block = raw.trim(); if (!block) continue;
+    if (block.length <= 500 && !/[“"]/.test(block.slice(1)) ) { paras.push(block); continue; }
+    if (block.length <= 500 && OPEN.test(block)) { paras.push(block); continue; }
+    if (block.length <= 500) {
+      // đoạn vừa có thoại xen lẫn: vẫn tách thoại ra nếu câu bắt đầu bằng ngoặc/gạch
+      const ss = splitSentences(block);
+      if (!ss.some((s, i) => i > 0 && OPEN.test(s))) { paras.push(block); continue; }
+    }
+    let cur = [], len = 0, curDialog = false;
+    const flush = () => { if (cur.length) paras.push(cur.join(" ")); cur = []; len = 0; curDialog = false; };
+    for (const s of splitSentences(block)) {
+      const dlg = OPEN.test(s);
+      if (dlg && cur.length) flush();
+      if (!dlg && curDialog) flush();
+      cur.push(s); len += s.length; curDialog = dlg || curDialog;
+      if (curDialog) { if (/["”’»][^“"]{0,80}$/.test(s) || /[.!?…]$/.test(s)) flush(); }
+      else if (cur.length >= 3 || len >= 320) flush();
+    }
+    flush();
+  }
+  return paras.join("\n\n");
 }
 // <<SHARED-CORE:END>>
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
@@ -4936,7 +4986,7 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
         }catch(e){}
         if(detectNonVietnamese(contText)) break;
       }
-      contText = stripForeign(contText);
+      contText = formatParagraphs(stripForeign(contText));
       let cleaned = contText.trim();
       const lastSentences = tail.slice(-200).replace(/\s+/g, " ");
       if(cleaned.slice(0, 120).replace(/\s+/g, " ").includes(lastSentences.slice(-80))){
@@ -5408,6 +5458,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       "6. MỖI CHƯƠNG CHỈ 1–3 SỰ KIỆN CHÍNH; không nhồi biến cố mới ngoài ngân sách.",
       "7. MỖI NHÂN VẬT XUẤT HIỆN PHẢI CÓ LÝ DO + VAI TRÒ; ưu tiên nhân vật đã có ở danh sách NHÂN VẬT ĐÃ CÓ TRONG TRUYỆN phía trên, không tùy tiện tạo nhân vật quan trọng mới.",
       "8. MIÊU TẢ: khi nhân vật mới xuất hiện hoặc cảnh mới mở, TẢ ngoại hình + không khí qua chi tiết cụ thể.",
+      "9. BỐ CỤC: chia thành nhiều đoạn ngắn 2–4 câu (tối đa ~90 từ/đoạn), các đoạn cách nhau MỘT DÒNG TRỐNG. Mỗi lượt thoại nằm trên MỘT ĐOẠN RIÊNG (mở bằng dấu “ hoặc —). Đổi cảnh/đổi người nói/đổi nhịp thì xuống đoạn mới. TUYỆT ĐỐI không viết một khối văn liền dài.",
       state.directive ? ("===== BRIEF NGƯỜI DÙNG — ƯU TIÊN CAO NHẤT =====\nMỆNH LỆNH TOÀN VẸN (KHÔNG ĐƯỢC CẮT):\n" + String(state.directive) + "\n===== HẾT MỆNH LỆNH =====") : "",
       state.nextChapterHint ? ("===== GỢI Ý NGƯỜI DÙNG — PHẢI BÁM ĐẦY ĐỦ =====\n" + String(state.nextChapterHint) + "\n===== HẾT GỢI Ý =====") : "",
       state.autoNextChapterHint ? ("GỢI Ý TỰ ĐỘNG CHỈ ĐỂ THAM KHẢO — KHÔNG ĐƯỢC GHI ĐÈ/ƯU TIÊN HƠN BRIEF NGƯỜI DÙNG:\n" + String(state.autoNextChapterHint)) : "",
@@ -5466,7 +5517,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       }catch(e){}
     }
 
-    rawText = stripForeign(rawText);
+    rawText = formatParagraphs(stripForeign(rawText));
     const titleMatch = rawText.match(/TIÊU ĐỀ:\s*(.+)/i);
     const bodyMatch = rawText.match(/NỘI DUNG:\s*([\s\S]*)/i);
 
@@ -5693,7 +5744,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     if(detectNonVietnamese(contText)){
       try{ const r2 = await callAI(prompt + "\n\nBẮT BUỘC 100% TIẾNG VIỆT.", {maxTokens:12000, temperature:0.9, modelOverride: targetModel}); contText = r2.text; contFinish = r2.finishReason; }catch(e){}
     }
-    contText = stripForeign(contText);
+    contText = formatParagraphs(stripForeign(contText));
     if(state.spellCheckEnabled && contText){
       const fixed = await polishVietnamese(contText, { modelOverride: state.model });
       if(fixed) contText = fixed;
@@ -5872,6 +5923,16 @@ $ID("rescanFromBtn").addEventListener("click", ()=>{
 });
 
 /* ========== SPLIT / MERGE / INSERT ========== */
+$ID("fmtParaBtn").addEventListener("click", async ()=>{
+  const idx = state.currentChapterIndex;
+  if(idx < 0){ setStatus("Chưa có chương.", false); return; }
+  const c = state.chapters[idx];
+  const next = formatParagraphs(c.text);
+  if(next === String(c.text||"").trim()){ setStatus("Chương này đã ngắt đoạn ổn rồi.", false); return; }
+  c.text = next; c.wordCount = countWords(next);
+  persist(); renderCurrentChapter();
+  setStatus("Đã ngắt đoạn chương " + (idx+1) + ".", false);
+});
 $ID("splitChapterBtn").addEventListener("click", async ()=>{
   const idx = state.currentChapterIndex;
   if(idx < 0){ setStatus("Chưa có chương.", false); return; }
