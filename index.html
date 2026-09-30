@@ -314,7 +314,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="brand-mark"></div>
 <div>
 <div class="brand-name">Xưởng Truyện AI Pro Max</div>
-<div class="brand-sub">v12.10 · Gợi ý chương sau chi tiết · Tóm tắt bám sát · Tiếng Việt</div>
+<div class="brand-sub">v12.12 · Gợi ý chương sau chi tiết · Tóm tắt bám sát · Tiếng Việt</div>
 </div>
 </div>
 <div class="topbar-actions">
@@ -665,6 +665,15 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="section-head" data-toggle=""><span>4. Nội Dung 18+</span><span class="chev">▾</span></div>
 <div class="section-body">
 <div class="toggle-row"><span>🔥 Cho phép trưởng thành</span><label class="switch"><input id="matureToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
+<div style="margin-top:8px;">
+<label for="chapterMatureFocus">Trọng tâm trưởng thành của chương</label>
+<select id="chapterMatureFocus">
+<option value="none">NONE — Không có</option>
+<option value="secondary">SECONDARY — Phụ / chỉ khi mạch truyện yêu cầu</option>
+<option value="primary">PRIMARY — Trọng tâm chính của chương</option>
+</select>
+<div class="hint" style="margin-top:4px;">NONE không tự chèn nội dung trưởng thành · SECONDARY chỉ dùng khi brief/mạch truyện yêu cầu rõ · PRIMARY cho phép coi chủ đề trưởng thành là một trọng tâm của chương.</div>
+</div>
 <div class="hint" id="nsfwHint"></div>
 <div class="warn-box">Không hỗ trợ nội dung khiêu dâm trẻ em.</div>
 </div>
@@ -1368,7 +1377,7 @@ const state = {
   schemaVersion: 9,
   apiEndpoint: "https://openrouter.ai/api/v1/chat/completions", apiKey: "",
   model: "deepseek/deepseek-v3.2", modelNsfw: "aion-labs/aion-2.0",
-  nsfwMode: "auto", nsfwAutoThreshold: 6,
+  nsfwMode: "auto", nsfwAutoThreshold: 6, chapterMatureFocus: "none",
   descriptionLevel: "balanced",
   explicitLevel: "strong",
   advancedRules: DEFAULT_ADVANCED_RULES, autoIntervalSec: 180,
@@ -1385,7 +1394,8 @@ const state = {
   mainCharProfile: null,
   vocabulary: { preferred:"", banned:"", overused:"", anatomy:"" },
   arcs: [], outlinePlans: [], storyClock: "", directive: "", nextChapterHint: "", autoNextChapterHint: "",
-  difficulty: "vua", mature: false,
+  difficulty: "vua", mature: false, chapterMatureFocus: "none",
+  storyControl: { schemaVersion:1, maxMainEvents:3, maxNamedCharacters:4, maxNewThreads:3, noRetcon:true, agencyRequired:true, lockedFields:["identity","age","background","canon","relationships","cultivation","abilities","importantItems","secrets","promises","worldRules"] },
   currentStatus: "",
   characters: [], locations: [], items: [], threads: [],
   scenes: [], consentLog: [],
@@ -1429,7 +1439,7 @@ function newStoryState(name){
     femaleCharacterDefinition: "",
     vocabulary: { preferred:"", banned:"", overused:"", anatomy:"" },
     arcs:[], outlinePlans:[], storyClock:"", directive:"", nextChapterHint:"", autoNextChapterHint:"",
-    difficulty:"vua", mature:false, currentStatus:"",
+    difficulty:"vua", mature:false, chapterMatureFocus:"none", storyControl:{schemaVersion:1,maxMainEvents:3,maxNamedCharacters:4,maxNewThreads:3,noRetcon:true,agencyRequired:true,lockedFields:["identity","age","background","canon","relationships","cultivation","abilities","importantItems","secrets","promises","worldRules"]}, currentStatus:"",
     characters:[], locations:[], items:[], threads:[],
     scenes:[], consentLog:[],
     chapters:[], currentChapterIndex:-1, chaptersSinceBackup:0,
@@ -1742,6 +1752,7 @@ const worldRulesEl = $ID("worldRules"), antagonistEl = $ID("antagonist"), pronou
 const worldDescriptionEl = $ID("worldDescription");
 const storyBibleLockEl = $ID("storyBibleLock"), storyClockEl = $ID("storyClock") || { value: "" }, directiveEl = $ID("directive");
 const nextChapterHintEl = $ID("nextChapterHint") || { value: "" };
+const chapterMatureFocusEl = $ID("chapterMatureFocus") || { value: "none" };
 const advancedRulesEl = $ID("advancedRules"), difficultyEl = $ID("difficulty"), matureToggle = $ID("matureToggle");
 const statusBox = $ID("statusBox"), statusEdit = $ID("statusEdit"), charList = $ID("charList");
 const arcList = $ID("arcList"), outlineList = $ID("outlineList"), locationList = $ID("locationList");
@@ -1941,8 +1952,29 @@ $ID("duplicateStoryBtn").addEventListener("click", async ()=>{
   setStatus("Đã nhân bản.", false);
 });
 
+/* ========== CHAPTER MATURE FOCUS ========== */
+function normalizeChapterMatureFocus(v){
+  const x=String(v||"none").toLowerCase();
+  return x === "primary" || x === "secondary" ? x : "none";
+}
+function matureFocusAllowsRouting(){
+  if(!state.mature) return false;
+  return normalizeChapterMatureFocus(state.chapterMatureFocus) !== "none";
+}
+function matureFocusLabel(){
+  const f=normalizeChapterMatureFocus(state.chapterMatureFocus);
+  return f === "primary" ? "PRIMARY" : f === "secondary" ? "SECONDARY" : "NONE";
+}
+function matureFocusPrompt(){
+  const f=normalizeChapterMatureFocus(state.chapterMatureFocus);
+  if(f === "primary") return "TRỌNG TÂM TRƯỞNG THÀNH: PRIMARY. Chủ đề trưởng thành là một trọng tâm được người dùng chỉ định cho chương này. Chỉ triển khai trong phạm vi brief/mạch truyện đã có; không tự mở tuyến mới.";
+  if(f === "secondary") return "TRỌNG TÂM TRƯỞNG THÀNH: SECONDARY. Chỉ sử dụng nội dung trưởng thành khi brief hoặc diễn biến hiện tại yêu cầu rõ. Không biến nó thành trọng tâm và không tự chèn cảnh chỉ để tăng nhiệt.";
+  return "TRỌNG TÂM TRƯỞNG THÀNH: NONE. Tuyệt đối không tự chèn hoặc kéo dài nội dung trưởng thành trong chương này, kể cả khi mạch truyện trước đó có nội dung trưởng thành.";
+}
+
 /* ========== MODEL PICK ========== */
 function pickWritingModel(forceNsfw){
+  if(normalizeChapterMatureFocus(state.chapterMatureFocus) === "none") forceNsfw = false;
   const mainModel = (state.model || modelSelect.value.trim() || "").trim();
   const nsfwModel = (state.modelNsfw || modelNsfwSelect.value.trim() || "").trim();
   if(forceNsfw){
@@ -1988,6 +2020,7 @@ function textHasNsfwKeyword(text){
 /** Kiểm tra mệnh lệnh + kế hoạch + đoạn gần → có nên ép NSFW không */
 function shouldForceNsfwByKeyword(plan, tail){
   if(!state.mature) return false;
+  if(!matureFocusAllowsRouting()) return false;
   if((state.nsfwMode || "auto") === "never") return false;
   if(!state.modelNsfw) return false;
   const sources = [
@@ -2008,6 +2041,7 @@ async function detectHeatLevel(tail, plan){
     "CHỈ TRẢ VỀ 1 SỐ DUY NHẤT. KHÔNG giải thích.",
     "",
     "MỆNH LỆNH: " + (state.directive || "(không)"),
+    matureFocusPrompt(),
     "KẾ HOẠCH: " + (plan || "(không)"),
     "DIỄN BIẾN GẦN:",
     (tail || "(chưa có)").slice(-2000)
@@ -2793,7 +2827,8 @@ function buildContextBlock(){
 
   const diffMap = { de:"Dễ thở.", vua:"Cân bằng.", kho:"Khó.", tan_khoc:"Tàn khốc." };
   lines.push("ĐỘ KHÓ: " + (diffMap[state.difficulty] || diffMap.vua));
-  if(state.mature) lines.push("VĂN PHONG: cho phép bạo lực, ngôn ngữ mạnh, 18+.");
+  lines.push(matureFocusPrompt());
+  if(state.mature && normalizeChapterMatureFocus(state.chapterMatureFocus) !== "none") lines.push("VĂN PHONG: nội dung trưởng thành chỉ xuất hiện trong phạm vi được chỉ định, không tự mở tuyến mới.");
   const descLevel = state.descriptionLevel || "balanced";
   lines.push("MỨC MIÊU TẢ: " + (DESCRIPTION_PROMPTS[descLevel] || DESCRIPTION_PROMPTS.balanced));
   if(state.mature) lines.push("MỨC 18+: " + (EXPLICIT_PROMPTS[state.explicitLevel] || EXPLICIT_PROMPTS.sensual));
@@ -2949,11 +2984,13 @@ $ID("saveAdvancedRulesBtn").addEventListener("click", ()=>{
   state.advancedRules = advancedRulesEl.value; persist();
   setStatus("Đã lưu.", false);
 });
-[directiveEl, nextChapterHintEl, difficultyEl, matureToggle].forEach(el=>{
+[directiveEl, nextChapterHintEl, difficultyEl, matureToggle, chapterMatureFocusEl].forEach(el=>{
   el.addEventListener("change", ()=>{
     state.directive = directiveEl.value; state.nextChapterHint = nextChapterHintEl.value; { const hs=$ID("hintStyle"); if(hs) state.hintStyle=hs.value; }
     state.difficulty = difficultyEl.value;
-    state.mature = matureToggle.checked; persist(); updateNsfwHint();
+    state.mature = matureToggle.checked;
+    state.chapterMatureFocus = normalizeChapterMatureFocus(chapterMatureFocusEl.value);
+    persist(); updateNsfwHint();
   });
 });
 autoIntervalInput.addEventListener("change", ()=>{
@@ -2982,8 +3019,10 @@ autoContinueMaxInput.addEventListener("change", ()=>{
 modelNsfwSelect.addEventListener("change", ()=>{ state.modelNsfw = modelNsfwSelect.value.trim(); syncApiSettingsV102(); persist(); updateNsfwHint(); });
 modelSelect.addEventListener("change", ()=>{ state.model = modelSelect.value.trim(); syncApiSettingsV102(); persist(); });
 nsfwModeSelect.addEventListener("change", ()=>{ state.nsfwMode = nsfwModeSelect.value; syncApiSettingsV102(); persist(); updateNsfwHint(); toggleAutoOpts(); });
+chapterMatureFocusEl.addEventListener("change", ()=>{ state.chapterMatureFocus=normalizeChapterMatureFocus(chapterMatureFocusEl.value); if(state.chapterMatureFocus === "none") state.mature=false; persist(); updateNsfwHint(); });
 nsfwAutoThresholdInput.addEventListener("change", ()=>{
   state.nsfwAutoThreshold = Math.max(3, Math.min(9, parseInt(nsfwAutoThresholdInput.value,10) || 6));
+  state.chapterMatureFocus = normalizeChapterMatureFocus(chapterMatureFocusEl.value);
   nsfwAutoThresholdInput.value = state.nsfwAutoThreshold; persist();
 });
 descriptionLevelSelect.addEventListener("change", ()=>{ state.descriptionLevel = descriptionLevelSelect.value; persist(); });
@@ -4720,6 +4759,27 @@ function checkDuplicates(newText){
   return warnings.slice(0, 5);
 }
 
+/* ========== STORY CONTROL LAYER ========== */
+function normalizeStoryControlClient(){
+  const sc=(state.storyControl&&typeof state.storyControl==="object")?state.storyControl:{};
+  return Object.assign({schemaVersion:1,maxMainEvents:3,maxNamedCharacters:4,maxNewThreads:3,noRetcon:true,agencyRequired:true,lockedFields:["identity","age","background","canon","relationships","cultivation","abilities","importantItems","secrets","promises","worldRules"]},sc);
+}
+function storyControlPromptClient(){
+  const sc=normalizeStoryControlClient();
+  return [
+    "STORY CONTROL LAYER — BẮT BUỘC:",
+    "- Tối đa "+Math.max(1,Math.min(3,Number(sc.maxMainEvents)||3))+" sự kiện chính; không thêm biến cố lớn ngoài ngân sách.",
+    "- Tối đa "+Math.max(1,Math.min(6,Number(sc.maxNamedCharacters)||4))+" nhân vật có tên xuất hiện trực tiếp; ưu tiên nhân vật đã tồn tại.",
+    "- Không tự mở tuyến truyện mới chỉ để kéo dài chương.",
+    "- Giữ nguyên nguyên nhân → hành động → phản ứng → hậu quả.",
+    sc.noRetcon!==false?"- NO RETCON: không tự sửa canon/lịch sử/ký ức đã xác nhận; mâu thuẫn phải được giữ lại để xử lý có chủ đích.":"",
+    "- STATE LOCK: không tự ý thay đổi dữ liệu canon quan trọng nếu chưa có sự kiện làm bằng chứng.",
+    sc.agencyRequired!==false?"- CHARACTER AGENCY: nhân vật quan trọng phải có mục tiêu, động cơ, phản ứng và lựa chọn riêng.":"",
+    "- Không tự tạo nhân vật quan trọng, năng lực, quy tắc thế giới hoặc vật phẩm quan trọng nếu không cần thiết.",
+    "- Chapter Focus chỉ xác định phạm vi chủ đề trưởng thành; không phải giấy phép mở tuyến mới."
+  ].filter(Boolean).join("\n");
+}
+
 /* ========== BUILD PLAN ========== */
 async function buildChapterPlan(context, recent, chapterNumber){
   const userDirective = String(state.directive||"").trim();
@@ -4730,6 +4790,7 @@ async function buildChapterPlan(context, recent, chapterNumber){
     "Bạn là biên kịch cho tiểu thuyết dài kỳ. Lập KẾ HOẠCH cho CHƯƠNG " + chapterNumber + ".",
     "",
     "Bối cảnh:", context, "",
+    storyControlPromptClient(), "",
     recent ? ("Chương gần nhất:\n" + recent.slice(0, 8000)) : "Chương đầu tiên.", "",
     state.mainCharProfile?.name ? ("NHÂN VẬT CHÍNH BẮT BUỘC: " + state.mainCharProfile.name + " — PHẢI là nhân vật trung tâm của kế hoạch này.") : "",
     hasUserBrief ? [
@@ -4777,7 +4838,7 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
     attempts++;
 
     /* Auto NSFW giữa chương: từ khóa + nhiệt độ */
-    if(state.nsfwMode === "auto" && state.mature && state.modelNsfw && !usingNsfw){
+    if(state.nsfwMode === "auto" && matureFocusAllowsRouting() && state.modelNsfw && !usingNsfw){
       try{
         const tailMid = chapterObj.text.slice(-2000);
         if(shouldForceNsfwByKeyword(chapterObj.plan, tailMid)){
@@ -4934,7 +4995,8 @@ function syncApiSettingsV102(){
     primaryModel:state.model||"",
     nsfwModel:state.modelNsfw||"",
     nsfwMode:state.nsfwMode||"auto",
-    nsfwThreshold:Number(state.nsfwAutoThreshold||6)
+    nsfwThreshold:Number(state.nsfwAutoThreshold||6),
+    chapterMatureFocus:normalizeChapterMatureFocus(state.chapterMatureFocus)
   };
   state.storyMetaData=buildStoryMetaData(state);
 }
@@ -5225,7 +5287,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     if(!isRegen) plan = await buildChapterPlan(context, recentFullText, chapterNumber);
 
     /* Auto NSFW pre-flight: từ khóa trước, rồi mới chấm nhiệt */
-    if(state.nsfwMode === "auto" && state.mature && state.modelNsfw && !forceNsfw){
+    if(state.nsfwMode === "auto" && matureFocusAllowsRouting() && state.modelNsfw && !forceNsfw){
       const tailHeat = isRegen
         ? (state.chapters[regenIndex] ? state.chapters[regenIndex].text.slice(-2000) : "")
         : (priorChapters.length ? priorChapters[priorChapters.length - 1].text.slice(-1800) : "");
@@ -5274,6 +5336,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       "🎨 " + descPrompt,
       "",
       "Bối cảnh:", context || "(chưa có — tự sáng tạo hợp lý)", "",
+      storyControlPromptClient(), "",
       lastChapterEnding ? ("===== ĐOẠN KẾT CHƯƠNG TRƯỚC (PHẢI TIẾP NỐI) =====\n" + lastChapterEnding + "\n===== HẾT =====\n\nChương mới PHẢI bắt đầu từ việc tiếp nối trực tiếp đoạn kết trên.") : "",
       recentFullText ? ("\nChương gần (tránh lặp sự kiện / cấu trúc):\n" + recentFullText) : "",
       olderSummaries ? ("\nTÓM TẮT CHƯƠNG XA:\n" + olderSummaries) : "",
@@ -5534,7 +5597,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
   const pick = pickWritingModel(wasNsfw);
   let targetModel = pick.model;
   let usingNsfw = pick.isNsfw;
-  if(state.nsfwMode === "auto" && state.mature && state.modelNsfw && !usingNsfw){
+  if(state.nsfwMode === "auto" && matureFocusAllowsRouting() && state.modelNsfw && !usingNsfw){
     try{
       const tailC = state.chapters[idx].text.slice(-2000);
       const planC = state.chapters[idx].plan || "";
@@ -6292,6 +6355,7 @@ function hydrateFormFromState(){
   modelNsfwSelect.value = state.modelNsfw || "aion-labs/aion-2.0";
   nsfwModeSelect.value = state.nsfwMode || "auto";
   nsfwAutoThresholdInput.value = state.nsfwAutoThreshold || 6;
+  chapterMatureFocusEl.value = normalizeChapterMatureFocus(state.chapterMatureFocus);
   toggleAutoOpts();
   const sb = state.styleBible || {};
   $ID("povSelect").value = sb.pov || "third_limited";
@@ -6570,12 +6634,13 @@ async function startBackgroundWrite(){
   }
   const storyBlob={};
   Object.keys(state).forEach(k=>{if(!GLOBAL_KEYS.includes(k))storyBlob[k]=state[k];});
-  ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","modelNsfw","advancedRules","includeScenesInPrompt","autoContinueMax"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
+  ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","chapterMatureFocus","modelNsfw","advancedRules","includeScenesInPrompt","autoContinueMax"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
   // Background phải giữ nguyên lựa chọn NSFW của người dùng, không tự reset về false.
   // "always" luôn ép model NSFW; "mature_only" ép khi truyện đã đánh dấu trưởng thành.
   // "auto" vẫn để backend tự phát hiện theo ngữ cảnh.
-  const bgForceNsfw = (state.nsfwMode === "always") ||
-    (state.nsfwMode === "mature_only" && state.mature === true);
+  const bgFocus = normalizeChapterMatureFocus(state.chapterMatureFocus);
+  const bgForceNsfw = bgFocus !== "none" && ((state.nsfwMode === "always") ||
+    (state.nsfwMode === "mature_only" && state.mature === true) || bgFocus === "primary");
   const payload={hintStyle:state.hintStyle||"normal",storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:bgForceNsfw};
   setBgStatus("☁ Đang tạo job an toàn trên server...",true); $ID("bgWriteBtn").disabled=true;
   try{
@@ -6757,21 +6822,27 @@ function updateNsfwHint(){
   const hintEl = $ID("nsfwHint");
   if(!hintEl) return;
   const pick = pickWritingModel(false);
-  let hint = "";
+  const focus = normalizeChapterMatureFocus(state.chapterMatureFocus);
+  let hint = "<b>Trọng tâm chương:</b> " + focus.toUpperCase() + ". ";
+  if(focus === "none") hint += "Không tự chèn nội dung trưởng thành.";
+  else if(focus === "secondary") hint += "Chỉ dùng khi brief/mạch truyện yêu cầu rõ.";
+  else hint += "Chủ đề trưởng thành là một trọng tâm của chương.";
+
   if(state.nsfwMode === "auto"){
-    hint = "🤖 <b>Tự động:</b> có từ khóa 18+ trong mệnh lệnh (cảnh nóng, sex, âu yếm…) → ép model NSFW ngay. Không có từ khóa thì chấm 0–10, ≥ " + (state.nsfwAutoThreshold || 6) + " mới chuyển.";
+    hint += '<br>🤖 <b>Tự động:</b> routing tuân theo trọng tâm chương; ngưỡng hiện tại ' + (state.nsfwAutoThreshold || 6) + '.';
     if(!state.mature) hint += '<br><span style="color:#e0a83f;">⚠ Cần bật "Cho phép trưởng thành".</span>';
     if(!state.modelNsfw) hint += '<br><span style="color:#e2584d;">⚠ Chưa cấu hình NSFW model.</span>';
   } else if(state.nsfwMode === "mature_only"){
-    hint = "📌 Chỉ khi bật 18+: mọi chương đều dùng model NSFW (không phân cảnh thường/nóng). Muốn <b>tự chuyển 2 model</b> hãy chọn <b>Tự động theo cảnh</b>.";
+    hint += '<br>📌 Chỉ khi bật 18+: model NSFW được phép theo trọng tâm chương.';
     if(state.mature && pick.isNsfw) hint += '<br><b style="color:#e2584d;">🔥 Đang dùng: ' + escapeHtml(shortModelName(pick.model)) + '</b>';
   } else if(state.nsfwMode === "always"){
-    hint = "🔥 Luôn dùng model NSFW cho mọi chương.";
+    hint += '<br>🔥 Chế độ model NSFW luôn bật, nhưng NONE vẫn chặn nội dung trưởng thành.';
   } else {
-    hint = "Không bao giờ dùng model NSFW.";
+    hint += '<br>🚫 Không dùng model NSFW.';
   }
   hintEl.innerHTML = hint;
-} function renderDeleteChapterSelect(){
+}
+function renderDeleteChapterSelect(){
   const prevVal = deleteChapterSelect.value;
   if(!state.chapters.length){ deleteChapterSelect.innerHTML = "<option>Chưa có chương</option>"; return; }
   deleteChapterSelect.innerHTML = state.chapters.map((c,i)=>
