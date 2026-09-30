@@ -208,6 +208,10 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 .plan-box,.summary-box,.scene-box{background:#0c0d12;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--ink-dim);white-space:pre-wrap;margin-bottom:10px;display:none;max-height:220px;overflow-y:auto;}
 .summary-box{background:rgba(63,184,174,.06);border-color:rgba(63,184,174,.4);color:#c8e8e5;}
 .scene-box{background:rgba(232,107,154,.06);border-color:rgba(232,107,154,.4);color:#f0c8d8;}
+.quality-box{background:rgba(77,139,245,.06);border:1px solid rgba(77,139,245,.35);border-radius:8px;padding:10px 12px;font-size:11.5px;color:var(--ink-dim);white-space:pre-wrap;margin-bottom:10px;max-height:260px;overflow-y:auto;}
+.quality-pass{border-color:rgba(63,174,114,.55);background:rgba(63,174,114,.06);color:#c9ead8;}
+.quality-fail{border-color:rgba(226,88,77,.55);background:rgba(226,88,77,.06);color:#f0c5c0;}
+.quality-warn{border-color:rgba(224,168,63,.55);background:rgba(224,168,63,.06);color:#f0dfb5;}
 .plan-box.show,.summary-box.show,.scene-box.show{display:block;}
 .editor-text{flex:1;font-family:'Lora',serif;font-size:16px;line-height:1.85;color:#dcdce2;white-space:pre-wrap;outline:none;min-height:340px;}
 .editor-text.streaming:after{content:"▍";color:var(--gold);animation:blink 1s infinite;}
@@ -314,7 +318,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="brand-mark"></div>
 <div>
 <div class="brand-name">Xưởng Truyện AI Pro Max</div>
-<div class="brand-sub">v12.14 · Gợi ý chương sau chi tiết · Tóm tắt bám sát · Tiếng Việt</div>
+<div class="brand-sub">v12.17 · Quality Gate dùng chung client/worker · Tiếng Việt</div>
 </div>
 </div>
 <div class="topbar-actions">
@@ -712,6 +716,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <option value="deep">Sâu đậm (tả kỹ mọi thứ)</option>
 </select>
 </div>
+<div class="toggle-row"><span>🛡 Quality Gate (chấm + tự sửa trước khi ghi Canon)</span><label class="switch"><input checked="" id="qualityGateToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
 <div class="toggle-row"><span>📝 Rà chính tả + xưng hô</span><label class="switch"><input checked="" id="spellCheckToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
 <div class="toggle-row"><span>🔄 Auto-continue</span><label class="switch"><input checked="" id="autoContinueToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
 <div class="toggle-row"><span>📄 Auto summary</span><label class="switch"><input checked="" id="autoSummaryToggle" type="checkbox"/><span class="slider-tg"></span></label></div>
@@ -776,6 +781,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 </div>
 <div class="toolbar-right">
 <button class="btn btn-ghost" id="fmtParaBtn" title="Tự ngắt đoạn chương này">¶ Ngắt đoạn</button>
+<button class="btn btn-ghost" id="reviewChapterBtn" title="Duyệt lại chất lượng chương này (không tự viết lại)">🔍 Duyệt lại</button>
 <button class="btn btn-ghost" id="splitChapterBtn" title="Tách chương">✂ Tách</button>
 <button class="btn btn-ghost" id="mergeChapterBtn" title="Gộp chương">⊕ Gộp</button>
 <button class="btn btn-ghost" id="insertChapterBtn" title="Chèn chương trống">＋ Chèn</button>
@@ -794,6 +800,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="summary-box" id="summaryBox"></div>
 <div class="plan-box" id="planBox"></div>
 <div class="scene-box" id="sceneBox"></div>
+<div class="quality-box" id="qualityBox" style="display:none"></div>
 <div class="editor-text" contenteditable="true" data-placeholder="Điền Story Bible, nhân vật ở sidebar rồi nhấn 'Tạo Chương Mới'..." id="chapterText"></div>
 <div class="status-line" id="statusLine"></div>
 </div>
@@ -1198,6 +1205,239 @@ function findStrayWords(text, allowNames) {
   }
   return out;
 }
+
+// ===== V12.17: Quality Gate — phần THUẦN (không gọi AI, không đụng DOM/state toàn cục) =====
+// Client và worker cùng dùng các hàm này; phần gọi AI / dựng prompt vẫn nằm riêng ở từng nơi.
+const GATE_MAX_ATTEMPTS = 3;          // tối đa số lần chấm (và sửa) cho một chương
+const GATE_MAX_VERSIONS = 3;          // số bản gốc giữ lại trong chapter.versions
+const GATE_MIN_REWRITE_RATIO = 0.6;   // bản sửa ngắn hơn 60% bản gốc bị từ chối
+
+function gateItemText(x) { return typeof x === "string" ? x : ((x && (x.description || x.problem)) || JSON.stringify(x)); }
+
+function gateMaxAttempts(v) { return Math.max(1, Math.min(GATE_MAX_ATTEMPTS, Number(v) || GATE_MAX_ATTEMPTS)); }
+
+// Chuẩn hoá kết quả Auditor → review có verdict cuối cùng. Trả null nếu obj không phải object JSON.
+// opts: { maxMainEvents, maxNamedCharacters, passScore, softFailScore, extraHard: string[], now }
+function evaluateReview(obj, opts) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  opts = opts || {};
+  const maxEv = Number(opts.maxMainEvents) || 3, maxCh = Number(opts.maxNamedCharacters) || 4;
+  const passScore = Number(opts.passScore) || 90, softScore = Number(opts.softFailScore) || 75;
+  const arr = (v, n) => (Array.isArray(v) ? v.slice(0, n) : []);
+  const hard = arr(obj.hardFailures, 20);
+  (opts.extraHard || []).forEach(m => hard.push(m));
+  if (Number(obj.mainEventCount) > maxEv) hard.push("Vượt ngân sách sự kiện: " + obj.mainEventCount + " > " + maxEv);
+  if (Number(obj.namedCharacterCount) > maxCh) hard.push("Vượt số nhân vật có tên: " + obj.namedCharacterCount + " > " + maxCh);
+  if (obj.unauthorizedImportantCharacter) hard.push("Có nhân vật mới quan trọng không được outline/brief cho phép.");
+  if (obj.knowledgeViolation) hard.push("Vi phạm Knowledge Ledger / nhân vật biết thông tin chưa thể biết.");
+  if (obj.retcon) hard.push("Có dấu hiệu retcon canon đã xác nhận.");
+  const score = Math.max(0, Math.min(100, Number(obj.score) || 0));
+  const verdict = hard.length ? "HARD_FAIL" : (score >= passScore ? "PASS" : (score >= softScore ? "SOFT_FAIL" : "HARD_FAIL"));
+  return Object.assign({}, obj, {
+    score, verdict, hardFailures: hard,
+    dimensions: obj.dimensions && typeof obj.dimensions === "object" ? obj.dimensions : {},
+    warnings: arr(obj.warnings, 20).concat(opts.extraWarnings || []), suggestions: arr(obj.suggestions, 20), rewriteInstructions: arr(obj.rewriteInstructions, 12),
+    reviewedAt: opts.now || Date.now()
+  });
+}
+
+// Hướng sửa gửi cho Writer: ưu tiên rewriteInstructions, nếu trống thì dùng hardFailures.
+function rewriteInstructionsText(review) {
+  review = review || {};
+  const ins = (review.rewriteInstructions || []).join("\n");
+  return ins || (review.hardFailures || []).map(gateItemText).join("\n");
+}
+
+// Bản sửa có được phép thay bản thảo không? (không rỗng, không ngắn bất thường)
+function checkRewriteAcceptable(oldWc, newText, newWc) {
+  if (!String(newText || "").trim() || newWc < Math.max(20, Math.floor(oldWc * GATE_MIN_REWRITE_RATIO)))
+    return { ok: false, reason: "Bản sửa quá ngắn/rỗng (" + newWc + " từ so với " + oldWc + ")" };
+  return { ok: true };
+}
+
+// Lưu bản gốc vào chapter.versions (mới nhất đứng đầu, giữ tối đa GATE_MAX_VERSIONS).
+function backupBeforeRewrite(chapter, note) {
+  if (!Array.isArray(chapter.versions)) chapter.versions = [];
+  const oldText = String(chapter.text || "");
+  chapter.versions.unshift({ timestamp: Date.now(), text: oldText, wordCount: countWords(oldText), modelUsed: chapter.modelUsed || null, isNsfw: !!chapter.isNsfw, polished: !!chapter.polished, note: note || "Trước khi Quality Gate sửa" });
+  chapter.versions = chapter.versions.slice(0, GATE_MAX_VERSIONS);
+}
+
+// Mỗi lượt thay cảnh báo do AI cũ bằng cảnh báo mới (giữ cảnh báo khác nguồn), không cộng dồn.
+function mergeAiContinuityWarnings(existing, incoming, cap) {
+  const keep = (Array.isArray(existing) ? existing : []).filter(w => !(w && w.source === "ai"));
+  const fresh = (Array.isArray(incoming) ? incoming : []).map(w => Object.assign({}, w, { source: "ai" }));
+  return keep.concat(fresh).slice(-(cap || 20));
+}
+
+// ===== V12.17 (phần 2): Story Control, dựng prompt Gate, vòng lặp Gate, đánh dấu Sync =====
+
+// --- Story Control: một nguồn duy nhất cho chuẩn hoá + prompt (trước đây client và worker viết khác nhau) ---
+function normalizeStoryControl(st) {
+  const sc = (st && st.storyControl && typeof st.storyControl === "object") ? st.storyControl : {};
+  return {
+    schemaVersion: Number(sc.schemaVersion) || 1,
+    maxMainEvents: Math.max(1, Math.min(3, Number(sc.maxMainEvents) || 3)),
+    maxNamedCharacters: Math.max(1, Math.min(6, Number(sc.maxNamedCharacters) || 4)),
+    maxNewThreads: Math.max(0, Math.min(5, Number(sc.maxNewThreads) || 3)),
+    noRetcon: sc.noRetcon !== false,
+    lockedFields: Array.isArray(sc.lockedFields) ? sc.lockedFields : ["identity","age","background","canon","relationships","cultivation","abilities","importantItems","secrets","promises","worldRules"],
+    agencyRequired: sc.agencyRequired !== false
+  };
+}
+function storyControlPrompt(st) {
+  const sc = normalizeStoryControl(st);
+  return [
+    "STORY CONTROL LAYER — BẮT BUỘC:",
+    `- Ngân sách sự kiện: tối đa ${sc.maxMainEvents} sự kiện chính; không thêm biến cố lớn thứ ${sc.maxMainEvents + 1}.`,
+    `- Nhân vật có tên xuất hiện trực tiếp: tối đa ${sc.maxNamedCharacters}; ưu tiên nhân vật đã tồn tại.`,
+    `- Thread mới: tối đa ${sc.maxNewThreads}; không mở tuyến mới chỉ để kéo dài chương.`,
+    "- Continuity: nguyên nhân → hành động → phản ứng → hậu quả phải nhất quán với trạng thái hiện tại.",
+    sc.noRetcon ? "- NO RETCON: không tự sửa lịch sử, canon hoặc ký ức đã xác nhận. Nếu phát hiện mâu thuẫn, giữ nguyên dữ liệu cũ và đánh dấu xung đột để xử lý sau." : "",
+    `- STATE LOCK: không tự ý thay đổi các trường canon/quan trọng (${sc.lockedFields.join(", ")}). Muốn thay đổi phải có sự kiện trong truyện làm bằng chứng và cập nhật trạng thái sau chương.`,
+    sc.agencyRequired ? "- CHARACTER AGENCY: nhân vật quan trọng phải có mục tiêu, động cơ, phản ứng và lựa chọn riêng; không biến nhân vật thành công cụ của plot." : "",
+    "- Không tự tạo nhân vật quan trọng mới nếu nhân vật hiện có có thể đảm nhiệm vai trò đó.",
+    "- Không tạo năng lực, quy tắc thế giới hoặc vật phẩm quan trọng mới chỉ để giải quyết vấn đề tức thời.",
+    "- Chapter Focus chỉ kiểm soát phạm vi chủ đề trưởng thành; không được dùng nó để mở rộng cốt truyện ngoài brief.",
+    "- Nếu Directive/Story Bible/Current Status xung đột, không âm thầm sửa canon; ưu tiên dữ liệu canon và ghi nhận xung đột khi cần.",
+    "- Mục tiêu là chiều sâu và tính liên tục, không phải nhồi thêm sự kiện."
+  ].filter(Boolean).join("\n");
+}
+
+// --- Kiểm tra cứng xác định (không gọi AI). Hai ngân sách sự kiện/nhân vật do Auditor đếm, evaluateReview áp ngưỡng. ---
+function gateHardChecks(chapter) {
+  const text = String((chapter && chapter.text) || "");
+  const warns = (chapter && chapter.continuityWarnings) || [];
+  return [
+    { id: "language", ok: !detectNonVietnamese(text), message: "Ngôn ngữ: tiếng Việt" },
+    { id: "text_nonempty", ok: countWords(text) > 100, message: "Bản thảo có đủ nội dung" },
+    { id: "duplicate", ok: !warns.some(x => x && (x.severity === "high" || x.severity === "critical")), message: "Không có lỗi continuity mức cao đã phát hiện" }
+  ];
+}
+// Tên nhân vật đã biết (hồ sơ NV chính + danh sách NV) — dùng để đếm tự động bằng chứng cho Auditor.
+function gateKnownNames(st) {
+  const out = [], seen = new Set();
+  const add = n => { n = String(n || "").trim(); if (n.length >= 2 && !seen.has(n)) { seen.add(n); out.push(n); } };
+  add(st && st.mainCharProfile && st.mainCharProfile.name);
+  ((st && st.characters) || []).forEach(c => add(c && c.name));
+  return out;
+}
+// Những tên đã biết thật sự xuất hiện trong văn bản (khớp nguyên từ, phân biệt hoa/thường để tránh nhầm từ thường như "lan", "hoa").
+function knownNameMentions(text, names) {
+  const t = String(text || ""), found = [];
+  (names || []).forEach(n => {
+    const esc = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp("(^|[^\\p{L}\\p{N}])" + esc + "(?![\\p{L}\\p{N}])", "u").test(t)) found.push(n);
+  });
+  return found;
+}
+
+// --- Prompt Auditor: phần khung/quy tắc/schema dùng chung; ngữ cảnh do client/worker tự truyền vào ---
+const GATE_REVIEW_SCHEMA = '{"score":0,"verdict":"PASS|SOFT_FAIL|HARD_FAIL","dimensions":{"continuity":0,"characterConsistency":0,"canonConsistency":0,"plotDiscipline":0,"worldRules":0,"outlineCompliance":0,"style":0,"pacing":0,"knowledgeConsistency":0},"mainEventCount":0,"namedCharacterCount":0,"unauthorizedImportantCharacter":false,"knowledgeViolation":false,"retcon":false,"outlineDeviation":false,"hardFailures":[],"warnings":[],"suggestions":[],"rewriteInstructions":[]}';
+// p: { storyControl, contract, contractLabel, context, warnings, draft, hardChecks, knownNames, maxMainEvents, maxNamedCharacters }
+function buildQualityReviewPrompt(p) {
+  const evN = Number(p.maxMainEvents) || 3, chN = Number(p.maxNamedCharacters) || 4;
+  const known = (p.knownNames || []);
+  return [
+    "Bạn là QUALITY AUDITOR cho tiểu thuyết dài kỳ.",
+    "Mục tiêu: kiểm tra bản thảo so với Chapter Contract, Story Bible và continuity. KHÔNG viết lại chương.",
+    "Trả DUY NHẤT JSON object theo schema cuối.",
+    "STORY CONTROL:", p.storyControl || "",
+    (p.contractLabel || "CHAPTER CONTRACT / OUTLINE") + ":", p.contract || "(không có)",
+    "BỐI CẢNH/CANON TÓM LƯỢC:", String(p.context || "").slice(0, 18000),
+    "CONTINUITY WARNINGS ĐÃ PHÁT HIỆN:", JSON.stringify(p.warnings || []).slice(0, 6000),
+    "BẢN THẢO CHƯƠNG:", String(p.draft || "").slice(0, 50000),
+    "KIỂM TRA CỨNG ĐÃ CÓ:", JSON.stringify(p.hardChecks || []),
+    known.length ? "TÊN NHÂN VẬT ĐÃ BIẾT XUẤT HIỆN TRONG VĂN BẢN (đếm tự động, chỉ để tham khảo khi đếm namedCharacterCount): " + known.join(", ") : "",
+    "QUY TẮC:",
+    "- mainEventCount phải là số sự kiện chính thực sự (tối đa " + evN + "), không đếm scene beat/hành động nhỏ.",
+    "- namedCharacterCount chỉ đếm nhân vật có tên riêng xuất hiện trực tiếp; tối đa " + chN + ".",
+    "- unauthorizedImportantCharacter=true nếu xuất hiện nhân vật mới quan trọng mà outline/brief không cho phép.",
+    "- knowledgeViolation=true nếu nhân vật biết điều họ chưa thể biết.",
+    "- retcon=true nếu mâu thuẫn canon đã xác nhận.",
+    "- outlineDeviation=true nếu bỏ mốc bắt buộc hoặc mở tuyến lớn ngoài contract.",
+    "- hardFailures phải chứa mọi lỗi chặn Sync. Nếu có hard failure thì verdict phải HARD_FAIL dù score cao.",
+    "SCHEMA: " + GATE_REVIEW_SCHEMA
+  ].filter(x => x !== "").join("\n\n");
+}
+// p: { chapterNumber, storyControl, contract, contractLabel, context, review, draft }
+function buildRewritePrompt(p) {
+  return [
+    "SỬA LẠI BẢN THẢO CHƯƠNG " + p.chapterNumber + " THEO QUALITY REVIEW.",
+    "Chỉ sửa đúng các lỗi được nêu; giữ nguyên các sự kiện hợp lệ, nhân vật hợp lệ, POV, xưng hô và giọng văn.",
+    "TUYỆT ĐỐI không thêm sự kiện chính mới, không tạo nhân vật quan trọng mới, không mở thread mới chỉ để làm bản sửa dài hơn.",
+    p.storyControl || "",
+    (p.contractLabel || "OUTLINE/CONTRACT") + ":\n" + (p.contract || ""),
+    p.context ? "CANON CONTEXT:\n" + String(p.context).slice(0, 15000) : "",
+    "QUALITY REVIEW:\n" + JSON.stringify(p.review || {}),
+    "HƯỚNG SỬA ƯU TIÊN:\n" + rewriteInstructionsText(p.review),
+    "BẢN THẢO HIỆN TẠI:\n" + (p.draft || ""),
+    "CHỈ TRẢ VỀ VĂN XUÔI CHƯƠNG ĐÃ SỬA, KHÔNG tiêu đề, không giải thích, không markdown."
+  ].filter(Boolean).join("\n\n");
+}
+
+// --- Vòng lặp Gate dùng chung. Không gọi AI trực tiếp: client/worker truyền các hàm vào qua `deps`. ---
+// deps: { review(attempt)→{ok,review|reason}, rewrite(review,attempt)→{ok,stopped,reason}, selfCheck?(attempt), onStatus?(msg), onChange?(), shouldStop?() }
+// opts: { enabled, allowRewrite, maxAttempts }
+function bypassReview() {
+  return { status: "bypassed", score: null, verdict: "BYPASS", dimensions: {}, hardFailures: [], warnings: ["Quality Gate đang tắt"], suggestions: [], rewriteInstructions: [], attempt: 0, reviewedAt: Date.now() };
+}
+async function runGateLoop(chapter, deps, opts) {
+  opts = opts || {}; deps = deps || {};
+  const notify = () => { if (deps.onChange) deps.onChange(); };
+  const stopped = () => !!(deps.shouldStop && deps.shouldStop());
+  if (opts.enabled === false) { chapter.status = "APPROVED"; chapter.review = bypassReview(); notify(); return { approved: true }; }
+  const maxAttempts = opts.allowRewrite === false ? 1 : gateMaxAttempts(opts.maxAttempts);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (stopped()) return { approved: false, stopped: true };
+    if (deps.selfCheck) { chapter.status = "SELF_CHECKING"; notify(); await deps.selfCheck(attempt); }
+    chapter.status = "REVIEWING"; chapter.review = Object.assign({}, chapter.review || {}, { attempt }); notify();
+    const rr = await deps.review(attempt);
+    if (!rr || !rr.ok) {
+      const reason = (rr && rr.reason) || "review_error";
+      chapter.review = Object.assign({}, chapter.review, { status: "error", verdict: "REVIEW_ERROR", warnings: ["Không đọc được kết quả Quality Review: " + reason] });
+      chapter.status = "REVISION_REQUIRED"; notify();
+      return { approved: false, error: reason };
+    }
+    chapter.review = Object.assign({}, chapter.review, rr.review, { status: "completed", attempt, reviewedAt: Date.now() });
+    if (rr.review.verdict === "PASS") { chapter.status = "APPROVED"; notify(); return { approved: true, review: rr.review }; }
+    chapter.status = "REVISION_REQUIRED"; notify();
+    if (attempt >= maxAttempts) break;
+    if (deps.onStatus) deps.onStatus("Quality Gate: " + rr.review.verdict + " — đang sửa lần " + (attempt + 1) + "/" + maxAttempts + "...");
+    const rw = await deps.rewrite(rr.review, attempt);
+    if (rw && rw.stopped) return { approved: false, stopped: true };
+    if (!rw || !rw.ok) {
+      chapter.review.warnings = (chapter.review.warnings || []).concat(["Bản sửa bị từ chối: " + ((rw && rw.reason) || "không rõ") + " — giữ nguyên bản thảo."]);
+      notify(); break;
+    }
+  }
+  chapter.status = "REVISION_REQUIRED";
+  return { approved: false, review: chapter.review };
+}
+
+// --- Canon version / đánh dấu Sync / kết quả job nền ---
+function nextCanonVersion(st) {
+  const ex = Math.max(0, ...(((st && st.chapters) || []).map(c => Number(c && c.sync && c.sync.canonVersion) || 0)));
+  return Math.max(ex, Number(st && st.canonVersion) || 0) + 1;
+}
+function applyCanonSync(st, chapter, now) {
+  const cv = nextCanonVersion(st);
+  st.canonVersion = cv; chapter.canonVersion = cv;
+  const warn = !!(chapter.autoUpdateIssues && chapter.autoUpdateIssues.length);
+  chapter.sync = Object.assign({ changes: [] }, chapter.sync || {}, { status: warn ? "SYNCED_WITH_WARNINGS" : "SYNCED", canonVersion: cv, syncedAt: now || Date.now() });
+  chapter.status = chapter.sync.status;
+  return cv;
+}
+function mergeCanonVersion(local, incoming) { return Math.max(Number(local) || 0, Number(incoming) || 0); }
+// Kết quả job nền có phải "trượt Quality Gate" (chương nháp, chưa Sync) không?
+function isGateFailedResult(d) {
+  if (!d) return false;
+  if (d.qualityGateFailed) return true;
+  if (d.resultChapter && d.resultChapter.status === "REVISION_REQUIRED") return true;
+  const chs = d.storyState && d.storyState.chapters;
+  const last = Array.isArray(chs) && chs.length ? chs[chs.length - 1] : null;
+  return !!(last && last.status === "REVISION_REQUIRED");
+}
 // <<SHARED-CORE:END>>
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function stripCodeFences(s){ return (s||"").replace(/```json/gi,"```").replace(/```/g,"").trim(); }
@@ -1477,16 +1717,19 @@ function buildChapterData(source){
   const s=source||state;
   return {
     chapters:s.chapters||[],
+    chapterDrafts:s.chapterDrafts||[],
     scenes:s.scenes||[],
     knowledgeLedger:s.knowledgeLedger||[],
     chapterSnapshots:(s.chapters||[]).map(c=>({id:c.id||null,chapter:c.chapter||null,stateSnapshot:c.stateSnapshot||null,stateSnapshots:c.stateSnapshots||[]})),
     characterStateTracker:s.characterStateTracker||{},
     plotArchive:s.plotArchive||[],
-    version:2
+    canonVersion:Number(s.canonVersion||0),
+    qualityGate:{enabled:s.qualityGateEnabled!==false,passScore:Number(s.qualityPassScore||90),softFailScore:Number(s.qualitySoftFailScore||75),maxAttempts:Number(s.qualityMaxAttempts||3)},
+    version:3
   };
 }
 function serializeStoryRecord(source){
-  return { schemaVersion:10, storyId:source.storyId, updatedAt:Date.now(),
+  return { schemaVersion:11, storyId:source.storyId, updatedAt:Date.now(),
     StoryMetaData:buildStoryMetaData(source),
     ChapterData:buildChapterData(source)
   };
@@ -1510,6 +1753,10 @@ function hydrateFromRecord(record){
       if(meta.storyBible.mainCharProfile) out.mainCharProfile=meta.storyBible.mainCharProfile;
     }
     out.chapters=ch.chapters||[];
+    out.chapterDrafts=ch.chapterDrafts||[];
+    out.canonVersion=Number(ch.canonVersion||0);
+    out.qualityGateEnabled=ch.qualityGate?.enabled!==false; out.qualityPassScore=Number(ch.qualityGate?.passScore||90); out.qualitySoftFailScore=Number(ch.qualityGate?.softFailScore||75); out.qualityMaxAttempts=Number(ch.qualityGate?.maxAttempts||3);
+    out.chapters.forEach(c=>{ if(c && c.sync && c.sync.status==="SYNCED" && !c.status) c.status="SYNCED"; });
     out.scenes=ch.scenes||out.scenes||[];
     out.knowledgeLedger=ch.knowledgeLedger||out.knowledgeLedger||[];
     out.characterStateTracker=ch.characterStateTracker||out.characterStateTracker||{};
@@ -1638,7 +1885,8 @@ const state = {
   tokenCapPerPrompt: 5,
   snapshotLimit: 7,
   wakeLockEnabled: true,
-  slidingWindowWords: 1500
+  slidingWindowWords: 1500,
+  qualityGateEnabled: true, qualityPassScore: 90, qualitySoftFailScore: 75, qualityMaxAttempts: 3
 };
 
 function newMainCharProfile(){
@@ -1664,14 +1912,15 @@ function newStoryState(name){
     difficulty:"vua", mature:false, chapterMatureFocus:"none", storyControl:{schemaVersion:1,maxMainEvents:3,maxNamedCharacters:4,maxNewThreads:3,noRetcon:true,agencyRequired:true,lockedFields:["identity","age","background","canon","relationships","cultivation","abilities","importantItems","secrets","promises","worldRules"]}, currentStatus:"",
     characters:[], locations:[], items:[], threads:[],
     scenes:[], consentLog:[],
-    chapters:[], currentChapterIndex:-1, chaptersSinceBackup:0,
+    chapters:[], chapterDrafts:[], currentChapterIndex:-1, chaptersSinceBackup:0,
     triggeredCheckpoints: [], lastPacingWarnChapter: 0,
     statusState: {}, timeline: [], foreshadowing: [], knowledgeLedger: [], memoryEvents: [],
     lastMemorySyncChapter: 0,
     apiSettings: { endpoint:"https://openrouter.ai/api/v1/chat/completions", key:"", primaryModel:"deepseek/deepseek-v3.2", nsfwModel:"aion-labs/aion-2.0", nsfwMode:"auto", nsfwThreshold:6 },
     storyMetaData: { styleBible:{}, storyBible:{}, worldRules:"", lorebook:[], vocabulary:{}, apiSettings:{} },
     characterCards: [], banWords: [], glossaryLock: [], characterStateTracker:{}, plotArchive:[],
-    tokenCapPerPrompt:5, snapshotLimit:7, wakeLockEnabled:true, slidingWindowWords:1500
+    tokenCapPerPrompt:5, snapshotLimit:7, wakeLockEnabled:true, slidingWindowWords:1500,
+    qualityGateEnabled:true, qualityPassScore:90, qualitySoftFailScore:75, qualityMaxAttempts:3
   };
 }
 
@@ -3245,6 +3494,7 @@ autoIntervalInput.addEventListener("change", ()=>{
 autoToggle.addEventListener("change", ()=>{ scheduleNextAuto(); if(autoToggle.checked) setStatus("Tự động tạo chương: bật, mỗi "+Math.max(30, parseInt(autoIntervalInput.value,10)||180)+"s khi rảnh.", false); else setStatus("Đã tắt tự động tạo chương.", false); });
 includeKeyToggle.addEventListener("change", ()=>{ state.includeKeyOnExport = includeKeyToggle.checked; persist(); });
 spellCheckToggle.addEventListener("change", ()=>{ state.spellCheckEnabled = spellCheckToggle.checked; persist(); });
+$ID("qualityGateToggle").addEventListener("change", ()=>{ state.qualityGateEnabled = $ID("qualityGateToggle").checked; persist(); });
 autoContinueToggle.addEventListener("change", ()=>{ state.autoContinueEnabled = autoContinueToggle.checked; persist(); });
 autoSummaryToggle.addEventListener("change", ()=>{ state.autoSummaryEnabled = autoSummaryToggle.checked; persist(); });
 autoSceneToggle.addEventListener("change", ()=>{ state.autoSceneEnabled = autoSceneToggle.checked; persist(); });
@@ -4954,25 +5204,8 @@ function checkDuplicates(newText){
 }
 
 /* ========== STORY CONTROL LAYER ========== */
-function normalizeStoryControlClient(){
-  const sc=(state.storyControl&&typeof state.storyControl==="object")?state.storyControl:{};
-  return Object.assign({schemaVersion:1,maxMainEvents:3,maxNamedCharacters:4,maxNewThreads:3,noRetcon:true,agencyRequired:true,lockedFields:["identity","age","background","canon","relationships","cultivation","abilities","importantItems","secrets","promises","worldRules"]},sc);
-}
-function storyControlPromptClient(){
-  const sc=normalizeStoryControlClient();
-  return [
-    "STORY CONTROL LAYER — BẮT BUỘC:",
-    "- Tối đa "+Math.max(1,Math.min(3,Number(sc.maxMainEvents)||3))+" sự kiện chính; không thêm biến cố lớn ngoài ngân sách.",
-    "- Tối đa "+Math.max(1,Math.min(6,Number(sc.maxNamedCharacters)||4))+" nhân vật có tên xuất hiện trực tiếp; ưu tiên nhân vật đã tồn tại.",
-    "- Không tự mở tuyến truyện mới chỉ để kéo dài chương.",
-    "- Giữ nguyên nguyên nhân → hành động → phản ứng → hậu quả.",
-    sc.noRetcon!==false?"- NO RETCON: không tự sửa canon/lịch sử/ký ức đã xác nhận; mâu thuẫn phải được giữ lại để xử lý có chủ đích.":"",
-    "- STATE LOCK: không tự ý thay đổi dữ liệu canon quan trọng nếu chưa có sự kiện làm bằng chứng.",
-    sc.agencyRequired!==false?"- CHARACTER AGENCY: nhân vật quan trọng phải có mục tiêu, động cơ, phản ứng và lựa chọn riêng.":"",
-    "- Không tự tạo nhân vật quan trọng, năng lực, quy tắc thế giới hoặc vật phẩm quan trọng nếu không cần thiết.",
-    "- Chapter Focus chỉ xác định phạm vi chủ đề trưởng thành; không phải giấy phép mở tuyến mới."
-  ].filter(Boolean).join("\n");
-}
+function normalizeStoryControlClient(){ return normalizeStoryControl(state); }
+function storyControlPromptClient(){ return storyControlPrompt(state); }
 
 /* ========== BUILD PLAN ========== */
 async function buildChapterPlan(context, recent, chapterNumber){
@@ -5261,6 +5494,8 @@ chapterTextEl.addEventListener("input",()=>{
   c.text=chapterTextEl.textContent||"";
   c.wordCount=countWords(c.text);
   c.polished=false;
+  if(c.status==="SYNCED" || c.status==="SYNCED_WITH_WARNINGS") { c.status="MODIFIED_AFTER_SYNC"; c.sync=Object.assign(c.sync||{},{status:"STALE",staleAt:Date.now()}); }
+  if(c.review) c.review.verdict="PENDING_REVIEW";
   clearTimeout(chapterEditTimer);
   chapterEditTimer=setTimeout(()=>persist(),650);
 });
@@ -5295,7 +5530,7 @@ function setGenerating(on){
   generating = on;
   if(on) userStopRequested = false; /* bắt đầu lượt mới thì xoá cờ "đã dừng" của lượt trước */
   stopBtn.style.display = on ? "flex" : "none";
-  ["writeChapterBtn","regenBtn","continueChapterBtn","regenNsfwBtn","versionsBtn"].forEach(id=>{
+  ["writeChapterBtn","regenBtn","continueChapterBtn","regenNsfwBtn","versionsBtn","reviewChapterBtn"].forEach(id=>{
     if($ID(id)) $ID(id).disabled = on;
   });
   if(on) acquireWakeLock(); else releaseWakeLock();
@@ -5408,6 +5643,219 @@ async function showDraftRecoveryBanner(d){
   clearDraftProgress();
 }
 
+/* ========== QUALITY GATE / CANON PIPELINE V12.16 ========== */
+function normalizeChapterPipelineState(ch){
+  if(!ch) return ch;
+  if(!ch.id) ch.id=genId();
+  if(!ch.status) ch.status = ch.sync && ch.sync.status ? (ch.sync.status === "SYNCED" ? "SYNCED" : "DRAFTED") : "SYNCED";
+  if(!ch.selfCheck) ch.selfCheck={status:"unknown",checks:[],checkedAt:null};
+  if(!ch.review) ch.review={status:"pending",score:null,verdict:null,dimensions:{},hardFailures:[],warnings:[],suggestions:[],rewriteInstructions:[],attempt:0,reviewedAt:null};
+  if(!ch.sync) ch.sync={status:ch.status==="SYNCED"?"SYNCED":"pending",canonVersion:ch.canonVersion||null,syncedAt:null,changes:[]};
+  return ch;
+}
+function normalizeAllChapterPipelineState(){ (state.chapters||[]).forEach(normalizeChapterPipelineState); }
+function chapterStatusLabel(status){ return ({PLANNED:"🟡 Lên kế hoạch",DRAFTING:"🟡 Đang viết",DRAFTED:"🟡 Bản nháp",SELF_CHECKING:"🔎 Tự kiểm",REVIEWING:"🔎 Đang review",REVISION_REQUIRED:"🟠 Cần sửa",APPROVED:"🟢 Đã duyệt",SYNCING:"🔄 Đang sync",SYNCED:"🟢 Canon",SYNCED_WITH_WARNINGS:"🟡 Canon + cảnh báo",SYNC_FAILED:"🔴 Sync lỗi",MODIFIED_AFTER_SYNC:"🟠 Đã sửa sau Sync"}[status]||String(status||"Chưa xác định")); }
+function qualityHardCheck(chapter, plan){ return gateHardChecks(chapter); }
+function renderQualityReview(ch){
+  const box=$ID("qualityBox"); if(!box) return;
+  if(!ch){box.style.display="none";return;}
+  normalizeChapterPipelineState(ch);
+  const r=ch.review||{}; const status=ch.status||"DRAFTED";
+  const score=r.score==null?"—":String(r.score);
+  const cls=(r.verdict==="PASS"||status==="SYNCED"||status==="SYNCED_WITH_WARNINGS")?"quality-pass":(r.verdict?"quality-fail":"quality-warn");
+  const dims=Object.entries(r.dimensions||{}).map(([k,v])=>escapeHtml(k)+": "+escapeHtml(String(v))).join(" · ");
+  const hard=(r.hardFailures||[]).map(x=>"• "+escapeHtml(typeof x==="string"?x:(x.description||x.problem||JSON.stringify(x)))).join("\n");
+  const warn=(r.warnings||[]).slice(0,8).map(x=>"• "+escapeHtml(typeof x==="string"?x:(x.description||x.problem||JSON.stringify(x)))).join("\n");
+  box.className="quality-box "+cls; box.style.display="block";
+  box.innerHTML='<b>'+escapeHtml(chapterStatusLabel(status))+'</b> · Quality: <b>'+escapeHtml(score)+'/100</b>'
+    +(dims?'<div style="margin-top:5px;">'+dims+'</div>':'')
+    +(hard?'<div style="margin-top:7px;"><b>Hard failure:</b>\n'+hard+'</div>':'')
+    +(warn?'<div style="margin-top:7px;"><b>Cảnh báo:</b>\n'+warn+'</div>':'')
+    +((r.rewriteInstructions||[]).length?'<div style="margin-top:7px;"><b>Hướng sửa:</b>\n'+r.rewriteInstructions.map(x=>'• '+escapeHtml(x)).join('\n')+'</div>':'')
+    +(ch.sync&&ch.sync.canonVersion?'<div style="margin-top:7px;">Canon v'+escapeHtml(String(ch.sync.canonVersion))+'</div>':'');
+}
+async function qualityReviewDraft(chapter, chapterNumber, plan, contextSummary){
+  const sc=normalizeStoryControl(state);
+  const hardChecks=gateHardChecks(chapter);
+  const names=knownNameMentions(chapter.text,gateKnownNames(state));
+  const prompt=buildQualityReviewPrompt({storyControl:storyControlPrompt(state),contract:plan,contractLabel:"CHAPTER CONTRACT / OUTLINE",context:contextSummary,warnings:chapter.continuityWarnings,draft:chapter.text,hardChecks,knownNames:names,maxMainEvents:sc.maxMainEvents,maxNamedCharacters:sc.maxNamedCharacters});
+  try{
+    const r=await callAI(prompt,{maxTokens:2200,temperature:0.1,modelOverride:chapter.modelUsed||state.model});
+    const obj=safeJsonParse(r.text);
+    const review=evaluateReview(obj,{maxMainEvents:sc.maxMainEvents,maxNamedCharacters:sc.maxNamedCharacters,passScore:state.qualityPassScore,softFailScore:state.qualitySoftFailScore,extraHard:hardChecks.filter(x=>!x.ok).map(x=>x.message)});
+    if(!review) return {ok:false,reason:"review_parse"};
+    return {ok:true,review};
+  }catch(e){ return {ok:false,reason:e.message}; }
+}
+async function rewriteDraftFromReview(chapter, review, chapterNumber, plan, contextSummary){
+  const oldText=String(chapter.text||""), oldWc=countWords(oldText);
+  const prompt=buildRewritePrompt({chapterNumber,storyControl:storyControlPrompt(state),contract:plan,contractLabel:"OUTLINE/CONTRACT",context:contextSummary,review,draft:chapter.text});
+  try{
+    const r=await callAI(prompt,{maxTokens:16000,temperature:0.55,modelOverride:chapter.modelUsed||state.model});
+    let text=String(r.text||"").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i,"").replace(/^\s*NỘI DUNG\s*:\s*/i,"").trim();
+    text=formatParagraphs(dedupeRepeatedScene(stripForeign(text)));
+    const cap=trimToWordLimit(text,chapterWordLimits().hardMax);
+    const newWc=countWords(cap.text);
+    const acc=checkRewriteAcceptable(oldWc,cap.text,newWc);
+    if(!acc.ok) return acc;
+    backupBeforeRewrite(chapter,"Trước khi Quality Gate sửa (lần "+(((chapter.review||{}).attempt)||1)+")");
+    chapter.text=cap.text; chapter.wordCount=newWc; chapter.truncated=chapter.truncated||cap.trimmed;
+    return {ok:true};
+  }catch(e){
+    if(e && e.userAbort) return {ok:false,stopped:true,reason:"Đã dừng"};
+    return {ok:false,reason:(e&&e.message)||"lỗi gọi AI"};
+  }
+}
+async function runQualityGate(chapter, chapterNumber, plan, contextSummary, opts){
+  opts=opts||{};
+  normalizeChapterPipelineState(chapter);
+  return runGateLoop(chapter,{
+    selfCheck:async()=>{
+      chapter.selfCheck={status:"running",checks:gateHardChecks(chapter),checkedAt:null}; renderQualityReview(chapter);
+      const warnings=await runContinuityCheck(chapter.text,chapterNumber,contextSummary,true);
+      /* mỗi lượt thay cảnh báo AI cũ bằng cảnh báo mới, không cộng dồn */
+      chapter.continuityWarnings=mergeAiContinuityWarnings(chapter.continuityWarnings,warnings,20);
+      chapter.selfCheck={status:"passed",checks:gateHardChecks(chapter),checkedAt:Date.now()};
+    },
+    review:()=>qualityReviewDraft(chapter,chapterNumber,plan,contextSummary),
+    rewrite:(review)=>rewriteDraftFromReview(chapter,review,chapterNumber,plan,contextSummary),
+    onStatus:(m)=>setStatus("⚠ "+m,true),
+    onChange:()=>renderQualityReview(chapter),
+    shouldStop:()=>userStopRequested
+  },{enabled:state.qualityGateEnabled!==false,allowRewrite:opts.rewrite!==false,maxAttempts:state.qualityMaxAttempts});
+}
+async function runCanonPostProcess(chapterObj, cn, text, rawForPolish){
+    const postTasks = [];
+    let polishPromise = Promise.resolve();
+    if(state.spellCheckEnabled && rawForPolish){
+      polishPromise = (async ()=>{
+        try{
+          const fixed = await polishVietnamese(rawForPolish, { modelOverride: state.model });
+          const stillThere = state.chapters.indexOf(chapterObj) !== -1;
+          const userTyping = document.activeElement === chapterTextEl;
+          if(fixed && fixed !== rawForPolish && stillThere && chapterObj.text === rawForPolish && !userTyping){
+            chapterObj.text = fixed; chapterObj.polished = true; chapterObj.wordCount = countWords(fixed);
+            persist(); renderChapterNav(); refreshStatBar();
+            if(state.chapters[state.currentChapterIndex] === chapterObj) renderCurrentChapter();
+          }
+        }catch(e){ console.warn("[Polish async]", e); }
+      })();
+    }
+    const fastPost = state.parallelEnabled !== false;
+    const deferredPost = {};
+    const sched = (fn, label, opts) => { if(!fastPost) return enqueueTask(fn, label, opts); deferredPost[label] = fn; return null; };
+    postTasks.push(sched(async ()=>{
+      if(state.autoSummaryEnabled && text){
+        try{
+          const sum = await generateChapterSummary(text, cn, true);
+          if(sum){ chapterObj.summary = sum; persist(); renderChapterNav(); renderCurrentChapter(); }
+        }catch(e){}
+      }
+    }, "summary", {serial:true}));
+    postTasks.push(sched(async ()=>{
+      if(text){
+        try{
+          const hint = await generateNextChapterHint(text, chapterObj.summary, cn);
+          if(hint){
+            state.autoNextChapterHint = hint;
+            persist();
+          }
+        }catch(e){}
+      }
+    }, "nextHint", {serial:true}));
+    postTasks.push(sched(async ()=>{
+      const r = await updateCharactersIncremental(text, cn, true);
+      if(r && !r.ok) setStatus("⚠ Cập nhật NV ch" + cn + " thất bại — bấm Quét toàn truyện khi rảnh.", false);
+      markAutoUpdateIssue(cn, "NV", !r || !r.ok);
+    }, "char", {serial:true}));
+    postTasks.push(sched(async ()=>{
+      const r = await updateWorldIncremental(text, cn, true);
+      markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok);
+    }, "world", {serial:true}));
+    postTasks.push(sched(async ()=>{
+      const r = await updateCurrentStatusIncremental(text, cn, true);
+      if(r && !r.ok) setStatus("⚠ Current Status ch" + cn + " lỗi — bấm Quét toàn bộ Status.", false);
+      else if(cn % 5 === 0) setStatus("✓ Bộ nhớ đã cập nhật tới ch" + cn + ". Nên rescan NV định kỳ.", false);
+      markAutoUpdateIssue(cn, "Status", !r || !r.ok);
+    }, "status", {serial:true}));
+    postTasks.push(sched(async ()=>{
+      const r = await updateLongMemoryIncremental(text, cn, true);
+      markAutoUpdateIssue(cn, "Memory", !r || !r.ok);
+    }, "memory", {serial:true}));
+    postTasks.push(sched(async ()=>{
+      /* Scene detection nếu mature */
+      if(state.mature && state.autoSceneEnabled){
+        try{ await scanScenesForChapter(cn); }catch(e){}
+      }
+    }, "scene", {serial:true}));
+    postTasks.push(sched(async ()=>{
+      const w = await runContinuityCheck(text, cn, buildStoryBibleSummary() + "\n" + characterSummaryForPrompt(relevantCharacters(20)), true);
+      if(w && w.length){
+        chapterObj.continuityWarnings = (chapterObj.continuityWarnings || []).concat(w);
+        persist(); renderChapterNav(); renderCurrentChapter();
+      }
+    }, "continuity", {serial:true}));
+    postTasks.push(sched(()=> checkCheckpoint(cn), "checkpoint", {serial:true}));
+    postTasks.push(sched(()=> checkPacingGuard(false), "pacing", {serial:true}));
+    // Chỉ sau khi summary + Character + World + Status + Memory + Scene +
+    // Continuity hoàn tất mới đóng snapshot chính thức của chương.
+    if(fastPost) await runFastPostTasks(deferredPost, polishPromise);
+    else { await Promise.allSettled(postTasks); await polishPromise; }
+    beginCanonSync(chapterObj, cn);
+    completeCanonSync(chapterObj, cn);
+    try{ captureChapterSnapshot(cn); }catch(e){}
+    chapterObj.review.status="completed";
+    persist(); renderChapterNav(); renderCurrentChapter(); refreshBackupBanner(); refreshStatBar();
+    setStatus("🟢 Chương "+cn+" đã Sync vào Canon v"+chapterObj.canonVersion+(chapterObj.autoUpdateIssues&&chapterObj.autoUpdateIssues.length?" với cảnh báo: "+chapterObj.autoUpdateIssues.join(", "):""), false);
+}
+
+async function reviewCurrentChapter(){
+  if(generating) return;
+  const idx=state.currentChapterIndex, ch=state.chapters[idx];
+  if(!ch){ setStatus("Chưa có chương.",false); return; }
+  if(!String(ch.text||"").trim()){ setStatus("Chương đang trống.",false); return; }
+  normalizeChapterPipelineState(ch);
+  const n=idx+1, isLast=idx===state.chapters.length-1;
+  const wasSynced=!!(ch.sync&&ch.sync.syncedAt);
+  setGenerating(true);
+  try{
+    const ctx=buildStoryBibleSummary()+"\n"+characterSummaryForPrompt(relevantCharacters(20));
+    setStatus("🔎 Đang duyệt lại chương "+n+"...",true);
+    const gate=await runQualityGate(ch,n,ch.plan||"",ctx,{rewrite:false});
+    if(gate.stopped){ ch.status=wasSynced?"MODIFIED_AFTER_SYNC":"REVISION_REQUIRED"; persist(); renderChapterNav(); renderCurrentChapter(); setStatus("Đã dừng duyệt lại.",false); return; }
+    if(!gate.approved){
+      const why=gate.error?("Không đọc được kết quả review ("+gate.error+")"):("Quality Gate: "+((ch.review&&ch.review.verdict)||"chưa đạt"));
+      if(!confirm(why+".\nVẫn duyệt thủ công chương "+n+" và đồng bộ vào Canon?")){
+        ch.status=wasSynced?"MODIFIED_AFTER_SYNC":"REVISION_REQUIRED";
+        persist(); renderChapterNav(); renderCurrentChapter();
+        setStatus("Chương "+n+" chưa được duyệt. Sửa theo hướng dẫn trong khung Quality rồi bấm 🔍 Duyệt lại.",false);
+        return;
+      }
+      ch.review=Object.assign({},ch.review,{verdict:"MANUAL_OVERRIDE",status:"completed",overriddenAt:Date.now()});
+      ch.status="APPROVED";
+    }
+    let doSync=isLast;
+    if(isLast && wasSynced) doSync=confirm("Chương "+n+" đã từng Sync. Chạy lại cập nhật Canon (tóm tắt, NV, thế giới, status, memory) theo bản đã sửa?\n(Hủy = chỉ đánh dấu đã duyệt, giữ nguyên Canon cũ.)");
+    if(doSync){
+      persist(); renderChapterNav(); renderCurrentChapter();
+      await runCanonPostProcess(ch,n,ch.text,ch.text);
+    }else{
+      ch.sync=Object.assign(ch.sync||{},{status:(ch.autoUpdateIssues&&ch.autoUpdateIssues.length)?"SYNCED_WITH_WARNINGS":"SYNCED",reviewedAt:Date.now()});
+      if(!ch.sync.syncedAt) ch.sync.syncedAt=Date.now();
+      ch.status=ch.sync.status;
+      persist(); renderChapterNav(); renderCurrentChapter(); refreshStatBar();
+      setStatus("🟢 Đã duyệt lại chương "+n+(isLast?" (giữ nguyên Canon cũ).":". Chương không phải chương cuối — dùng 🔄 Rescan nếu cần cập nhật Canon."),false);
+    }
+  }catch(err){
+    setStatus("Lỗi duyệt lại: "+(err&&err.message||err),false);
+  }finally{ setGenerating(false); }
+}
+
+function beginCanonSync(chapter, chapterNumber){
+  chapter.status="SYNCING"; chapter.sync=chapter.sync||{}; chapter.sync.status="SYNCING"; chapter.sync.startedAt=Date.now();
+}
+function completeCanonSync(chapter, chapterNumber){ applyCanonSync(state, chapter); }
+
 /* ========== GENERATE CHAPTER (chính) ========== */
 async function generateChapter(regenIndex, regenMode, forceNsfw){
   if(generating){ setStatus("Đang bận...", true); return; }
@@ -5425,6 +5873,15 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
   }
   const basePick = pickWritingModel(!!forceNsfw);
   if(!basePick.model){ setStatus("Chưa cấu hình model.", false); return; }
+  normalizeAllChapterPipelineState();
+  if(!isRegen && state.chapters.length){
+    const last=state.chapters[state.chapters.length-1];
+    if(last && !["SYNCED","SYNCED_WITH_WARNINGS","MODIFIED_AFTER_SYNC"].includes(last.status || "SYNCED")){
+      setStatus("⛔ Chương "+state.chapters.length+" chưa hoàn tất Quality Gate/Sync. Bấm 🔍 Duyệt lại (hoặc ↻ Viết lại) trước khi viết chương kế tiếp.", false);
+      return;
+    }
+    if(last && last.status==="MODIFIED_AFTER_SYNC") setStatus("ℹ Chương "+state.chapters.length+" đã sửa tay sau Sync — vẫn viết tiếp. Bấm 🔍 Duyệt lại nếu muốn cập nhật Canon.", true);
+  }
 
   setGenerating(true);
   let targetModel = basePick.model;
@@ -5642,9 +6099,14 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     let text = bodyMatch ? bodyMatch[1].trim() : rawText;
 
     const chapterObj = {
-      title, text, wordCount: countWords(text), truncated: finishReason === "length",
+      id: genId(), title, text, wordCount: countWords(text), truncated: finishReason === "length",
       plan, continuityWarnings: [], modelUsed: targetModel, isNsfw: usingNsfw,
-      polished: false, summary: "", versions: [], compressed: false
+      polished: false, summary: "", versions: [], compressed: false,
+      status: "DRAFTED",
+      selfCheck: { status: "pending", checks: [], checkedAt: null },
+      review: { status: "pending", score: null, verdict: null, dimensions: {}, hardFailures: [], warnings: [], suggestions: [], rewriteInstructions: [], attempt: 0, reviewedAt: null },
+      sync: { status: "pending", canonVersion: null, syncedAt: null, changes: [] },
+      canonVersion: null
     };
 
     await autoContinueUntilDone(chapterObj, chapterNumber, targetModel, usingNsfw, onChunk);
@@ -5659,17 +6121,41 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     /* v11.1: rà chính tả KHÔNG còn chặn việc lưu chương. Chương được lưu + hiện ngay bằng bản gốc;
        bước rà chạy song song với các tác vụ hậu xử lý (tóm tắt, NV, thế giới...) rồi thay thế
        nếu nội dung chưa bị ai sửa trong lúc đó. Tổng thời gian = max(rà, hậu xử lý) thay vì cộng dồn. */
-    const rawForPolish = text;
+    let rawForPolish = text;
     chapterObj.text = text;
     chapterObj.wordCount = countWords(text);
 
     const dupWarnings = checkDuplicates(text);
     if(dupWarnings.length) chapterObj.continuityWarnings = dupWarnings;
 
+    const reviewContext = buildStoryBibleSummary() + "\n" + characterSummaryForPrompt(relevantCharacters(20));
+    setStatus("🔎 Quality Gate đang kiểm tra chương " + chapterNumber + "...", true);
+    const gate = await runQualityGate(chapterObj, chapterNumber, plan, reviewContext);
+    if(!gate.approved){
+      clearDraftProgress();
+      chapterObj.status = gate.stopped ? "DRAFTED" : "REVISION_REQUIRED";
+      if(!Array.isArray(state.chapterDrafts)) state.chapterDrafts=[];
+      const draftRecord=Object.assign({},chapterObj,{sourceChapter:isRegen?chapterNumber:null,savedAt:Date.now()});
+      state.chapterDrafts = state.chapterDrafts.filter(d=>!(d && d.sourceChapter===chapterNumber));
+      state.chapterDrafts.push(draftRecord);
+      if(!isRegen){
+        state.chapters.push(chapterObj);
+        state.currentChapterIndex=state.chapters.length-1;
+        state.chaptersSinceBackup++;
+      }
+      persist(); renderChapterNav(); renderCurrentChapter();
+      if(gate.stopped) setStatus("Đã dừng trước khi Sync — bản nháp được giữ lại, chưa thành canon.", false);
+      else setStatus("⛔ Chương "+chapterNumber+" chưa vượt Quality Gate. Bản nháp đã được giữ lại để sửa, chưa ghi vào Canon.", false);
+      return;
+    }
+
+    if(Array.isArray(state.chapterDrafts)) state.chapterDrafts=state.chapterDrafts.filter(d=>!(d && d.sourceChapter===chapterNumber));
+    text = chapterObj.text; rawForPolish = text; /* v12.16b: Gate có thể đã viết lại bản thảo — hậu xử lý phải dùng bản mới */
     if(isRegen && state.chapters[regenIndex]){
       pushChapterVersion(regenIndex, "Trước khi viết lại (" + (regenMode||"full") + ")");
       const oldVersions = state.chapters[regenIndex].versions || [];
       chapterObj.versions = oldVersions;
+      chapterObj.status="APPROVED"; chapterObj.sync={status:"pending",canonVersion:null,syncedAt:null,changes:[]};
       state.chapters[regenIndex] = chapterObj;
       state.currentChapterIndex = regenIndex;
     } else {
@@ -5679,89 +6165,12 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
     }
     persist(); renderChapterNav(); renderCurrentChapter(); refreshBackupBanner(); refreshStatBar();
     clearDraftProgress();
-    setStatus(modeTag + (chapterObj.truncated ? "⚠ vẫn có thể bị cắt. " : "✓ Xong · ") + chapterObj.wordCount + " từ · " + new Date().toLocaleTimeString("vi-VN"), false);
+    setStatus(modeTag + "✓ Quality PASS · " + chapterObj.wordCount + " từ · chuẩn bị Sync", false);
 
-    /* Post-processing: hoàn tất trước khi cho phép bắt đầu chương kế tiếp.
+    /* Post-processing: chỉ sau khi Quality Gate PASS mới được cập nhật Canon/Memory.
        Điều này tránh race condition: Ch2 được tạo trong khi Character/Status
        của Ch1 vẫn chưa cập nhật xong. */
-    const cn = chapterNumber;
-    const postTasks = [];
-    let polishPromise = Promise.resolve();
-    if(state.spellCheckEnabled && rawForPolish){
-      polishPromise = (async ()=>{
-        try{
-          const fixed = await polishVietnamese(rawForPolish, { modelOverride: state.model });
-          const stillThere = state.chapters.indexOf(chapterObj) !== -1;
-          const userTyping = document.activeElement === chapterTextEl;
-          if(fixed && fixed !== rawForPolish && stillThere && chapterObj.text === rawForPolish && !userTyping){
-            chapterObj.text = fixed; chapterObj.polished = true; chapterObj.wordCount = countWords(fixed);
-            persist(); renderChapterNav(); refreshStatBar();
-            if(state.chapters[state.currentChapterIndex] === chapterObj) renderCurrentChapter();
-          }
-        }catch(e){ console.warn("[Polish async]", e); }
-      })();
-    }
-    const fastPost = state.parallelEnabled !== false;
-    const deferredPost = {};
-    const sched = (fn, label, opts) => { if(!fastPost) return enqueueTask(fn, label, opts); deferredPost[label] = fn; return null; };
-    postTasks.push(sched(async ()=>{
-      if(state.autoSummaryEnabled && text){
-        try{
-          const sum = await generateChapterSummary(text, cn, true);
-          if(sum){ chapterObj.summary = sum; persist(); renderChapterNav(); renderCurrentChapter(); }
-        }catch(e){}
-      }
-    }, "summary", {serial:true}));
-    postTasks.push(sched(async ()=>{
-      if(text){
-        try{
-          const hint = await generateNextChapterHint(text, chapterObj.summary, cn);
-          if(hint){
-            state.autoNextChapterHint = hint;
-            persist();
-          }
-        }catch(e){}
-      }
-    }, "nextHint", {serial:true}));
-    postTasks.push(sched(async ()=>{
-      const r = await updateCharactersIncremental(text, cn, true);
-      if(r && !r.ok) setStatus("⚠ Cập nhật NV ch" + cn + " thất bại — bấm Quét toàn truyện khi rảnh.", false);
-      markAutoUpdateIssue(cn, "NV", !r || !r.ok);
-    }, "char", {serial:true}));
-    postTasks.push(sched(async ()=>{
-      const r = await updateWorldIncremental(text, cn, true);
-      markAutoUpdateIssue(cn, "Thế giới", !r || !r.ok);
-    }, "world", {serial:true}));
-    postTasks.push(sched(async ()=>{
-      const r = await updateCurrentStatusIncremental(text, cn, true);
-      if(r && !r.ok) setStatus("⚠ Current Status ch" + cn + " lỗi — bấm Quét toàn bộ Status.", false);
-      else if(cn % 5 === 0) setStatus("✓ Bộ nhớ đã cập nhật tới ch" + cn + ". Nên rescan NV định kỳ.", false);
-      markAutoUpdateIssue(cn, "Status", !r || !r.ok);
-    }, "status", {serial:true}));
-    postTasks.push(sched(async ()=>{
-      const r = await updateLongMemoryIncremental(text, cn, true);
-      markAutoUpdateIssue(cn, "Memory", !r || !r.ok);
-    }, "memory", {serial:true}));
-    postTasks.push(sched(async ()=>{
-      /* Scene detection nếu mature */
-      if(state.mature && state.autoSceneEnabled){
-        try{ await scanScenesForChapter(cn); }catch(e){}
-      }
-    }, "scene", {serial:true}));
-    postTasks.push(sched(async ()=>{
-      const w = await runContinuityCheck(text, cn, buildStoryBibleSummary() + "\n" + characterSummaryForPrompt(relevantCharacters(20)), true);
-      if(w && w.length){
-        chapterObj.continuityWarnings = (chapterObj.continuityWarnings || []).concat(w);
-        persist(); renderChapterNav(); renderCurrentChapter();
-      }
-    }, "continuity", {serial:true}));
-    postTasks.push(sched(()=> checkCheckpoint(cn), "checkpoint", {serial:true}));
-    postTasks.push(sched(()=> checkPacingGuard(false), "pacing", {serial:true}));
-    // Chỉ sau khi summary + Character + World + Status + Memory + Scene +
-    // Continuity hoàn tất mới đóng snapshot chính thức của chương.
-    if(fastPost) await runFastPostTasks(deferredPost, polishPromise);
-    else { await Promise.allSettled(postTasks); await polishPromise; }
-    try{ captureChapterSnapshot(cn); }catch(e){}
+    await runCanonPostProcess(chapterObj, chapterNumber, text, rawForPolish);
 
 
   }catch(err){
@@ -6046,6 +6455,7 @@ async function offerFixStray(idx, stray){
   if(r.fixed > 0){ c.text = r.text; c.wordCount = countWords(r.text); persist(); renderCurrentChapter(); }
   setStatus(r.fixed > 0 ? ("Đã sửa " + r.fixed + " đoạn." + (r.remaining.length ? " Còn từ lạ: " + r.remaining.slice(0,8).join(", ") + "." : "")) : "AI không sửa được đoạn nào, hãy sửa tay.", false);
 }
+$ID("reviewChapterBtn").addEventListener("click", reviewCurrentChapter);
 $ID("fmtParaBtn").addEventListener("click", async ()=>{
   const idx = state.currentChapterIndex;
   if(idx < 0){ setStatus("Chưa có chương.", false); return; }
@@ -6606,6 +7016,7 @@ function hydrateFormFromState(){
   autoIntervalInput.value = state.autoIntervalSec || 180;
   includeKeyToggle.checked = !!state.includeKeyOnExport;
   spellCheckToggle.checked = state.spellCheckEnabled !== false;
+  $ID("qualityGateToggle").checked = state.qualityGateEnabled !== false;
   autoContinueToggle.checked = state.autoContinueEnabled !== false;
   autoSummaryToggle.checked = state.autoSummaryEnabled !== false;
   autoSceneToggle.checked = state.autoSceneEnabled !== false;
@@ -6936,7 +7347,7 @@ function pollBackgroundJob(record){
         await mergeBackgroundChapter(data,record);
         try{ if(typeof persistNow==="function") await persistNow(); }catch(e){}
         if((!record.storyId||record.storyId===state.storyId)&&data.storyState&&Array.isArray(data.storyState.chapters)&&state.chapters.length>=data.storyState.chapters.length) ackBackgroundJob(record);
-        localStorage.removeItem(BG_JOB_KEY);setBgStatus("✓ Đã đồng bộ background v9.",true);setTimeout(()=>setBgStatus("",false),9000);
+        localStorage.removeItem(BG_JOB_KEY);setBgStatus(isGateFailedResult(data)?"⚠ Background xong nhưng chưa vượt Quality Gate — chưa ghi Canon.":"✓ Đã đồng bộ background v9.",true);setTimeout(()=>setBgStatus("",false),9000);
       }else if(data.status==="failed"){
         clearInterval(bgPollTimer);bgPollTimer=null;setBgStatus("⚠ Job lỗi: "+(data.error||"unknown"),true);ackBackgroundJob(record);localStorage.removeItem(BG_JOB_KEY);
       }
@@ -6994,11 +7405,14 @@ async function mergeBackgroundChapter(statusData,record){
   state.knowledgeLedger=mergeArrayByIdOrName(state.knowledgeLedger,incoming.knowledgeLedger||[],"id").slice(-500);
   state.memoryEvents=mergeArrayByIdOrName(state.memoryEvents,incoming.memoryEvents||[],"id");
   state.lastMemorySyncChapter=incoming.lastMemorySyncChapter||state.lastMemorySyncChapter||0;
+  state.canonVersion=mergeCanonVersion(state.canonVersion, incoming.canonVersion);
   if(incoming.nextChapterHint){ state.nextChapterHint=incoming.nextChapterHint; if(nextChapterHintEl) nextChapterHintEl.value=state.nextChapterHint; }
   persist();renderAll();
   try{ captureChapterSnapshot(state.chapters.length); }catch(e){}
   const last=state.chapters[state.chapters.length-1];
-  setStatus("☁ Đã đồng bộ: "+(last?last.title:"")+" ("+(last?last.wordCount:0)+" từ). NV/World/Status/Scene đã hợp nhất.",false);
+  const gateFailed=isGateFailedResult(statusData)||!!(last&&last.status==="REVISION_REQUIRED");
+  if(gateFailed) setStatus("⛔ Background: chương "+(last?last.title:"")+" chưa vượt Quality Gate — bản nháp đã lưu, CHƯA ghi Canon. Bấm 🔍 Duyệt lại hoặc ↻ Viết lại.",false);
+  else setStatus("☁ Đã đồng bộ: "+(last?last.title:"")+" ("+(last?last.wordCount:0)+" từ). NV/World/Status/Scene đã hợp nhất.",false);
 }
 function checkPendingBackgroundJob(){
   const record=normalizeBgRecord(localStorage.getItem(BG_JOB_KEY));
@@ -7156,12 +7570,14 @@ function renderCurrentChapter(){
   summaryBox.classList.remove("show");
   planBox.classList.remove("show");
   sceneBox.classList.remove("show");
+  const qualityBox=$ID("qualityBox"); if(qualityBox){ qualityBox.style.display="none"; qualityBox.innerHTML=""; }
   if(idx < 0 || !state.chapters[idx]){
     chapterTitleEl.textContent = "Truyện của bạn bắt đầu ở đây";
     chapterTextEl.textContent = "";
     return;
   }
   const c = state.chapters[idx];
+  normalizeChapterPipelineState(c);
   chapterTitleEl.textContent = "Chương " + (idx+1) + ": " + (c.title||"");
   chapterTextEl.textContent = c.text || "";
   const wc = c.wordCount || countWords(c.text);
@@ -7173,13 +7589,15 @@ function renderCurrentChapter(){
     : '';
   const chTokens = estimateTokens(c.text);
   const tokenBadge = '<span class="badge token' + (chTokens > 20000 ? ' bad' : '') + '">≈'+chTokens+' token</span>';
-  editorBadges.innerHTML = '<span class="badge">'+wc+' từ</span>' + clockHtml + modelHtml + tokenBadge
+  const pipelineBadge='<span class="badge '+((c.status||"").includes("FAIL")||c.status==="REVISION_REQUIRED"||c.status==="MODIFIED_AFTER_SYNC"?"warn":"")+'">'+escapeHtml(chapterStatusLabel(c.status))+'</span>';
+  editorBadges.innerHTML = '<span class="badge">'+wc+' từ</span>' + pipelineBadge + clockHtml + modelHtml + tokenBadge
     + (c.polished ? '<span class="badge polished">✓ đã rà</span>' : '')
     + (c.truncated ? '<span class="badge warn">⚠ có thể cắt</span>' : '')
     + ((c.continuityWarnings&&c.continuityWarnings.length) ? '<span class="badge warn">🔍 '+c.continuityWarnings.length+'</span>' : '');
   if(c.summary){ summaryBox.textContent = "📄 Tóm tắt: " + c.summary; summaryBox.classList.add("show"); }
   if(c.plan){ planBox.textContent = "Kế hoạch:\n" + c.plan; planBox.classList.add("show"); }
   if(c.continuityWarnings && c.continuityWarnings.length) renderContinuityWarnings(c.continuityWarnings);
+  renderQualityReview(c);
 }
 
 chapterSearch.addEventListener("input", renderChapterNav);
