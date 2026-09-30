@@ -1133,6 +1133,75 @@ function formatParagraphs(text) {
   }
   return paras.join("\n\n");
 }
+
+// ===== V12.15: chống lặp cảnh + phát hiện từ lạ =====
+function _normWords(s) {
+  return String(s || "").toLowerCase().normalize("NFC").replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+}
+function _grams(words, n) {
+  const set = new Set();
+  for (let i = 0; i + n <= words.length; i++) set.add(words.slice(i, i + n).join(" "));
+  return set;
+}
+function _sim(a, b) {
+  if (!a.size || !b.size) return 0;
+  let inter = 0; for (const g of a) if (b.has(g)) inter++;
+  return inter / Math.min(a.size, b.size);
+}
+// Nếu văn bản có một "bản viết lại" của phần đầu (model chép lại từ đầu), cắt bỏ từ chỗ lặp trở đi.
+// Trả về text gốc nếu không phát hiện gì. Chấp nhận cả trường hợp 2 bản dính liền không có dòng trống.
+function dedupeRepeatedScene(text) {
+  const src = String(text || "");
+  if (src.length < 1500) return src;
+  const sep = src.replace(/(\p{Ll}[.!?…”"])(\p{Lu}\p{Ll})/gu, "$1\n\n$2");
+  const paras = sep.split(/\n\s*\n+|\n/).map(p => p.trim()).filter(Boolean);
+  const info = paras.map(p => { const w = _normWords(p); return { p, n: w.length, g: _grams(w, 3) }; });
+  const isDup = (i, from) => {
+    if (info[i].n < 8) return -1;
+    for (let j = from; j < i; j++) if (info[j].n >= 8 && _sim(info[i].g, info[j].g) >= 0.5) return j;
+    return -1;
+  };
+  for (let i = 3; i < info.length - 1; i++) {
+    const j = isDup(i, 0);
+    if (j < 0) continue;
+    // xác nhận: đoạn kế tiếp cũng trùng với một đoạn nằm sau j (tránh nhầm câu lặp có chủ đích)
+    let ok = false;
+    for (let k = i + 1; k <= Math.min(i + 2, info.length - 1) && !ok; k++) {
+      if (info[k].n < 8) continue;
+      for (let m = j + 1; m < i; m++) if (_sim(info[k].g, info[m].g) >= 0.5) { ok = true; break; }
+    }
+    if (ok) return paras.slice(0, i).join("\n\n");
+  }
+  return src;
+}
+// Với lượt viết tiếp: bỏ các đoạn mở đầu lặp lại nội dung đã có. Trả "" nếu toàn bộ là lặp.
+function dropRestartedContinuation(baseText, contText) {
+  const base = String(baseText || ""), cont = String(contText || "").trim();
+  if (!cont) return cont;
+  const baseG = _grams(_normWords(base), 3);
+  const paras = cont.split(/\n\s*\n+|\n/).map(p => p.trim()).filter(Boolean);
+  let cut = paras.length;
+  for (let i = 0; i < paras.length; i++) {
+    const w = _normWords(paras[i]); if (w.length < 8) continue;
+    if (_sim(_grams(w, 3), baseG) >= 0.6) { cut = i; break; }
+  }
+  return paras.slice(0, cut).join("\n\n");
+}
+const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf"]);
+const _VN_SYL = /^(ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdghklmnpqrstvx])?[aeiouy]{1,3}(ng|nh|ch|[cmnpt])?$/;
+// Liệt kê từ Latinh lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo.
+function findStrayWords(text) {
+  const out = []; const seen = new Set();
+  const toks = String(text || "").match(/\p{L}+/gu) || [];
+  for (const t of toks) {
+    if (t.length < 4 || !/^[A-Za-z]+$/.test(t)) continue;
+    const low = t.toLowerCase();
+    if (_VN_OK.has(low) || _VN_SYL.test(low) || seen.has(low)) continue;
+    seen.add(low); out.push(t);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
 // <<SHARED-CORE:END>>
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function stripCodeFences(s){ return (s||"").replace(/```json/gi,"```").replace(/```/g,"").trim(); }
@@ -4952,8 +5021,6 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
       "Bạn đang VIẾT TIẾP chương " + chapterNumber + " (KHÔNG mở chương mới, KHÔNG tóm tắt).",
       "Chỉ viết tiếp khi đoạn hiện tại thực sự bị cắt giữa chừng. Không kéo dài để đạt chỉ tiêu từ nếu brief/ngữ cảnh đã hoàn tất. GIỚI HẠN CỨNG " + maxWords + " từ. Hiện " + wc + " từ.",
       "",
-      "===== ĐOẠN ĐẦU CHƯƠNG (bối cảnh, KHÔNG lặp lại) =====",
-      headHint,
       "===== ĐOẠN CUỐI HIỆN TẠI (PHẢI TIẾP NỐI TỪ ĐÂY) =====",
       tail,
       "===== HẾT =====",
@@ -4973,8 +5040,8 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
     ].filter(Boolean).join("\n");
     try{
       const { text: contText, finishReason } = await callAI(prompt, {
-        maxTokens: 12000, temperature: 0.9, modelOverride: targetModel,
-        frequency_penalty: 0.55, presence_penalty: 0.4,
+        maxTokens: 12000, temperature: 0.82, modelOverride: targetModel,
+        frequency_penalty: 0.15, presence_penalty: 0.1,
         streaming: true, onChunk: onChunk
       });
       if(!contText || contText.length < 50) break;
@@ -4986,6 +5053,9 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
         }catch(e){}
         if(detectNonVietnamese(contText)) break;
       }
+      { const dd = dropRestartedContinuation(chapterObj.text, contText);
+        if(!dd.trim() || countWords(dd) < 40){ setStatus("Phần viết tiếp lặp lại nội dung đã có nên bị bỏ.", false); break; }
+        contText = dd; }
       contText = formatParagraphs(stripForeign(contText));
       let cleaned = contText.trim();
       const lastSentences = tail.slice(-200).replace(/\s+/g, " ");
@@ -5517,7 +5587,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       }catch(e){}
     }
 
-    rawText = formatParagraphs(stripForeign(rawText));
+    rawText = formatParagraphs(dedupeRepeatedScene(stripForeign(rawText)));
     const titleMatch = rawText.match(/TIÊU ĐỀ:\s*(.+)/i);
     const bodyMatch = rawText.match(/NỘI DUNG:\s*([\s\S]*)/i);
 
@@ -5711,7 +5781,6 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
       "BẮT BUỘC NGÔN NGỮ: 100% TIẾNG VIỆT CÓ DẤU. Giọng tự nhiên.",
       "",
       "Bạn đang VIẾT TIẾP chương " + (idx + 1) + " (không mở chương mới).",
-      "===== ĐOẠN ĐẦU (tránh lặp) =====", headHint,
       "===== ĐOẠN CUỐI (PHẢI TIẾP NỐI) =====", tail, "===== HẾT =====",
       "",
       "Viết TIẾP liền mạch 1500-2500 từ. Bắt đầu ngay từ câu tiếp theo. Không tóm tắt, không nhảy cảnh, không lặp ý/cụm từ.",
@@ -5734,8 +5803,8 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
 
     let contText = "", contFinish = null;
     const r = await callAI(prompt, {
-      maxTokens:12000, temperature:0.9, modelOverride: targetModel,
-      frequency_penalty: 0.55, presence_penalty: 0.4,
+      maxTokens:12000, temperature:0.82, modelOverride: targetModel,
+      frequency_penalty: 0.15, presence_penalty: 0.1,
       streaming: canStream, onChunk: onChunk
     });
     contText = r.text; contFinish = r.finishReason;
@@ -5744,6 +5813,9 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     if(detectNonVietnamese(contText)){
       try{ const r2 = await callAI(prompt + "\n\nBẮT BUỘC 100% TIẾNG VIỆT.", {maxTokens:12000, temperature:0.9, modelOverride: targetModel}); contText = r2.text; contFinish = r2.finishReason; }catch(e){}
     }
+    { const dd = dropRestartedContinuation(baseText, contText);
+      if(!dd.trim() || countWords(dd) < 40){ setStatus("Phần viết tiếp lặp lại nội dung đã có nên bị bỏ.", false); setGenerating(false); return; }
+      contText = dd; }
     contText = formatParagraphs(stripForeign(contText));
     if(state.spellCheckEnabled && contText){
       const fixed = await polishVietnamese(contText, { modelOverride: state.model });
@@ -5927,11 +5999,19 @@ $ID("fmtParaBtn").addEventListener("click", async ()=>{
   const idx = state.currentChapterIndex;
   if(idx < 0){ setStatus("Chưa có chương.", false); return; }
   const c = state.chapters[idx];
-  const next = formatParagraphs(c.text);
-  if(next === String(c.text||"").trim()){ setStatus("Chương này đã ngắt đoạn ổn rồi.", false); return; }
+  const deduped = dedupeRepeatedScene(c.text);
+  const cutDup = deduped.length < String(c.text||"").length;
+  const next = formatParagraphs(deduped);
+  const stray = findStrayWords(next);
+  const strayMsg = stray.length ? " Từ lạ cần kiểm tra: " + stray.slice(0,8).join(", ") + "." : "";
+  if(next === String(c.text||"").trim()){ setStatus("Chương này đã ngắt đoạn ổn rồi." + strayMsg, false); return; }
+  if(cutDup){
+    const ok = await showConfirm("Phát hiện chương bị viết lặp lại từ đầu. Cắt bỏ phần lặp (còn ~" + countWords(next) + " từ)?", { okText: "Cắt phần lặp" });
+    if(!ok){ c.text = formatParagraphs(c.text); c.wordCount = countWords(c.text); persist(); renderCurrentChapter(); setStatus("Đã ngắt đoạn (giữ nguyên phần lặp)." + strayMsg, false); return; }
+  }
   c.text = next; c.wordCount = countWords(next);
   persist(); renderCurrentChapter();
-  setStatus("Đã ngắt đoạn chương " + (idx+1) + ".", false);
+  setStatus((cutDup ? "Đã cắt phần lặp và ngắt đoạn chương " : "Đã ngắt đoạn chương ") + (idx+1) + "." + strayMsg, false);
 });
 $ID("splitChapterBtn").addEventListener("click", async ()=>{
   const idx = state.currentChapterIndex;
