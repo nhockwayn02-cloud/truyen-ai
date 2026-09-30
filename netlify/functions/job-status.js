@@ -43,6 +43,7 @@ exports.handler = async (event) => {
       completedAt:job.completedAt||null,
       error:job.error||null,
       resultChapter:job.resultChapter||null,
+      qualityGateFailed:!!job.qualityGateFailed,
       newChapterCount:job.storyState?.chapters?.length||0
     };
     if(job.status === "completed" && job.storyState) safe.storyState=job.storyState;
