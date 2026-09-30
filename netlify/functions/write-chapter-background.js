@@ -317,6 +317,8 @@ const SYSTEM_PROMPT = [
   "Không tự tạo biến cố/lore/nhân vật chỉ để kéo dài số chữ.",
   "CHARACTER DATABASE là nguồn sự thật: không tự đổi thân phận, vai trò, tính cách, quan hệ hoặc lịch sử đã được xác nhận; nếu chưa biết thì để mở thay vì bịa.",
   "Mệnh lệnh/gợi ý trực tiếp của người dùng cho chương hiện tại phải được triển khai đầy đủ; không thay thế bằng một tuyến truyện khác chỉ vì AI thấy tuyến đó thú vị hơn.",
+  "Trước khi viết, phải lập kế hoạch nội bộ theo Story Control Layer: khóa canon, giới hạn 1–3 sự kiện, kiểm tra nhân vật và hậu quả; không xuất kế hoạch nội bộ ra văn bản.",
+
   "Khi viết tiếp, giữ đúng giọng, nhịp câu, POV, thì kể và xưng hô của phần trước; không đổi phong cách giữa chừng.",
   "Khi viết văn xuôi, chỉ trả tác phẩm, không nói về prompt, AI hay quy trình."
 ].join(" ");
@@ -402,6 +404,48 @@ function textHasNsfwKeyword(text) {
  * Hệ quả: nếu cảnh nóng phát sinh tự nhiên từ mạch truyện (không có từ khóa tường minh
  * trong Mệnh lệnh/Định hướng), job nền âm thầm dùng model thường thay vì model NSFW dù
  * chế độ đang để "auto". Hàm dưới đây đồng bộ với client: chấm 0-10, so với ngưỡng đã cấu hình. */
+function normalizeChapterMatureFocus(v) {
+  const x = String(v || "none").toLowerCase();
+  return x === "primary" || x === "secondary" ? x : "none";
+}
+function normalizeStoryControl(state) {
+  const sc = (state && state.storyControl && typeof state.storyControl === "object") ? state.storyControl : {};
+  return {
+    schemaVersion: Number(sc.schemaVersion) || 1,
+    maxMainEvents: Math.max(1, Math.min(3, Number(sc.maxMainEvents) || 3)),
+    maxNamedCharacters: Math.max(1, Math.min(6, Number(sc.maxNamedCharacters) || 4)),
+    maxNewThreads: Math.max(0, Math.min(5, Number(sc.maxNewThreads) || 3)),
+    noRetcon: sc.noRetcon !== false,
+    lockedFields: Array.isArray(sc.lockedFields) ? sc.lockedFields : ["identity","age","background","canon","relationships","cultivation","abilities","importantItems","secrets","promises","worldRules"],
+    agencyRequired: sc.agencyRequired !== false
+  };
+}
+function storyControlPrompt(state) {
+  const sc = normalizeStoryControl(state);
+  return [
+    "STORY CONTROL LAYER — BẮT BUỘC:",
+    `- Ngân sách sự kiện: tối đa ${sc.maxMainEvents} sự kiện chính; không thêm biến cố lớn thứ ${sc.maxMainEvents + 1}.`,
+    `- Nhân vật có tên xuất hiện trực tiếp: tối đa ${sc.maxNamedCharacters}; ưu tiên nhân vật đã tồn tại.`,
+    `- Thread mới: tối đa ${sc.maxNewThreads}; không mở tuyến mới chỉ để kéo dài chương.`,
+    "- Continuity: nguyên nhân → hành động → phản ứng → hậu quả phải nhất quán với trạng thái hiện tại.",
+    sc.noRetcon ? "- NO RETCON: không tự sửa lịch sử, canon hoặc ký ức đã xác nhận. Nếu phát hiện mâu thuẫn, giữ nguyên dữ liệu cũ và đánh dấu xung đột để xử lý sau." : "",
+    `- STATE LOCK: không tự ý thay đổi các trường canon/quan trọng (${sc.lockedFields.join(", ")}). Muốn thay đổi phải có sự kiện trong truyện làm bằng chứng và cập nhật trạng thái sau chương.`,
+    sc.agencyRequired ? "- CHARACTER AGENCY: nhân vật quan trọng phải có mục tiêu, động cơ, phản ứng và lựa chọn riêng; không biến nhân vật thành công cụ của plot.": "",
+    "- Không tự tạo nhân vật quan trọng mới nếu nhân vật hiện có có thể đảm nhiệm vai trò đó.",
+    "- Không tạo năng lực, quy tắc thế giới hoặc vật phẩm quan trọng mới chỉ để giải quyết vấn đề tức thời.",
+    "- Chapter Focus chỉ kiểm soát phạm vi chủ đề trưởng thành; không được dùng nó để mở rộng cốt truyện ngoài brief.",
+    "- Nếu Directive/Story Bible/Current Status xung đột, không âm thầm sửa canon; ưu tiên dữ liệu canon và ghi nhận xung đột khi cần.",
+    "- Mục tiêu là chiều sâu và tính liên tục, không phải nhồi thêm sự kiện."
+  ].filter(Boolean).join("\n");
+}
+
+function matureFocusPrompt(state) {
+  const f = normalizeChapterMatureFocus(state && state.chapterMatureFocus);
+  if (f === "primary") return "TRỌNG TÂM TRƯỞNG THÀNH: PRIMARY. Chủ đề trưởng thành là một trọng tâm được người dùng chỉ định cho chương này. Chỉ triển khai trong phạm vi brief/mạch truyện đã có; không tự mở tuyến mới.";
+  if (f === "secondary") return "TRỌNG TÂM TRƯỞNG THÀNH: SECONDARY. Chỉ sử dụng nội dung trưởng thành khi brief hoặc diễn biến hiện tại yêu cầu rõ. Không biến nó thành trọng tâm và không tự chèn cảnh chỉ để tăng nhiệt.";
+  return "TRỌNG TÂM TRƯỞNG THÀNH: NONE. Tuyệt đối không tự chèn hoặc kéo dài nội dung trưởng thành trong chương này, kể cả khi mạch truyện trước đó có nội dung trưởng thành.";
+}
+
 async function detectHeatLevel(job, tail, hint, directive) {
   try {
     const prompt = [
@@ -410,6 +454,7 @@ async function detectHeatLevel(job, tail, hint, directive) {
       "0-2 bình thường | 3-4 cảm xúc nhẹ | 5-6 hôn/ôm | 7-8 cởi đồ/sờ | 9-10 quan hệ",
       "CHỈ TRẢ VỀ 1 SỐ DUY NHẤT. KHÔNG giải thích.",
       "",
+      matureFocusPrompt(job.storyState),
       "MỆNH LỆNH: " + (directive || "(không)"),
       "ĐỊNH HƯỚNG CHO CHƯƠNG NÀY: " + (hint || "(không)"),
       "DIỄN BIẾN GẦN:",
@@ -685,9 +730,14 @@ async function generateOneChapter(job) {
   // V12.1 FIX: model NSFW là cấu hình job, không phụ thuộc việc client có giữ
   // modelNsfw trong storyState hay không. Điều này đặc biệt quan trọng với background job.
   const routingNsfwModel = String(job.modelNsfw || state.modelNsfw || "").trim();
-  let isNsfw = !!job.forceNsfw || (!!state.mature && state.nsfwMode !== "never" && !!routingNsfwModel && hotKeyword);
-  // Auto: nếu không có keyword rõ ràng, chấm nhiệt độ trước khi chọn model viết.
-  if (!isNsfw && state.nsfwMode === "auto" && state.mature && routingNsfwModel && timeLeft() > 90000) {
+  const matureFocus = normalizeChapterMatureFocus(state.chapterMatureFocus);
+  // NONE luôn thắng mọi auto-detect: không được tự chèn nội dung trưởng thành.
+  let isNsfw = matureFocus !== "none" && !!job.forceNsfw && !!routingNsfwModel;
+  if (!isNsfw && matureFocus !== "none" && state.mature && state.nsfwMode !== "never" && routingNsfwModel && hotKeyword) {
+    isNsfw = true;
+  }
+  // SECONDARY chỉ chuyển model khi có tín hiệu rõ từ brief/mệnh lệnh; PRIMARY mới dùng thêm heat detection.
+  if (!isNsfw && matureFocus === "primary" && state.nsfwMode === "auto" && state.mature && routingNsfwModel && timeLeft() > 90000) {
     const heat = await detectHeatLevel(job, lastTail, state.nextChapterHint, state.directive);
     const threshold = Number(state.nsfwAutoThreshold) || 6;
     if (heat >= threshold) isNsfw = true;
@@ -699,6 +749,8 @@ async function generateOneChapter(job) {
     "Không mở đầu bằng tiêu đề, không giải thích ngoài truyện.",
     "Không lặp lại đoạn kết chương trước; phải tiếp nối nguyên nhân và hệ quả.",
     buildContext(state), recentContext(chapters),
+    storyControlPrompt(state),
+    matureFocusPrompt(state),
     isNsfw ? EROTIC_STYLE_PROMPT : "",
     isNsfw ? ("MỨC TRƯỞNG THÀNH: " + (EXPLICIT_PROMPTS[state.explicitLevel] || "")) : "",
     isNsfw ? ageGuardPrompt(state) : "",
@@ -742,6 +794,7 @@ async function generateOneChapter(job) {
   let truncated = result.finishReason === "length";
   const issues = [];
   let attempts = 0;
+  chapter.control = { focus: matureFocus, maxMainEvents: normalizeStoryControl(state).maxMainEvents, maxNamedCharacters: normalizeStoryControl(state).maxNamedCharacters, noRetcon: normalizeStoryControl(state).noRetcon };
 
   // V12.2: nếu là nhánh trưởng thành, cho phép tối đa 8 lượt nối tiếp bất kể cấu hình cũ
   // chỉ đặt 4. Mỗi lượt vẫn dùng chính model đã route ở trên.
@@ -762,6 +815,7 @@ async function generateOneChapter(job) {
           isNsfw
             ? "Đây là continuation của cùng một cảnh trưởng thành đã được chọn đúng model. Giữ nguyên mạch, nhịp, POV, xưng hô và trạng thái nhân vật; không tự chuyển sang cảnh mới chỉ vì đã viết được một đoạn. Tiếp tục cho đến khi đạt mục tiêu độ dài hoặc model thực sự hết output."
             : "Nếu diễn biến đã tự nhiên đi tới điểm dừng hợp lý gần đủ số từ, hãy kết thúc chương ở đó — KHÔNG cố nhồi thêm sự kiện/tình tiết mới chỉ để kéo dài.",
+          storyControlPrompt(state),
           "STYLE LOCK — PHẦN ĐẦU CHƯƠNG (chỉ dùng để giữ giọng, không lặp nội dung):", text.slice(0, 1800),
           "ĐOẠN CUỐI:", tail,
           "Giữ nguyên giọng văn, nhịp câu, POV, thì kể và xưng hô của STYLE LOCK + đoạn cuối. Bắt đầu ngay sau câu cuối; không nhắc lại phần đã viết.",
