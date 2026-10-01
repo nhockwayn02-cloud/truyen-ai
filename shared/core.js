@@ -28,7 +28,28 @@ function trimToWordLimit(text, maxWords) {
   return { text: out.trim(), trimmed: true };
 }
 
+// V12.21: xóa phần lập kế hoạch tiếng Anh mà một số model thinking nhúng vào đầu output.
+function stripThinkingOutput(text) {
+  if (!text) return text;
+  let t = String(text);
+  t = t.replace(/<think(?:ing)?[\s>][\s\S]*?<\/think(?:ing)?>/gi, '');
+  const viRe = /[\u00C0-\u024F\u1EA0-\u1EF9]/;
+  const paras = t.split(/\n{2,}/); let start = 0;
+  for (let i = 0; i < paras.length; i++) {
+    const p = paras[i].trim(); if (!p) continue;
+    if (viRe.test(p)) { start = i; break; }
+    const ascii = (p.match(/[a-zA-Z0-9 .,!?:;()\-*_#]/g)||[]).length;
+    if (ascii / (p.replace(/\s/g,'').length||1) > 0.75 && p.length > 150) start = i + 1;
+  }
+  if (start > 0) t = paras.slice(start).join('\n\n');
+  t = t.replace(/^\s*\*{0,2}Block\s+[A-Z][:\s].{0,120}\n/gim, '')
+       .replace(/^\s*(?:Let me|Let's|I'll|I will|I need|Note:|Draft:)[^\n]*/gim, '')
+       .replace(/^\s*[-*]{3,}\s*$/gm, '');
+  return t.replace(/^\s+/, '').trim();
+}
+
 function stripForeign(text) {
+  text = stripThinkingOutput(text); // V12.21
   // V12.10: dọn chữ Hán/Nhật/Hàn/Cyrillic/Thái/Ả Rập/Hindi còn sót (kể cả khi dưới ngưỡng viết lại).
   if (!text) return text;
   let t = String(text)
