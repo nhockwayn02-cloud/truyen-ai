@@ -996,7 +996,8 @@ function trimToWordLimit(text, maxWords) {
   while ((mt = re.exec(s))) { n++; end = mt.index + mt[0].length; if (n >= maxWords) break; }
   let out = s.slice(0, end);
   const m = out.match(/^([\s\S]*[.!?…][”"’']?)(?:\s|$)/);
-  if (m && countWords(m[1]) >= Math.max(1, maxWords - 180)) out = m[1];
+  // V12.20: ngưỡng 70% giới hạn (bản cũ chỉ 180 từ cuối -> hay cắt cụt giữa câu khi đoạn dài)
+  if (m && countWords(m[1]) >= Math.max(1, Math.floor(maxWords * 0.7))) out = m[1];
   return { text: out.trim(), trimmed: true };
 }
 
@@ -1204,7 +1205,7 @@ function dropRestartedContinuation(baseText, contText) {
   }
   return paras.slice(0, cut).join("\n\n");
 }
-const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker","vest","blazer","jacket","cardigan","sandal","jeans","shorts","bikini","lingerie","corset","sofa","mascara","vecni","lipstick","gloss","lotion","serum","shampoo","parfum","spa","massage","gym","yoga","pilates","sandwich","burger","pizza","coffee","latte","cappuccino","cocktail","whisky","vodka","chanel","dior","gucci","prada","hermes","versace","nike","adidas","lelo","durex","kindle","netflix","spotify","messenger","instagram","iphone","android","samsung"]);
+const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker","vest","blazer","jacket","cardigan","sandal","jeans","shorts","bikini","lingerie","corset","sofa","mascara","vecni","lipstick","gloss","lotion","serum","shampoo","parfum","spa","massage","gym","yoga","pilates","sandwich","burger","pizza","coffee","latte","cappuccino","cocktail","whisky","vodka","chanel","dior","gucci","prada","hermes","versace","nike","adidas","lelo","durex","kindle","netflix","spotify","messenger","instagram","iphone","android","samsung","café","cafe","bar","pub","resort","menu","blouse","boxer","ballet","salon","shop","box","stylist","designer","leader","model","manager","outfit","style","cocktail"]);
 const _VN_SYL = /^(ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdghklmnpqrstvx])?[aeiouy]{1,3}(ng|nh|ch|[cmnpt])?$/;
 // V12.19: tiếng cười/hét/thở/tượng thanh viết bằng chữ không dấu (Aaaa, hahaha, hihi, hmmm, shhh...) KHÔNG phải từ lạ.
 const _VN_SFX_RUN = /(.)\1{2,}/i;                                   // aaaa, ahhh, hmmm, shhh, ooooh
@@ -1219,19 +1220,98 @@ function evidenceInText(evidence, text) {
   let hit = 0; ev.forEach(w => { if (have.has(w)) hit++; });
   return hit / ev.length >= 0.7;
 }
-// Liệt kê từ Latinh lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo.
-function findStrayWords(text, allowNames) {
-  const out = []; const seen = new Set();
+// V12.20: kiểm tra một âm tiết tiếng Việt hợp lệ (bỏ dấu thanh, giữ ă â ê ô ơ ư đ). Bắt lỗi kiểu "mươititude", "bănnton", "bọcampo".
+const _VN_SYL_FULL = /^(?:ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdđghklmnpqrstvx])?[aăâeêioôơuưy]{1,3}(?:ng|nh|ch|[cmnpt])?$/;
+function _stripToneMarks(s) { return String(s).normalize("NFD").replace(/[\u0300\u0301\u0303\u0309\u0323]/g, "").normalize("NFC"); }
+function _isValidVnSyllable(low) { return _VN_SYL_FULL.test(_stripToneMarks(low)); }
+function _hasVnDiacritic(t) { return /[ăâêôơưđàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/i.test(t); }
+// Liệt kê từ lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo / làm đầu vào cho bước tự sửa.
+// V12.20: bắt cả từ CÓ DẤU bị ghép lỗi (mươititude, bănnton, bọcampo); trước đây chỉ bắt từ không dấu.
+function findStrayWords(text, allowNames, limit) {
+  const out = []; const seen = new Set(); const max = Number(limit) || 12;
   const allow = new Set(_normWords((allowNames || []).join(" ")).map(w => w.normalize("NFD").replace(/[\u0300-\u036f]/g, "")));
+  const allowExact = new Set(_normWords((allowNames || []).join(" ")));
   const toks = String(text || "").match(/\p{L}+/gu) || [];
   for (const t of toks) {
-    if (t.length < 4 || !/^[A-Za-z]+$/.test(t)) continue;
     const low = t.toLowerCase();
-    if (_VN_OK.has(low) || _VN_SYL.test(low) || _isSoundEffect(low) || seen.has(low) || allow.has(low)) continue;
+    if (seen.has(low)) continue;
+    if (/^[A-Za-z]+$/.test(t)) {
+      if (t.length < 4) continue;
+      if (_VN_OK.has(low) || _VN_SYL.test(low) || _isSoundEffect(low) || allow.has(low)) continue;
+    } else {
+      // Có dấu tiếng Việt: hợp lệ nếu là một âm tiết đúng cấu trúc. Chữ cái ngoài bảng chữ cái Việt (ü, ñ...) bỏ qua.
+      if (t.length < 3 || !/^[\p{Script=Latin}]+$/u.test(t) || !_hasVnDiacritic(t)) continue;
+      if (/[^a-zA-ZăâêôơưđĂÂÊÔƠƯĐàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵÀÁẢÃẠẰẮẲẴẶẦẤẨẪẬÈÉẺẼẸỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌỒỐỔỖỘỜỚỞỠỢÙÚỦŨỤỪỨỬỮỰỲÝỶỸỴ]/.test(t)) continue;
+      if (_isValidVnSyllable(low) || _VN_OK.has(low) || allowExact.has(low) || allow.has(low.normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) continue;
+    }
     seen.add(low); out.push(t);
-    if (out.length >= 12) break;
+    if (out.length >= max) break;
   }
   return out;
+}
+
+// V12.20: tìm câu chứa từng từ lỗi để gửi AI sửa. Trả mảng { word, start, end, sentence, before } (không chồng lấn, theo thứ tự xuất hiện).
+function locateWordSentences(text, words) {
+  const src = String(text || ""); const found = [];
+  const isL = (ch) => !!ch && /\p{L}/u.test(ch);
+  for (const w of words || []) {
+    let from = 0;
+    while (from < src.length) {
+      const i = src.indexOf(w, from); if (i < 0) break;
+      from = i + w.length;
+      if (isL(src[i - 1]) || isL(src[i + w.length])) continue;
+      let a = i; while (a > 0 && !/[.!?…\n]/.test(src[a - 1])) a--;
+      let b = i + w.length; while (b < src.length && !/[.!?…\n]/.test(src[b])) b++;
+      while (b < src.length && /[.!?…”"’')]/.test(src[b]) && src[b] !== "\n") b++;
+      const sentence = src.slice(a, b).replace(/^\s+/, ""); const start = b - sentence.length;
+      found.push({ word: w, start, end: b, sentence, before: src.slice(Math.max(0, start - 160), start).replace(/\s+/g, " ").trim() });
+      break; // mỗi từ lỗi xử lý lần xuất hiện đầu tiên; các lần sau sẽ được quét lại ở vòng kế
+    }
+  }
+  found.sort((x, y) => x.start - y.start);
+  const out = []; let lastEnd = -1;
+  for (const f of found) { if (f.start < lastEnd) { out[out.length - 1].extra = (out[out.length - 1].extra || []).concat(f.word); continue; } out.push(f); lastEnd = f.end; }
+  return out;
+}
+
+// V12.20: câu sửa của AI chỉ được nhận nếu bỏ từ lỗi, độ dài gần câu gốc, và giữ phần lớn các từ còn lại.
+function acceptWordFix(orig, fixed, badWords) {
+  const f = String(fixed || "").trim(), o = String(orig || "").trim();
+  if (!f || f.length < 8) return false;
+  for (const w of badWords || []) if (f.includes(w)) return false;
+  if (/[\u3400-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF]/.test(f)) return false;
+  const ow = _normWords(o), fw = _normWords(f);
+  if (Math.abs(ow.length - fw.length) > 6 || f.length > o.length * 1.5 + 20) return false;
+  const bad = new Set((badWords || []).map(w => _normWords(w)[0]));
+  const keep = ow.filter(w => !bad.has(w)); if (!keep.length) return true;
+  const have = new Set(fw); let hit = 0; keep.forEach(w => { if (have.has(w)) hit++; });
+  return hit / keep.length >= 0.7;
+}
+
+// V12.20: câu cuối đã kết thúc đúng cách chưa (. ! ? … có thể kèm ngoặc/nháy đóng).
+function endsCleanly(text) {
+  const t = String(text || "").replace(/[\s*_]+$/, "");
+  if (!t) return true;
+  return /[.!?…][”"’')\]）»]*$/.test(t) || /[—–]$/.test(t);
+}
+// V12.20: lùi về câu hoàn chỉnh gần nhất. Giữ lại ít nhất minRatio độ dài; nếu không có chỗ cắt hợp lý thì trả nguyên.
+function trimToLastSentence(text, minRatio) {
+  const t = String(text || "").replace(/\s+$/, "");
+  if (endsCleanly(t)) return { text: t, cut: false };
+  const re = /[.!?…][”"’')\]）»]*(?=\s|$)/g; let m, last = -1;
+  while ((m = re.exec(t))) last = m.index + m[0].length;
+  if (last < 0 || last < t.length * (minRatio || 0.6)) return { text: t, cut: false };
+  return { text: t.slice(0, last).replace(/\s+$/, ""), cut: true };
+}
+// V12.20: lấy "cú chốt / kết chương" mà người dùng ghi trong gợi ý/mệnh lệnh (để nhắc AI dừng đúng chỗ và để khép chương khi bị cụt).
+function extractClosingBeat(text) {
+  const src = String(text || ""); if (!src.trim()) return "";
+  const re = /(cú chốt|câu chốt|chốt chương|chốt cuối|kết thúc chương|kết chương|kết bằng|khép chương|cliffhanger)/i;
+  const lines = src.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) if (re.test(lines[i])) return lines[i].slice(0, 500);
+  const sents = src.split(/(?<=[.!?…])\s+/);
+  for (let i = sents.length - 1; i >= 0; i--) if (re.test(sents[i])) return sents.slice(i).join(" ").slice(0, 500);
+  return "";
 }
 
 // ===== V12.17: Quality Gate — phần THUẦN (không gọi AI, không đụng DOM/state toàn cục) =====
