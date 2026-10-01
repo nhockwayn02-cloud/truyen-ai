@@ -663,7 +663,10 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="section-body">
 <div class="field"><label>Mệnh lệnh chương tới <span class="hint">(brief bắt buộc — AI phải bám đầy đủ)</span></label><textarea id="directive" rows="3"></textarea></div>
 <div class="field"><label>Kiểu gợi ý chương sau <span class="hint">(áp dụng cho gợi ý tự động và nút bên dưới)</span></label><select id="hintStyle"><option value="normal">Bình thường</option><option value="resist">Có chống cự</option><option value="twist">Đảo chiều / bước ngoặt</option><option value="escalate">Leo thang</option><option value="slow">Chậm lại, đào sâu cảm xúc</option></select>
-<label style="margin-top:8px">Độ dài & cách viết gợi ý</label><select id="hintFormat"><option value="detail">Chi tiết (400–600 từ)</option><option value="beats">Gọn theo nhịp + điểm kết chương (150–260 từ)</option></select><button type="button" id="regenHintBtn" style="margin-top:6px">✨ Tạo lại gợi ý chương sau</button></div>
+<label style="margin-top:8px">Độ dài & cách viết gợi ý</label><select id="hintFormat"><option value="detail">Chi tiết (400–600 từ)</option><option value="beats">Gọn theo nhịp + điểm kết chương (150–260 từ)</option></select><button type="button" id="regenHintBtn" style="margin-top:6px">✨ Tạo lại gợi ý chương sau</button>
+<button type="button" id="rewriteHintBtn" style="margin-top:6px" title="Gõ ý tưởng của bạn (ngắn gọn cũng được) vào ô Gợi ý chương sau bên dưới rồi bấm nút này: AI sẽ viết lại thành gợi ý đầy đủ bám đúng ý bạn.">✍️ Viết lại gợi ý theo ý tôi</button>
+<button type="button" id="undoHintBtn" style="margin-top:6px" title="Quay lại nội dung ô Gợi ý trước lần viết lại gần nhất.">↩ Khôi phục</button>
+<div class="hint" style="margin-top:4px">Mẹo: gõ ý tưởng của bạn vào ô "Gợi ý chương sau" bên dưới → bấm "Viết lại gợi ý theo ý tôi".</div></div>
 <div class="field"><label>Gợi ý chương sau <span class="hint">(AI phải bám các chi tiết bạn ghi; không tự mở tuyến mới · 400–600 từ, hoặc 150–260 từ nếu chọn kiểu Gọn)</span></label><textarea id="nextChapterHint" rows="10" placeholder="VD: Chương sau nên hé lộ thân phận của X; chưa cần đưa Y quay lại."></textarea></div>
 </div>
 </div><div class="section tone-green settings-only-section" data-column="settings" data-section="">
@@ -5388,8 +5391,9 @@ async function generateChapterSummary(text, chapterNumber, silent){
    Chỉ là gợi ý tham khảo — không ép chương kế phải làm theo ngay,
    người dùng luôn có thể sửa tay trong ô "Gợi ý chương sau". */
 const HINT_STYLES = {"normal": "Diễn tiến tự nhiên, tiếp nối mạch hiện tại.", "resist": "Nhân vật bị khống chế/yếu thế PHẢN KHÁNG rõ rệt trong chương này (hành động chống cự cụ thể); bên kia đáp trả và siết chặt hơn, hệ quả làm quan hệ quyền lực nặng thêm.", "twist": "Có một bước ngoặt/đảo chiều bất ngờ (lộ bí mật, lợi thế đổi bên, kế hoạch bị phá) nhưng vẫn hợp lý với thông tin đã có.", "escalate": "Leo thang: mức độ căng thẳng, rủi ro hoặc mức nóng cao hơn chương trước, có cú chốt gây hồi hộp.", "slow": "Nhịp chậm hơn: đào sâu nội tâm, quan hệ và hệ quả cảm xúc; ít biến cố mới."};
-async function generateNextChapterHint(text, summary, chapterNumber){
+async function generateNextChapterHint(text, summary, chapterNumber, opts){
   if(!text) return "";
+  const userIdea = String((opts && opts.userIdea) || "").trim();
   // Chỉ đưa các thread/foreshadowing đang mở vào prompt khi chúng thực sự liên quan đến mạch chính.
   // Không nhồi toàn bộ tuyến phụ vào hint vì dễ khiến AI tự mở rộng phạm vi truyện.
   const openThreads = (state.threads||[])
@@ -5402,11 +5406,14 @@ async function generateNextChapterHint(text, summary, chapterNumber){
     .map(f=>"- "+f.description).join("\n");
   const names = (state.characters||[]).filter(c=>!c.dead).slice(0,40).map(c=>c.name).filter(Boolean).join(", ");
   const styleKey = state.hintStyle || "normal";
-  const _mo = adultModelFor(text + "\n" + (summary || ""));
+  const _mo = adultModelFor(text + "\n" + (summary || "") + (userIdea ? "\n" + userIdea : ""));
   const beats = (state.hintFormat || "detail") === "beats";
-  const hLo = beats ? (_mo ? 230 : 150) : (_mo ? 600 : 400), hHi = beats ? (_mo ? 380 : 260) : (_mo ? 850 : 600);
+  let hLo = beats ? (_mo ? 230 : 150) : (_mo ? 600 : 400), hHi = beats ? (_mo ? 380 : 260) : (_mo ? 850 : 600);
+  /* Ý tưởng dài của người dùng: nới trần để không bị nén mất chi tiết. */
+  if(userIdea){ const iw = userIdea.split(/\s+/).filter(Boolean).length; hHi = Math.max(hHi, Math.ceil(iw * 1.8)); }
   const prompt = [
     "Bạn vừa đọc xong CHƯƠNG " + chapterNumber + " của một truyện dài kỳ. Hãy viết GỢI Ý CHI TIẾT cho CHƯƠNG " + (chapterNumber+1) + ".",
+    userIdea ? ("Ý TƯỞNG CỦA NGƯỜI DÙNG — ƯU TIÊN TUYỆT ĐỐI, cao hơn mọi quy tắc gợi ý khác bên dưới:\n<y_tuong>\n" + userIdea + "\n</y_tuong>\nHãy VIẾT LẠI gợi ý chương sau để triển khai ĐÚNG và ĐẦY ĐỦ ý tưởng này: giữ nguyên mọi chi tiết, thứ tự, nhân vật, địa điểm, đạo cụ, hành động, câu thoại và điểm kết chương mà người dùng đã nêu; chỉ bổ sung những nhịp nối, địa điểm, hệ quả còn thiếu cho liền mạch với đoạn kết chương trước. KHÔNG bỏ ý, KHÔNG đổi ý, KHÔNG thay bằng hướng khác, KHÔNG thêm tuyến mới. Nếu ý tưởng chỉ nêu một phần thì chỉ viết phần đó và dừng ở mốc người dùng ghi.") : "",
     beats
       ? ("ĐỊNH DẠNG GỌN THEO NHỊP: mở đầu bằng dòng \"**Gợi ý ngắn Chương " + (chapterNumber+1) + ":**\", sau đó 1–3 đoạn ngắn kể lần lượt các nhịp chính theo đúng thứ tự diễn ra, mỗi nhịp 1–2 câu (ai làm gì, ở đâu, với đạo cụ/thiết lập nào, hệ quả), giữ nhịp độ liền mạch. Câu cuối là dòng riêng bắt đầu bằng \"→ Kết chương ở:\" nêu rõ khoảnh khắc chương dừng lại. Không liệt kê gạch đầu dòng, không bình luận.")
       : ("ĐỊNH DẠNG: mở đầu bằng dòng \"**Gợi ý ngắn Chương " + (chapterNumber+1) + ":**\", sau đó 4-6 đoạn ngắn, mỗi đoạn là một cảnh/nhịp truyện theo thứ tự: (1) mở chương — nối TRỰC TIẾP từ đoạn kết chương trước, (2) cảnh chính, (3) cảnh phát triển/căng thẳng, (4) cú chốt cuối chương."),
@@ -5495,6 +5502,27 @@ $ID("regenSummaryBtn").addEventListener("click", async ()=>{
 });
 
 
+/* V12.19: viết lại gợi ý THEO Ý NGƯỜI DÙNG (nội dung đang ghi ở ô Gợi ý chương sau được coi là ý tưởng ưu tiên tuyệt đối). */
+let _hintBackup = null;
+$ID("rewriteHintBtn").addEventListener("click", async ()=>{
+  const idx = state.chapters.length-1;
+  if(idx < 0){ setStatus("Chưa có chương.", false); return; }
+  const idea = String(nextChapterHintEl.value || "").trim();
+  if(!idea){ setStatus("Hãy gõ ý tưởng của bạn vào ô Gợi ý chương sau trước, rồi bấm lại.", false); return; }
+  const hs=$ID("hintStyle"); if(hs) state.hintStyle=hs.value; const hf=$ID("hintFormat"); if(hf) state.hintFormat=hf.value;
+  setStatus("Đang viết lại gợi ý theo ý bạn...", true);
+  try{
+    const ch = state.chapters[idx];
+    const hint = await generateNextChapterHint(ch.text, ch.summary, idx+1, { userIdea: idea });
+    if(hint){ _hintBackup = idea; state.nextChapterHint = hint; nextChapterHintEl.value = hint; persist(); setStatus("Đã viết lại gợi ý theo ý bạn. Bấm ↩ Khôi phục nếu muốn quay lại bản bạn gõ.", false); }
+    else setStatus("Không viết lại được gợi ý (giữ nguyên nội dung của bạn).", false);
+  }catch(e){ setStatus("Lỗi: " + e.message + " (giữ nguyên nội dung của bạn)", false); }
+});
+$ID("undoHintBtn").addEventListener("click", ()=>{
+  if(_hintBackup == null){ setStatus("Chưa có bản nào để khôi phục.", false); return; }
+  state.nextChapterHint = _hintBackup; nextChapterHintEl.value = _hintBackup; _hintBackup = null; persist();
+  setStatus("Đã khôi phục nội dung gợi ý bạn đã gõ.", false);
+});
 $ID("regenHintBtn").addEventListener("click", async ()=>{
   const idx = state.chapters.length-1;
   if(idx < 0){ setStatus("Chưa có chương.", false); return; }
