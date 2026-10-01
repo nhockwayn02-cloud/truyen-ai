@@ -114,7 +114,7 @@ function extractiveSummary(text){
   return "**Tóm tắt chương:** (trích tự động từ văn bản)\n\n"+out.join("\n\n");
 }
 
-function buildSummaryPrompt(text, n, names){
+function buildSummaryPrompt(text, n, names, adult){
   return [
     "Bạn là bộ máy tóm tắt. Chỉ được dựa vào văn bản trong thẻ <chuong>; không có kiến thức nào khác về truyện này.",
     "<chuong>", text, "</chuong>",
@@ -122,7 +122,9 @@ function buildSummaryPrompt(text, n, names){
     "1) Chỉ dùng nhân vật, địa điểm, đồ vật, giờ giấc, lời thoại CÓ trong <chuong>. Không thêm, không suy diễn. Nếu chương không nêu giờ giấc hay chức danh thì KHÔNG ghi.",
     names && names.length ? "2) Tên nhân vật xuất hiện trong chương (chỉ dùng đúng các tên này): "+names.join(", ")+"." : "2) Dùng đúng tên nhân vật như viết trong chương.",
     "3) Định dạng: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch chính, sau đó 4-5 đoạn ngắn theo diễn biến (mỗi đoạn một cảnh/mốc). Không dùng nhãn Đầu/Giữa/Cuối, không gạch đầu dòng, không mô tả tiêu chí tóm tắt.",
-    "4) Với cảnh nhạy cảm (18+/bạo lực/cưỡng ép): thuật lại ngắn gọn, trung lập ai làm gì với ai, câu nói/mệnh lệnh chính và hệ quả — không bỏ cảnh, không thêm chi tiết ngoài văn bản.",
+    adult
+      ? "4) Chương này có cảnh người lớn (18+/khống chế): thuật lại CỤ THỂ, không nói giảm nói tránh — nêu đúng ai làm gì với ai, hành động, đạo cụ, tư thế/vị trí, câu nói/mệnh lệnh chính và hệ quả, dùng đúng từ ngữ mà chương đã dùng; không rút gọn thành 'cảnh nóng/thân mật', không bỏ cảnh, không thêm chi tiết ngoài văn bản, không bình luận đạo đức."
+      : "4) Với cảnh nhạy cảm (18+/bạo lực/cưỡng ép): thuật lại ngắn gọn, trung lập ai làm gì với ai, câu nói/mệnh lệnh chính và hệ quả — không bỏ cảnh, không thêm chi tiết ngoài văn bản.",
     "5) Câu cuối: trạng thái cuối chương theo đúng văn bản.",
     "6) Độ dài 300-400 từ tiếng Việt, tối đa 400. Chỉ trả về bản tóm tắt."
   ].join("\n");
@@ -244,4 +246,237 @@ function findStrayWords(text, allowNames) {
     if (out.length >= 12) break;
   }
   return out;
+}
+
+// ===== V12.17: Quality Gate — phần THUẦN (không gọi AI, không đụng DOM/state toàn cục) =====
+// Client và worker cùng dùng các hàm này; phần gọi AI / dựng prompt vẫn nằm riêng ở từng nơi.
+const GATE_MAX_ATTEMPTS = 3;          // tối đa số lần chấm (và sửa) cho một chương
+const GATE_MAX_VERSIONS = 3;          // số bản gốc giữ lại trong chapter.versions
+const GATE_MIN_REWRITE_RATIO = 0.6;   // bản sửa ngắn hơn 60% bản gốc bị từ chối
+
+function gateItemText(x) { return typeof x === "string" ? x : ((x && (x.description || x.problem)) || JSON.stringify(x)); }
+
+function gateMaxAttempts(v) { return Math.max(1, Math.min(GATE_MAX_ATTEMPTS, Number(v) || GATE_MAX_ATTEMPTS)); }
+
+// Chuẩn hoá kết quả Auditor → review có verdict cuối cùng. Trả null nếu obj không phải object JSON.
+// opts: { maxMainEvents, maxNamedCharacters, passScore, softFailScore, extraHard: string[], now }
+function evaluateReview(obj, opts) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  opts = opts || {};
+  const maxEv = Number(opts.maxMainEvents) || 3, maxCh = Number(opts.maxNamedCharacters) || 4;
+  const passScore = Number(opts.passScore) || 90, softScore = Number(opts.softFailScore) || 75;
+  const arr = (v, n) => (Array.isArray(v) ? v.slice(0, n) : []);
+  const hard = arr(obj.hardFailures, 20);
+  (opts.extraHard || []).forEach(m => hard.push(m));
+  if (Number(obj.mainEventCount) > maxEv) hard.push("Vượt ngân sách sự kiện: " + obj.mainEventCount + " > " + maxEv);
+  if (Number(obj.namedCharacterCount) > maxCh) hard.push("Vượt số nhân vật có tên: " + obj.namedCharacterCount + " > " + maxCh);
+  if (obj.unauthorizedImportantCharacter) hard.push("Có nhân vật mới quan trọng không được outline/brief cho phép.");
+  if (obj.knowledgeViolation) hard.push("Vi phạm Knowledge Ledger / nhân vật biết thông tin chưa thể biết.");
+  if (obj.retcon) hard.push("Có dấu hiệu retcon canon đã xác nhận.");
+  const score = Math.max(0, Math.min(100, Number(obj.score) || 0));
+  const verdict = hard.length ? "HARD_FAIL" : (score >= passScore ? "PASS" : (score >= softScore ? "SOFT_FAIL" : "HARD_FAIL"));
+  return Object.assign({}, obj, {
+    score, verdict, hardFailures: hard,
+    dimensions: obj.dimensions && typeof obj.dimensions === "object" ? obj.dimensions : {},
+    warnings: arr(obj.warnings, 20).concat(opts.extraWarnings || []), suggestions: arr(obj.suggestions, 20), rewriteInstructions: arr(obj.rewriteInstructions, 12),
+    reviewedAt: opts.now || Date.now()
+  });
+}
+
+// Hướng sửa gửi cho Writer: ưu tiên rewriteInstructions, nếu trống thì dùng hardFailures.
+function rewriteInstructionsText(review) {
+  review = review || {};
+  const ins = (review.rewriteInstructions || []).join("\n");
+  return ins || (review.hardFailures || []).map(gateItemText).join("\n");
+}
+
+// Bản sửa có được phép thay bản thảo không? (không rỗng, không ngắn bất thường)
+function checkRewriteAcceptable(oldWc, newText, newWc) {
+  if (!String(newText || "").trim() || newWc < Math.max(20, Math.floor(oldWc * GATE_MIN_REWRITE_RATIO)))
+    return { ok: false, reason: "Bản sửa quá ngắn/rỗng (" + newWc + " từ so với " + oldWc + ")" };
+  return { ok: true };
+}
+
+// Lưu bản gốc vào chapter.versions (mới nhất đứng đầu, giữ tối đa GATE_MAX_VERSIONS).
+function backupBeforeRewrite(chapter, note) {
+  if (!Array.isArray(chapter.versions)) chapter.versions = [];
+  const oldText = String(chapter.text || "");
+  chapter.versions.unshift({ timestamp: Date.now(), text: oldText, wordCount: countWords(oldText), modelUsed: chapter.modelUsed || null, isNsfw: !!chapter.isNsfw, polished: !!chapter.polished, note: note || "Trước khi Quality Gate sửa" });
+  chapter.versions = chapter.versions.slice(0, GATE_MAX_VERSIONS);
+}
+
+// Mỗi lượt thay cảnh báo do AI cũ bằng cảnh báo mới (giữ cảnh báo khác nguồn), không cộng dồn.
+function mergeAiContinuityWarnings(existing, incoming, cap) {
+  const keep = (Array.isArray(existing) ? existing : []).filter(w => !(w && w.source === "ai"));
+  const fresh = (Array.isArray(incoming) ? incoming : []).map(w => Object.assign({}, w, { source: "ai" }));
+  return keep.concat(fresh).slice(-(cap || 20));
+}
+
+// ===== V12.17 (phần 2): Story Control, dựng prompt Gate, vòng lặp Gate, đánh dấu Sync =====
+
+// --- Story Control: một nguồn duy nhất cho chuẩn hoá + prompt (trước đây client và worker viết khác nhau) ---
+function normalizeStoryControl(st) {
+  const sc = (st && st.storyControl && typeof st.storyControl === "object") ? st.storyControl : {};
+  return {
+    schemaVersion: Number(sc.schemaVersion) || 1,
+    maxMainEvents: Math.max(1, Math.min(3, Number(sc.maxMainEvents) || 3)),
+    maxNamedCharacters: Math.max(1, Math.min(6, Number(sc.maxNamedCharacters) || 4)),
+    maxNewThreads: Math.max(0, Math.min(5, Number(sc.maxNewThreads) || 3)),
+    noRetcon: sc.noRetcon !== false,
+    lockedFields: Array.isArray(sc.lockedFields) ? sc.lockedFields : ["identity","age","background","canon","relationships","cultivation","abilities","importantItems","secrets","promises","worldRules"],
+    agencyRequired: sc.agencyRequired !== false
+  };
+}
+function storyControlPrompt(st) {
+  const sc = normalizeStoryControl(st);
+  return [
+    "STORY CONTROL LAYER — BẮT BUỘC:",
+    `- Ngân sách sự kiện: tối đa ${sc.maxMainEvents} sự kiện chính; không thêm biến cố lớn thứ ${sc.maxMainEvents + 1}.`,
+    `- Nhân vật có tên xuất hiện trực tiếp: tối đa ${sc.maxNamedCharacters}; ưu tiên nhân vật đã tồn tại.`,
+    `- Thread mới: tối đa ${sc.maxNewThreads}; không mở tuyến mới chỉ để kéo dài chương.`,
+    "- Continuity: nguyên nhân → hành động → phản ứng → hậu quả phải nhất quán với trạng thái hiện tại.",
+    sc.noRetcon ? "- NO RETCON: không tự sửa lịch sử, canon hoặc ký ức đã xác nhận. Nếu phát hiện mâu thuẫn, giữ nguyên dữ liệu cũ và đánh dấu xung đột để xử lý sau." : "",
+    `- STATE LOCK: không tự ý thay đổi các trường canon/quan trọng (${sc.lockedFields.join(", ")}). Muốn thay đổi phải có sự kiện trong truyện làm bằng chứng và cập nhật trạng thái sau chương.`,
+    sc.agencyRequired ? "- CHARACTER AGENCY: nhân vật quan trọng phải có mục tiêu, động cơ, phản ứng và lựa chọn riêng; không biến nhân vật thành công cụ của plot." : "",
+    "- Không tự tạo nhân vật quan trọng mới nếu nhân vật hiện có có thể đảm nhiệm vai trò đó.",
+    "- Không tạo năng lực, quy tắc thế giới hoặc vật phẩm quan trọng mới chỉ để giải quyết vấn đề tức thời.",
+    "- Chapter Focus chỉ kiểm soát phạm vi chủ đề trưởng thành; không được dùng nó để mở rộng cốt truyện ngoài brief.",
+    "- Nếu Directive/Story Bible/Current Status xung đột, không âm thầm sửa canon; ưu tiên dữ liệu canon và ghi nhận xung đột khi cần.",
+    "- Mục tiêu là chiều sâu và tính liên tục, không phải nhồi thêm sự kiện."
+  ].filter(Boolean).join("\n");
+}
+
+// --- Kiểm tra cứng xác định (không gọi AI). Hai ngân sách sự kiện/nhân vật do Auditor đếm, evaluateReview áp ngưỡng. ---
+function gateHardChecks(chapter) {
+  const text = String((chapter && chapter.text) || "");
+  const warns = (chapter && chapter.continuityWarnings) || [];
+  return [
+    { id: "language", ok: !detectNonVietnamese(text), message: "Ngôn ngữ: tiếng Việt" },
+    { id: "text_nonempty", ok: countWords(text) > 100, message: "Bản thảo có đủ nội dung" },
+    { id: "duplicate", ok: !warns.some(x => x && (x.severity === "high" || x.severity === "critical")), message: "Không có lỗi continuity mức cao đã phát hiện" }
+  ];
+}
+// Tên nhân vật đã biết (hồ sơ NV chính + danh sách NV) — dùng để đếm tự động bằng chứng cho Auditor.
+function gateKnownNames(st) {
+  const out = [], seen = new Set();
+  const add = n => { n = String(n || "").trim(); if (n.length >= 2 && !seen.has(n)) { seen.add(n); out.push(n); } };
+  add(st && st.mainCharProfile && st.mainCharProfile.name);
+  ((st && st.characters) || []).forEach(c => add(c && c.name));
+  return out;
+}
+// Những tên đã biết thật sự xuất hiện trong văn bản (khớp nguyên từ, phân biệt hoa/thường để tránh nhầm từ thường như "lan", "hoa").
+function knownNameMentions(text, names) {
+  const t = String(text || ""), found = [];
+  (names || []).forEach(n => {
+    const esc = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp("(^|[^\\p{L}\\p{N}])" + esc + "(?![\\p{L}\\p{N}])", "u").test(t)) found.push(n);
+  });
+  return found;
+}
+
+// --- Prompt Auditor: phần khung/quy tắc/schema dùng chung; ngữ cảnh do client/worker tự truyền vào ---
+const GATE_REVIEW_SCHEMA = '{"score":0,"verdict":"PASS|SOFT_FAIL|HARD_FAIL","dimensions":{"continuity":0,"characterConsistency":0,"canonConsistency":0,"plotDiscipline":0,"worldRules":0,"outlineCompliance":0,"style":0,"pacing":0,"knowledgeConsistency":0},"mainEventCount":0,"namedCharacterCount":0,"unauthorizedImportantCharacter":false,"knowledgeViolation":false,"retcon":false,"outlineDeviation":false,"hardFailures":[],"warnings":[],"suggestions":[],"rewriteInstructions":[]}';
+// p: { storyControl, contract, contractLabel, context, warnings, draft, hardChecks, knownNames, maxMainEvents, maxNamedCharacters }
+function buildQualityReviewPrompt(p) {
+  const evN = Number(p.maxMainEvents) || 3, chN = Number(p.maxNamedCharacters) || 4;
+  const known = (p.knownNames || []);
+  return [
+    "Bạn là QUALITY AUDITOR cho tiểu thuyết dài kỳ.",
+    "Mục tiêu: kiểm tra bản thảo so với Chapter Contract, Story Bible và continuity. KHÔNG viết lại chương.",
+    "Trả DUY NHẤT JSON object theo schema cuối.",
+    "STORY CONTROL:", p.storyControl || "",
+    (p.contractLabel || "CHAPTER CONTRACT / OUTLINE") + ":", p.contract || "(không có)",
+    "BỐI CẢNH/CANON TÓM LƯỢC:", String(p.context || "").slice(0, 18000),
+    "CONTINUITY WARNINGS ĐÃ PHÁT HIỆN:", JSON.stringify(p.warnings || []).slice(0, 6000),
+    "BẢN THẢO CHƯƠNG:", String(p.draft || "").slice(0, 50000),
+    "KIỂM TRA CỨNG ĐÃ CÓ:", JSON.stringify(p.hardChecks || []),
+    known.length ? "TÊN NHÂN VẬT ĐÃ BIẾT XUẤT HIỆN TRONG VĂN BẢN (đếm tự động, chỉ để tham khảo khi đếm namedCharacterCount): " + known.join(", ") : "",
+    "QUY TẮC:",
+    "- mainEventCount phải là số sự kiện chính thực sự (tối đa " + evN + "), không đếm scene beat/hành động nhỏ.",
+    "- namedCharacterCount chỉ đếm nhân vật có tên riêng xuất hiện trực tiếp; tối đa " + chN + ".",
+    "- unauthorizedImportantCharacter=true nếu xuất hiện nhân vật mới quan trọng mà outline/brief không cho phép.",
+    "- knowledgeViolation=true nếu nhân vật biết điều họ chưa thể biết.",
+    "- retcon=true nếu mâu thuẫn canon đã xác nhận.",
+    "- outlineDeviation=true nếu bỏ mốc bắt buộc hoặc mở tuyến lớn ngoài contract.",
+    "- hardFailures phải chứa mọi lỗi chặn Sync. Nếu có hard failure thì verdict phải HARD_FAIL dù score cao.",
+    "SCHEMA: " + GATE_REVIEW_SCHEMA
+  ].filter(x => x !== "").join("\n\n");
+}
+// p: { chapterNumber, storyControl, contract, contractLabel, context, review, draft }
+function buildRewritePrompt(p) {
+  return [
+    "SỬA LẠI BẢN THẢO CHƯƠNG " + p.chapterNumber + " THEO QUALITY REVIEW.",
+    "Chỉ sửa đúng các lỗi được nêu; giữ nguyên các sự kiện hợp lệ, nhân vật hợp lệ, POV, xưng hô và giọng văn.",
+    "TUYỆT ĐỐI không thêm sự kiện chính mới, không tạo nhân vật quan trọng mới, không mở thread mới chỉ để làm bản sửa dài hơn.",
+    p.storyControl || "",
+    (p.contractLabel || "OUTLINE/CONTRACT") + ":\n" + (p.contract || ""),
+    p.context ? "CANON CONTEXT:\n" + String(p.context).slice(0, 15000) : "",
+    "QUALITY REVIEW:\n" + JSON.stringify(p.review || {}),
+    "HƯỚNG SỬA ƯU TIÊN:\n" + rewriteInstructionsText(p.review),
+    "BẢN THẢO HIỆN TẠI:\n" + (p.draft || ""),
+    "CHỈ TRẢ VỀ VĂN XUÔI CHƯƠNG ĐÃ SỬA, KHÔNG tiêu đề, không giải thích, không markdown."
+  ].filter(Boolean).join("\n\n");
+}
+
+// --- Vòng lặp Gate dùng chung. Không gọi AI trực tiếp: client/worker truyền các hàm vào qua `deps`. ---
+// deps: { review(attempt)→{ok,review|reason}, rewrite(review,attempt)→{ok,stopped,reason}, selfCheck?(attempt), onStatus?(msg), onChange?(), shouldStop?() }
+// opts: { enabled, allowRewrite, maxAttempts }
+function bypassReview() {
+  return { status: "bypassed", score: null, verdict: "BYPASS", dimensions: {}, hardFailures: [], warnings: ["Quality Gate đang tắt"], suggestions: [], rewriteInstructions: [], attempt: 0, reviewedAt: Date.now() };
+}
+async function runGateLoop(chapter, deps, opts) {
+  opts = opts || {}; deps = deps || {};
+  const notify = () => { if (deps.onChange) deps.onChange(); };
+  const stopped = () => !!(deps.shouldStop && deps.shouldStop());
+  if (opts.enabled === false) { chapter.status = "APPROVED"; chapter.review = bypassReview(); notify(); return { approved: true }; }
+  const maxAttempts = opts.allowRewrite === false ? 1 : gateMaxAttempts(opts.maxAttempts);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (stopped()) return { approved: false, stopped: true };
+    if (deps.selfCheck) { chapter.status = "SELF_CHECKING"; notify(); await deps.selfCheck(attempt); }
+    chapter.status = "REVIEWING"; chapter.review = Object.assign({}, chapter.review || {}, { attempt }); notify();
+    const rr = await deps.review(attempt);
+    if (!rr || !rr.ok) {
+      const reason = (rr && rr.reason) || "review_error";
+      chapter.review = Object.assign({}, chapter.review, { status: "error", verdict: "REVIEW_ERROR", warnings: ["Không đọc được kết quả Quality Review: " + reason] });
+      chapter.status = "REVISION_REQUIRED"; notify();
+      return { approved: false, error: reason };
+    }
+    chapter.review = Object.assign({}, chapter.review, rr.review, { status: "completed", attempt, reviewedAt: Date.now() });
+    if (rr.review.verdict === "PASS") { chapter.status = "APPROVED"; notify(); return { approved: true, review: rr.review }; }
+    chapter.status = "REVISION_REQUIRED"; notify();
+    if (attempt >= maxAttempts) break;
+    if (deps.onStatus) deps.onStatus("Quality Gate: " + rr.review.verdict + " — đang sửa lần " + (attempt + 1) + "/" + maxAttempts + "...");
+    const rw = await deps.rewrite(rr.review, attempt);
+    if (rw && rw.stopped) return { approved: false, stopped: true };
+    if (!rw || !rw.ok) {
+      chapter.review.warnings = (chapter.review.warnings || []).concat(["Bản sửa bị từ chối: " + ((rw && rw.reason) || "không rõ") + " — giữ nguyên bản thảo."]);
+      notify(); break;
+    }
+  }
+  chapter.status = "REVISION_REQUIRED";
+  return { approved: false, review: chapter.review };
+}
+
+// --- Canon version / đánh dấu Sync / kết quả job nền ---
+function nextCanonVersion(st) {
+  const ex = Math.max(0, ...(((st && st.chapters) || []).map(c => Number(c && c.sync && c.sync.canonVersion) || 0)));
+  return Math.max(ex, Number(st && st.canonVersion) || 0) + 1;
+}
+function applyCanonSync(st, chapter, now) {
+  const cv = nextCanonVersion(st);
+  st.canonVersion = cv; chapter.canonVersion = cv;
+  const warn = !!(chapter.autoUpdateIssues && chapter.autoUpdateIssues.length);
+  chapter.sync = Object.assign({ changes: [] }, chapter.sync || {}, { status: warn ? "SYNCED_WITH_WARNINGS" : "SYNCED", canonVersion: cv, syncedAt: now || Date.now() });
+  chapter.status = chapter.sync.status;
+  return cv;
+}
+function mergeCanonVersion(local, incoming) { return Math.max(Number(local) || 0, Number(incoming) || 0); }
+// Kết quả job nền có phải "trượt Quality Gate" (chương nháp, chưa Sync) không?
+function isGateFailedResult(d) {
+  if (!d) return false;
+  if (d.qualityGateFailed) return true;
+  if (d.resultChapter && d.resultChapter.status === "REVISION_REQUIRED") return true;
+  const chs = d.storyState && d.storyState.chapters;
+  const last = Array.isArray(chs) && chs.length ? chs[chs.length - 1] : null;
+  return !!(last && last.status === "REVISION_REQUIRED");
 }
