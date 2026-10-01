@@ -6440,7 +6440,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       isRegen ? ("\nVIẾT LẠI chương " + chapterNumber + ". Chế độ: " + (regenInstructions[regenMode]||regenInstructions.full)) : "",
       vocabBlock ? ("\n" + vocabBlock) : "",
       "",
-      "ĐỘ DÀI MỤC TIÊU khoảng " + (state.minChapterWords || 5000) + " từ, KHÔNG phải chỉ tiêu bắt buộc phải nhồi cho đủ. Ưu tiên hoàn thành đầy đủ brief và mốc kết thúc; nếu nội dung đã hoàn tất thì kết thúc tự nhiên, không thêm tuyến mới chỉ để tăng số từ.",
+      "ĐỘ DÀI TỐI THIỂU " + Math.round((state.minChapterWords || 5000) * 0.95) + " từ. Đạt bằng cách sống CHẬM từng khoảnh khắc của các ý trong brief (không nhảy cóc thời gian, không tóm tắt), KHÔNG thêm tuyến/cảnh/nhân vật mới. Mỗi ý trong brief viết thành một khối dày, dùng: giác quan chậm và cụ thể; nội tâm giằng co, mâu thuẫn giữa suy nghĩ và phản ứng cơ thể; lặp có biến tấu (mỗi lần lặp thêm cảm xúc/mức độ/phản ứng mới); thoại ngập ngừng, khoảng lặng; chi tiết môi trường và vật dụng. Mỗi khối có một chuyển biến nhỏ; xen câu dài với câu ngắn. Đoạn càng căng càng viết chậm. Vẫn phải dừng đúng mốc kết thúc của brief.",
       "CHỐNG LẶP: Không lặp sự kiện, cách giải quyết, cấu trúc, cụm từ, hình ảnh đã dùng.",
       state.pronounRules ? ("\nQUY TẮC XƯNG HÔ:\n" + state.pronounRules) : "",
       usingNsfw ? ("\n" + EROTIC_STYLE_PROMPT) : "",
