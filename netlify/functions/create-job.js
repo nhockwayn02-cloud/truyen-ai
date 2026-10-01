@@ -64,6 +64,7 @@ exports.handler = async (event) => {
       modelNsfw:body.modelNsfw || "aion-labs/aion-2.0",
       forceNsfw:!!body.forceNsfw,
       hintStyle:String(body.hintStyle||"normal").slice(0,20),
+      hintFormat:String(body.hintFormat||"detail").slice(0,20),
       apiKeyEncrypted,
       apiKey:null,
       accessTokenHash:hashSecret(accessToken),
