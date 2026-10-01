@@ -480,3 +480,163 @@ function isGateFailedResult(d) {
   const last = Array.isArray(chs) && chs.length ? chs[chs.length - 1] : null;
   return !!(last && last.status === "REVISION_REQUIRED");
 }
+
+/* ===== V12.18 — NHÂN VẬT TRÙNG: nhận diện nhãn chung / tên ngắn, gộp an toàn (dùng chung client + worker) ===== */
+
+const _GENERIC_MC_LABELS = ["nhan vat chinh", "nvc", "main character", "the main character", "protagonist", "the protagonist", "mc", "nhan vat chinh cua truyen"];
+const _TIER_ORDER = ["background", "minor", "supporting", "important", "major"];
+const _DUP_STOP = new Set(["ba", "ong", "co", "chu", "anh", "chi", "em", "me", "cha", "bo", "thay", "nguoi", "ke", "gia", "cau", "mo", "di", "duong"]);
+
+/* "nhân vật chính", "main character", "protagonist", "nhân vật chính (tên chưa rõ)"... — nhãn chung, KHÔNG phải tên riêng. */
+function isGenericMainLabel(name, mcName) {
+  const n = normalizeName(name).replace(/[()\[\]{}"'“”‘’.,:;]/g, " ").replace(/\s+/g, " ").trim();
+  if (!n) return false;
+  if (_GENERIC_MC_LABELS.includes(n)) return true;
+  const m = n.match(/^(nhan vat chinh|main character|protagonist)\s+(.+)$/);
+  if (!m) return false;
+  if (/^(ten chua ro|chua ro ten|chua dat ten|vo danh)$/.test(m[2])) return true;
+  const mc = normalizeName(mcName || "");
+  return !!mc && (m[2].includes(mc) || mc.includes(m[2]));
+}
+
+/* Tên (do AI trích xuất) trỏ tới đâu: hồ sơ Nhân Vật Chính / một nhân vật có sẵn (kể cả theo bí danh) / chưa có. */
+function resolveCharacterTarget(state, name) {
+  const n = normalizeName(name);
+  if (!n) return { kind: "none" };
+  const mc = state && state.mainCharProfile, mcName = (mc && mc.name) || "";
+  if (mcName && normalizeName(mcName) === n) return { kind: "main" };
+  if (mc && Array.isArray(mc.aliases) && mc.aliases.some(a => normalizeName(a) === n)) return { kind: "main", via: "alias" };
+  if (mcName && isGenericMainLabel(name, mcName)) return { kind: "main", via: "generic" };
+  const list = (state && state.characters) || [];
+  let c = list.find(x => normalizeName(x.name) === n);
+  if (c) return { kind: "character", character: c };
+  c = list.find(x => Array.isArray(x.aliases) && x.aliases.some(a => normalizeName(a) === n));
+  if (c) return { kind: "character", character: c, via: "alias" };
+  return { kind: "new" };
+}
+
+/* AI báo thêm về nhân vật chính: chỉ cập nhật các trường trạng thái (không đụng hồ sơ do người dùng nhập). */
+function applyMainCharUpdate(profile, u) {
+  if (!profile || !u) return false;
+  let changed = false;
+  ["currentLocation", "physicalState", "mentalState", "secret"].forEach(k => { if (u[k] && String(u[k]).trim()) { profile[k] = u[k]; changed = true; } });
+  return changed;
+}
+
+function mergeTextSegments(a, b, max) {
+  max = max || 2500;
+  const x = String(a || "").trim(), y = String(b || "").trim();
+  if (!y) return x;
+  if (!x) return y.slice(0, max);
+  const nx = normalizeName(x), ny = normalizeName(y);
+  if (nx === ny || nx.includes(ny)) return x;
+  if (ny.includes(nx)) return y.slice(0, max);
+  const fresh = y.split(/;\s*/).filter(seg => seg.trim() && !nx.includes(normalizeName(seg)));
+  if (!fresh.length) return x;
+  const parts = x.split(/;\s*/).concat(fresh);
+  while (parts.length > 1 && parts.join("; ").length > max) parts.shift();
+  return parts.join("; ").slice(-max);
+}
+
+/* Gộp hồ sơ `source` vào `target` (target là bản giữ lại). Không mất thông tin: trường trống thì điền, trường chữ thì nối ý mới. */
+function mergeCharacterRecords(target, source) {
+  const SKIP = ["id", "name", "relationships", "history", "aliases", "coreIdentity", "tier", "firstAppearance", "lastAppearance", "dead", "deathChapter", "locked", "coreLocked"];
+  const TEXT = ["appearance", "personality", "goals", "secret", "weakness", "fear", "knowledge", "independentPlot", "speech", "strength", "role", "relevanceToMC"];
+  Object.keys(source).forEach(k => {
+    if (SKIP.includes(k)) return;
+    const v = source[k];
+    if (v == null || v === "") return;
+    if (TEXT.includes(k)) target[k] = mergeTextSegments(target[k], v, (k === "role" || k === "relevanceToMC") ? 400 : 2500);
+    else if (target[k] == null || target[k] === "") target[k] = v;
+  });
+  if (_TIER_ORDER.indexOf(source.tier) > _TIER_ORDER.indexOf(target.tier)) target.tier = source.tier;
+  const nums = (p, q, pick) => { const a = target[p], b = source[q]; return a == null ? b : (b == null ? a : pick(a, b)); };
+  target.firstAppearance = nums("firstAppearance", "firstAppearance", Math.min);
+  target.lastAppearance = nums("lastAppearance", "lastAppearance", Math.max);
+  if (source.dead && !target.dead) { target.dead = true; target.deathChapter = source.deathChapter != null ? source.deathChapter : target.deathChapter; }
+  const seenRel = new Set(), rels = [];
+  (target.relationships || []).concat(source.relationships || []).forEach(r => {
+    const k = normalizeName(r && r.withName);
+    if (!k || seenRel.has(k) || k === normalizeName(target.name)) return;
+    seenRel.add(k); rels.push(r);
+  });
+  target.relationships = rels;
+  target.history = (Array.isArray(target.history) ? target.history : []).concat(Array.isArray(source.history) ? source.history : []).slice(-100);
+  const aliases = [];
+  (target.aliases || []).concat(source.aliases || [], [source.name]).forEach(a => {
+    const k = normalizeName(a);
+    if (k && k !== normalizeName(target.name) && !aliases.some(x => normalizeName(x) === k)) aliases.push(String(a).trim());
+  });
+  target.aliases = aliases;
+  return target;
+}
+
+/* Gợi ý các mục có thể trùng (CHỈ gợi ý — người dùng quyết định). state.ignoredDupPairs: các cặp "Giữ riêng". */
+function findDuplicateCharacterGroups(state) {
+  const out = [], seen = new Set();
+  const chars = (state && state.characters) || [], mc = state && state.mainCharProfile, mcName = (mc && mc.name) || "";
+  const mcN = normalizeName(mcName), ignored = new Set((state && state.ignoredDupPairs) || []);
+  const push = (src, targetId, targetName, type, reason, confidence) => {
+    const key = src.id + "|" + (targetId || "");
+    if (seen.has(key) || ignored.has(key)) return;
+    seen.add(key);
+    out.push({ key, sourceId: src.id, sourceName: src.name, targetId: targetId || null, targetName: targetName || "", type, reason, confidence });
+  };
+  const cands = chars.filter(c => /protagonist|nhan vat chinh|nam chinh|nu chinh/.test(normalizeName(c.role)) && !isGenericMainLabel(c.name, mcName));
+  const flagged = new Set();
+  chars.forEach(c => {
+    const n = normalizeName(c.name);
+    if (!n) return;
+    if (mcN && n === mcN) { push(c, "MAIN", mcName, "main_name", "Trùng tên với hồ sơ Nhân Vật Chính", "high"); flagged.add(c.id); return; }
+    if (!isGenericMainLabel(c.name, mcName)) return;
+    flagged.add(c.id);
+    if (mcN) push(c, "MAIN", mcName, "main_generic", "Nhãn chung “nhân vật chính” — chính là " + mcName, "high");
+    else if (cands.length === 1) push(c, cands[0].id, cands[0].name, "main_generic", "Nhãn chung “nhân vật chính” — có vẻ là " + cands[0].name, "medium");
+    else push(c, null, "", "generic_unresolved", "Nhãn chung “nhân vật chính” nhưng chưa khai báo Nhân Vật Chính", "medium");
+  });
+  const toks = c => normalizeName(c.name).split(" ").filter(Boolean);
+  chars.forEach(a => {
+    if (flagged.has(a.id)) return;
+    const ta = toks(a);
+    if (!ta.length || (ta.length === 1 && (_DUP_STOP.has(ta[0]) || ta[0].length < 2))) return;
+    if (mcN) {
+      const tm = mcN.split(" ").filter(Boolean);
+      if (ta.length < tm.length && ta.every(t => tm.includes(t))) { push(a, "MAIN", mcName, "alias", "Tên ngắn trùng một phần với nhân vật chính " + mcName, "medium"); return; }
+    }
+    const longer = chars.filter(b => b !== a && !flagged.has(b.id) && (() => { const tb = toks(b); return ta.length < tb.length && ta.every(t => tb.includes(t)); })());
+    if (longer.length === 1) push(a, longer[0].id, longer[0].name, "alias", "“" + a.name + "” trùng một phần với “" + longer[0].name + "” — có thể cùng một người", "medium");
+  });
+  return out;
+}
+
+/* Gộp nhân vật `sourceId` vào `targetId` ("MAIN" = hồ sơ Nhân Vật Chính: chỉ điền ô còn trống, không ghi đè nội dung người dùng đã nhập). */
+function mergeCharacterIntoState(state, sourceId, targetId) {
+  const chars = state.characters || [], src = chars.find(c => c.id === sourceId);
+  if (!src) return { ok: false, reason: "không thấy mục nguồn" };
+  let targetName;
+  if (targetId === "MAIN") {
+    const p = state.mainCharProfile;
+    if (!p || !String(p.name || "").trim()) return { ok: false, reason: "chưa khai báo Nhân Vật Chính" };
+    Object.keys(src).forEach(k => {
+      const pk = k === "strength" ? "skills" : k, v = src[k];
+      if (typeof v !== "string" || !v.trim() || !(pk in p) || pk === "name") return;
+      if (!String(p[pk] || "").trim()) p[pk] = v;
+    });
+    const al = Array.isArray(p.aliases) ? p.aliases.slice() : [];
+    if (normalizeName(src.name) !== normalizeName(p.name) && !al.some(x => normalizeName(x) === normalizeName(src.name))) al.push(String(src.name).trim());
+    p.aliases = al; targetName = p.name;
+  } else {
+    const tgt = chars.find(c => c.id === targetId && c.id !== sourceId);
+    if (!tgt) return { ok: false, reason: "không thấy mục đích" };
+    mergeCharacterRecords(tgt, src); targetName = tgt.name;
+  }
+  state.characters = chars.filter(c => c.id !== sourceId);
+  const sn = normalizeName(src.name);
+  state.characters.forEach(c => {
+    if (!Array.isArray(c.relationships)) return;
+    c.relationships.forEach(r => { if (r && normalizeName(r.withName) === sn) r.withName = targetName; });
+    const seenR = new Set();
+    c.relationships = c.relationships.filter(r => { const k = normalizeName(r && r.withName); if (!k || k === normalizeName(c.name) || seenR.has(k)) return false; seenR.add(k); return true; });
+  });
+  return { ok: true, from: src.name, into: targetName };
+}
