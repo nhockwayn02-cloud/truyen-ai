@@ -1208,6 +1208,14 @@ const _VN_SFX_RUN = /(.)\1{2,}/i;                                   // aaaa, ahh
 const _VN_SFX_LAUGH = /^[aeiou]?([hk][aeiou])\1+h?$/i;               // hahaha, hihi, hehe, huhuhu, kekeke, ahaha
 const _VN_SFX_WORD = /^(?:h+m+|sh+|ps+t+|ts+k+|gr+|zz+z*|uh+m*|ah+|oh+|eh+)$/i;
 function _isSoundEffect(low) { return _VN_SFX_RUN.test(low) || _VN_SFX_LAUGH.test(low) || _VN_SFX_WORD.test(low); }
+// V12.19: bằng chứng đổi hồ sơ (thăng chức...) phải TRÍCH từ chính chương: >=70% từ của bằng chứng có trong văn bản nguồn.
+function evidenceInText(evidence, text) {
+  const ev = _normWords(String(evidence || "")).filter(w => w.length >= 2);
+  if (ev.length < 3) return false;
+  const have = new Set(_normWords(String(text || "")));
+  let hit = 0; ev.forEach(w => { if (have.has(w)) hit++; });
+  return hit / ev.length >= 0.7;
+}
 // Liệt kê từ Latinh lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo.
 function findStrayWords(text, allowNames) {
   const out = []; const seen = new Set();
@@ -3795,7 +3803,7 @@ $ID("deleteChapterBtn").addEventListener("click", async ()=>{
   const wipe = deleteWipeMemoryToggle ? deleteWipeMemoryToggle.checked : true;
   const ok = await showConfirm(
     "Xóa chương " + (idx+1) + ": \"" + (ch.title || "") + "\" ?\n\n" +
-    (wipe ? "Sẽ xóa kèm scene / history / điều chỉnh số chương liên quan." : "Chỉ xóa văn bản chương, giữ bộ nhớ."),
+    (wipe ? "Sẽ xóa kèm scene / history / điều chỉnh số chương liên quan, và các nhân vật / địa điểm / vật phẩm chỉ xuất hiện ở chương này." : "Chỉ xóa văn bản chương, giữ bộ nhớ."),
     { okText: "Xóa", danger: true }
   );
   if(!ok) return;
@@ -3825,6 +3833,31 @@ $ID("deleteChapterBtn").addEventListener("click", async ()=>{
     state.threads = (state.threads || []).filter(t => t.chapterIntroduced !== removedNum)
       .map(t => t.chapterIntroduced > removedNum ? Object.assign({}, t, { chapterIntroduced: t.chapterIntroduced - 1 }) : t);
 
+    /* V12.19: xóa kèm các mục CHỈ sinh ra từ chương bị xóa (nhân vật / địa điểm / vật phẩm xuất hiện lần đầu ở chương này
+       và không xuất hiện ở chương nào sau). Mục dùng lại ở chương sau thì được giữ. Áp cho cả snapshot các chương còn lại,
+       để khi xóa chương cuối sau này, mục đã xóa không "sống lại" từ snapshot. */
+    const createdHere = o => o && o.firstAppearance === removedNum && !(Number(o.lastAppearance) > removedNum);
+    const removedCharNames = new Set((state.characters || []).filter(createdHere).map(c => normalizeName(c.name)));
+    state.characters = (state.characters || []).filter(c => !createdHere(c));
+    state.locations = (state.locations || []).filter(l => !createdHere(l));
+    state.items = (state.items || []).filter(it => !createdHere(it));
+    (state.locations || []).concat(state.items || []).forEach(o => {
+      if(o.firstAppearance === removedNum) o.firstAppearance = removedNum;
+      else if(o.firstAppearance > removedNum) o.firstAppearance--;
+      if(o.lastAppearance === removedNum) o.lastAppearance = Math.max(0, removedNum - 1) || null;
+      else if(o.lastAppearance > removedNum) o.lastAppearance--;
+    });
+    if(removedCharNames.size){
+      (state.characters || []).forEach(c => { if(Array.isArray(c.relationships)) c.relationships = c.relationships.filter(r => !removedCharNames.has(normalizeName(r && r.withName))); });
+      Object.keys(state.characterStateTracker || {}).forEach(k => { if(removedCharNames.has(k)) delete state.characterStateTracker[k]; });
+    }
+    state.chapters.forEach(chp => {
+      const sn = chp.stateSnapshot; if(!sn) return;
+      sn.characters = (sn.characters || []).filter(c => !createdHere(c));
+      sn.locations = (sn.locations || []).filter(l => !createdHere(l));
+      sn.items = (sn.items || []).filter(it => !createdHere(it));
+    });
+
     // Character history + appearance/death markers
     (state.characters || []).forEach(c => {
       if(Array.isArray(c.history)){
@@ -3833,7 +3866,7 @@ $ID("deleteChapterBtn").addEventListener("click", async ()=>{
       }
       if(c.lastAppearance === removedNum) c.lastAppearance = Math.max(0, removedNum - 1) || null;
       else if(c.lastAppearance > removedNum) c.lastAppearance--;
-      if(c.firstAppearance === removedNum) c.firstAppearance = Math.max(0, removedNum - 1) || null;
+      if(c.firstAppearance === removedNum) c.firstAppearance = removedNum; /* còn lại = mục dùng lại ở chương sau (đã dịch xuống vị trí này) */
       else if(c.firstAppearance > removedNum) c.firstAppearance--;
       if(c.deathChapter === removedNum) c.deathChapter = null;
       else if(c.deathChapter > removedNum) c.deathChapter--;
@@ -4791,7 +4824,7 @@ function characterSummaryForPrompt(list){
   }).join("\n");
 }
 
-function mergeCharacterUpdate(update, chapterNumber){
+function mergeCharacterUpdate(update, chapterNumber, sourceText){
   if(!update) return;
   const cleanName = String(update.name || "").trim();
   if(!cleanName) return;
@@ -4812,13 +4845,24 @@ function mergeCharacterUpdate(update, chapterNumber){
      "locked" cũ vẫn dùng cho tier, còn coreLocked là khóa nhận diện riêng.
      Chỉ một lệnh thay đổi hồ sơ có cờ explicitCoreChange + evidence mới được mở khóa. */
   const lockedFields = c.coreLocked !== false ? CHARACTER_CORE_LOCK_FIELDS : [];
-  const explicitCoreChange = update.explicitCoreChange === true && String(update.changeEvidence||"").trim().length >= 12;
+  /* V12.19: bằng chứng phải trích được từ chính chương (khi biết văn bản nguồn) — AI không tự khẳng định "đã thăng chức". */
+  const explicitCoreChange = update.explicitCoreChange === true && String(update.changeEvidence||"").trim().length >= 12
+    && (sourceText == null || evidenceInText(update.changeEvidence, sourceText));
+  const JOB_FIELDS = ["role","position","occupation","faction"];
   Object.keys(update).forEach(key=>{
-    if(["name","isNew","relationshipWithMain","relationships","chapterEvent","isDead","explicitCoreChange","changeEvidence"].includes(key)) return;
-    if(lockedFields.includes(key) && !explicitCoreChange) return;
+    if(["name","isNew","relationshipWithMain","relationships","chapterEvent","isDead","explicitCoreChange","changeEvidence","_ghi_chu_18"].includes(key)) return;
+    const wasEmpty = !String(c[key]||"").trim();
+    /* V12.19: khóa hồ sơ gốc chỉ chặn GHI ĐÈ giá trị đã có; trường còn trống (giới tính, tuổi, nghề...) vẫn được điền. */
+    if(lockedFields.includes(key) && !explicitCoreChange && !wasEmpty) return;
     if(update[key] === "" || update[key] == null) return;
+    /* Đặc điểm thân thể ổn định: chỉ điền khi trống, không để mỗi chương đổi một kiểu. */
+    if(["age","gender","height","bodyType","hair","eyes","skin","voice","scent","style","scars","tattoos"].includes(key) && !wasEmpty && !explicitCoreChange) return;
+    /* Trường 18+ chỉ ghi cho NV đủ 18 tuổi (khớp rào chắn tuổi của app). */
+    if(["sexualExperience","boundaries","taboos","preferences","attractionToMC","tensionWithMC","consentNotes"].includes(key)){ const ag=parseAgeNum(c.age||update.age); if(ag!==null && ag<18) return; }
+    /* V12.19: nghề/chức vụ đã có thì chỉ đổi khi có sự kiện + bằng chứng trích từ chương (kể cả NV đã mở khóa). */
+    if(JOB_FIELDS.includes(key) && String(c[key]||"").trim() && normalizeName(c[key]) !== normalizeName(update[key]) && !explicitCoreChange) return;
     const value=String(update[key]);
-    const accumulative=["appearance","personality","goals","secret","weakness","fear","knowledge","independentPlot"];
+    const accumulative=["appearance","personality","goals","secret","weakness","fear","knowledge","independentPlot","strength","speech","sexualExperience","boundaries","taboos","preferences","attractionToMC","tensionWithMC","consentNotes"];
     if(accumulative.includes(key)){
       const old=String(c[key]||"").trim();
       if(!old)c[key]=value;
@@ -4833,7 +4877,7 @@ function mergeCharacterUpdate(update, chapterNumber){
         }
       }
     }else c[key]=update[key];
-    if((explicitCoreChange || c.coreLocked===false) && CHARACTER_CORE_LOCK_FIELDS.includes(key)){
+    if((explicitCoreChange || c.coreLocked===false || wasEmpty) && CHARACTER_CORE_LOCK_FIELDS.includes(key)){
       if(!c.coreIdentity || typeof c.coreIdentity!=="object") c.coreIdentity={};
       c.coreIdentity[key]=c[key];
     }
@@ -4843,7 +4887,10 @@ function mergeCharacterUpdate(update, chapterNumber){
   if(update.relationshipWithMain && Object.values(update.relationshipWithMain).some(v=>v)){
     let rel = (c.relationships||[]).find(r=>normalizeName(r.withName).includes("nhan vat chinh"));
     if(!rel){ rel = newRelationship({withName:"Nhân vật chính"}); c.relationships.push(rel); }
-    Object.assign(rel, update.relationshipWithMain);
+    {
+      const _ag=parseAgeNum(c.age||update.age), _minor=(_ag!==null && _ag<18);
+      Object.keys(update.relationshipWithMain).forEach(k=>{ const v=update.relationshipWithMain[k]; if(v==="" || v==null) return; if(_minor && (k==="attraction"||k==="boundaries")) return; rel[k]=v; });
+    }
   }
   // Quan hệ với các nhân vật KHÁC (không chỉ nhân vật chính) — cập nhật theo
   // sự kiện, không reset về trạng thái cũ nếu chương này không nói ngược lại.
@@ -4852,7 +4899,8 @@ function mergeCharacterUpdate(update, chapterNumber){
       if(!ru || !ru.withName) return;
       let rel = c.relationships.find(r=>normalizeName(r.withName)===normalizeName(ru.withName));
       if(!rel){ rel = newRelationship({withName: ru.withName}); c.relationships.push(rel); }
-      Object.keys(ru).forEach(k=>{ if(k!=="withName" && ru[k]!=="" && ru[k]!=null) rel[k]=ru[k]; });
+      const _ag2=parseAgeNum(c.age), _minor2=(_ag2!==null && _ag2<18);
+      Object.keys(ru).forEach(k=>{ if(k!=="withName" && ru[k]!=="" && ru[k]!=null && !(_minor2 && (k==="attraction"||k==="boundaries"))) rel[k]=ru[k]; });
     });
   }
   if(update.chapterEvent) c.history.push({chapter: chapterNumber, event: update.chapterEvent});
@@ -4881,7 +4929,11 @@ const CHAR_JSON_FORMAT_HINT = [
   '  "tier": "background|minor|supporting|important|major",',
   '  "role": "vai trò/phân loại của NV này đối với truyện (vd: đồng minh, phản diện phụ, nạn nhân, người cung cấp thông tin, trung lập...)",',
   '  "relevanceToMC": "mức độ + cách liên quan tới nhân vật chính (vd: liên quan trực tiếp đến vụ X, chỉ quen biết xã giao, đối thủ trong công việc...)",',
-  '  "appearance": "", "personality": "", "occupation": "", "faction": "",',
+  '  "age":"", "gender":"", "position":"", "speech":"", "height":"", "bodyType":"", "hair":"", "eyes":"", "skin":"", "appearance": "", "personality": "", "occupation": "", "faction": "",',
+  '  "speech": "cách nói riêng: giọng điệu, khẩu ngữ, câu cửa miệng, cách xưng hô đặc trưng (chỉ ghi khi chương cho thấy rõ)", "strength": "điểm mạnh/kỹ năng thể hiện trong chương", "voice": "", "scent": "", "style": "phong cách ăn mặc", "scars": "", "tattoos": "", "schedule": "lịch/thói quen nếu chương nêu",',
+  '  "independentPlot": "TUYẾN TRUYỆN RIÊNG của NV này đang diễn ra ngoài tuyến chính (việc họ tự làm/âm mưu/mục tiêu riêng) — chỉ ghi diễn biến MỚI trong chương",',
+  '  "sexualExperience": "", "boundaries": "", "taboos": "", "preferences": "", "attractionToMC": "", "tensionWithMC": "", "consentNotes": "",',
+  '  "_ghi_chu_18": "các trường 18+ ở dòng trên: CHỈ ghi khi chương thể hiện rõ (kinh nghiệm/ranh giới/taboo/sở thích/mức hấp dẫn/đồng thuận của NV trưởng thành); không suy đoán, chương không có thì để trống",',
   '  "goals": "mục tiêu hiện tại của NV (không phải mục tiêu của NVC)",',
   '  "secret": "bí mật NV đang giữ (nếu có, chỉ ghi nếu chương có gợi ý rõ)",',
   '  "weakness": "", "fear": "",',
@@ -4889,15 +4941,17 @@ const CHAR_JSON_FORMAT_HINT = [
   '  "knowledge": "những gì NV này BIẾT/NGHI NGỜ tính đến hết chương này — chỉ ghi điều họ thực sự đã chứng kiến/được kể/suy luận hợp lý, KHÔNG được gán kiến thức của người đọc cho nhân vật",',
   '  "powerLevel": "cấp/cảnh giới hiện tại nếu có bằng chứng", "healthStatus": "tình trạng sức khỏe/vết thương hiện tại", "itemsHeld": "vật phẩm đang giữ",',
   '  "chapterEvent": "1 câu ngắn mô tả sự kiện quan trọng nhất liên quan tới NV này trong chương (để lưu vào lịch sử)",',
-  '  "relationshipWithMain": {"trust":"","affection":"","tension":"","stage":"","notes":""},',
-  '  "relationships": [{"withName": "tên NV khác", "stage": "", "trust": "", "notes": "diễn biến quan hệ MỚI trong chương này, không lặp lại thông tin cũ"}],',
+  '  "relationshipWithMain": {"trust":"","respect":"","affection":"","attraction":"","suspicion":"","tension":"","boundaries":"ranh giới/giới hạn của NV với NVC (chỉ khi chương thể hiện rõ)","stage":"","notes":""},',
+  '  "relationships": [{"withName": "tên NV khác", "stage": "", "trust": "", "respect": "", "affection": "", "attraction": "", "suspicion": "", "tension": "", "boundaries": "", "notes": "diễn biến quan hệ MỚI trong chương này, không lặp lại thông tin cũ"}],',
   '  "isDead": false,',
   '  "explicitCoreChange": false, "changeEvidence": ""',
   '}]',
   '',
   'QUY TẮC BẮT BUỘC:',
-  '- CHỈ với NV ghi [KHÓA HỒ SƠ GỐC]: hồ sơ cốt lõi (name, age, gender, appearance, personality, goals) là dữ liệu gốc của người dùng; không viết giá trị mới cho các trường này trừ khi chương mô tả một thay đổi rõ ràng có bằng chứng trực tiếp.',
+  '- CHỈ với NV ghi [KHÓA HỒ SƠ GỐC]: hồ sơ cốt lõi (name, age, gender, appearance, personality, goals) là dữ liệu gốc của người dùng; không GHI ĐÈ các trường này khi đã có giá trị (trường còn TRỐNG thì được điền nếu chương nêu rõ), trừ khi chương mô tả một thay đổi rõ ràng có bằng chứng trực tiếp.',
+  '- Trường nằm trong mục "CHƯA CÓ" của nhân vật: hãy ĐIỀN nếu chương nêu rõ (ví dụ "nữ thư ký" → gender: nữ, occupation: thư ký; tuổi/chiều cao/tóc/mắt chỉ khi có con số hoặc mô tả trực tiếp). Trường đã có giá trị thì để trống, không ghi đè. Không đoán.',
   '- Với NV ghi [MỞ KHÓA]: BẮT BUỘC bổ sung appearance/personality/goals bằng các chi tiết CỤ THỂ, MỚI xuất hiện trong chương (mỗi trường 30-60 từ, không lặp lại mục "hiện có"); nếu chương không có gì mới thì để trống.',
+  '- Nghề/chức vụ (role, occupation, position, faction) là DỮ LIỆU GỐC: KHÔNG đổi, KHÔNG suy diễn từ cách người khác xưng hô, từ việc nhân vật làm việc với giám đốc/sếp, hay từ cảnh nhân vật ngồi ghế/ở phòng của ai. Chỉ đổi khi chương KỂ RÕ một sự kiện thăng chức/bổ nhiệm/từ chức/đổi nghề đã xảy ra; khi đó đặt explicitCoreChange=true và changeEvidence phải TRÍCH NGUYÊN VĂN câu trong chương cho thấy sự kiện đó. Nếu không có, để trống role/occupation/position/faction.',
   '- Với NV bị KHÓA: không đổi tính cách, ngoại hình, nghề/vị trí hay mục tiêu gốc chỉ vì cách diễn giải của AI khác đi.',
   '- Chỉ dùng explicitCoreChange=true khi có thay đổi cốt lõi xảy ra thật trong truyện và changeEvidence phải nêu bằng chứng cụ thể; nếu không thì KHÔNG đổi hồ sơ gốc.',
   '- Nếu một trường không có thông tin MỚI/thay đổi thật sự trong chương này → để trống ("") hoặc bỏ qua trường đó, ĐỪNG bịa hay đoán để điền cho đủ.',
@@ -4923,6 +4977,10 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
       const cur=["appearance","personality","goals"].map(k=>c[k]?k+": "+String(c[k]).slice(-260):"").filter(Boolean).join(" | ");
       if(cur) line+="\n    hiện có -> "+cur;
     }
+    const missing=["age","gender","role","occupation","appearance","personality","goals"].filter(k=>!String(c[k]||"").trim());
+    if(missing.length) line+="\n    CHƯA CÓ (hãy điền nếu chương nêu rõ) -> "+missing.join(", ");
+    const job=["role","occupation","position","faction"].map(k=>c[k]?k+": "+String(c[k]).slice(0,80):"").filter(Boolean).join(" | ");
+    if(job) line+="\n    nghề/chức vụ GỐC (giữ nguyên) -> "+job;
     return line;
   }).join("\n")||"(chưa có)";
   for(let i=0;i<chunks.length;i++){
@@ -4945,7 +5003,7 @@ async function updateCharactersIncremental(text, chapterNumber, silent){
       }
       if(!Array.isArray(arr)){failed++;continue;}
       if(wasRepair) repaired++;
-      arr.forEach(u=>{const r=mergeCharacterUpdate(u,chapterNumber);if(r&&r.isNewChar)nNew++;else if(r)nUpd++;});
+      arr.forEach(u=>{const r=mergeCharacterUpdate(u,chapterNumber,chunks[i]);if(r&&r.isNewChar)nNew++;else if(r)nUpd++;});
     }catch(err){failed++;}
   }
   state.lastMemorySyncChapter=chapterNumber;
