@@ -660,8 +660,9 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="section-head" data-toggle=""><span>2. Chỉ Đạo</span><span class="chev">▾</span></div>
 <div class="section-body">
 <div class="field"><label>Mệnh lệnh chương tới <span class="hint">(brief bắt buộc — AI phải bám đầy đủ)</span></label><textarea id="directive" rows="3"></textarea></div>
-<div class="field"><label>Kiểu gợi ý chương sau <span class="hint">(áp dụng cho gợi ý tự động và nút bên dưới)</span></label><select id="hintStyle"><option value="normal">Bình thường</option><option value="resist">Có chống cự</option><option value="twist">Đảo chiều / bước ngoặt</option><option value="escalate">Leo thang</option><option value="slow">Chậm lại, đào sâu cảm xúc</option></select><button type="button" id="regenHintBtn" style="margin-top:6px">✨ Tạo lại gợi ý chương sau</button></div>
-<div class="field"><label>Gợi ý chương sau <span class="hint">(AI phải bám các chi tiết bạn ghi; không tự mở tuyến mới · khoảng 400–600 từ)</span></label><textarea id="nextChapterHint" rows="10" placeholder="VD: Chương sau nên hé lộ thân phận của X; chưa cần đưa Y quay lại."></textarea></div>
+<div class="field"><label>Kiểu gợi ý chương sau <span class="hint">(áp dụng cho gợi ý tự động và nút bên dưới)</span></label><select id="hintStyle"><option value="normal">Bình thường</option><option value="resist">Có chống cự</option><option value="twist">Đảo chiều / bước ngoặt</option><option value="escalate">Leo thang</option><option value="slow">Chậm lại, đào sâu cảm xúc</option></select>
+<label style="margin-top:8px">Độ dài & cách viết gợi ý</label><select id="hintFormat"><option value="detail">Chi tiết (400–600 từ)</option><option value="beats">Gọn theo nhịp + điểm kết chương (150–260 từ)</option></select><button type="button" id="regenHintBtn" style="margin-top:6px">✨ Tạo lại gợi ý chương sau</button></div>
+<div class="field"><label>Gợi ý chương sau <span class="hint">(AI phải bám các chi tiết bạn ghi; không tự mở tuyến mới · 400–600 từ, hoặc 150–260 từ nếu chọn kiểu Gọn)</span></label><textarea id="nextChapterHint" rows="10" placeholder="VD: Chương sau nên hé lộ thân phận của X; chưa cần đưa Y quay lại."></textarea></div>
 </div>
 </div><div class="section tone-green settings-only-section" data-column="settings" data-section="">
 <div class="section-head" data-toggle=""><span>2.5. Quy Tắc Nâng Cao</span><span class="chev">▾</span></div>
@@ -1074,7 +1075,7 @@ function extractiveSummary(text){
   return "**Tóm tắt chương:** (trích tự động từ văn bản)\n\n"+out.join("\n\n");
 }
 
-function buildSummaryPrompt(text, n, names){
+function buildSummaryPrompt(text, n, names, adult){
   return [
     "Bạn là bộ máy tóm tắt. Chỉ được dựa vào văn bản trong thẻ <chuong>; không có kiến thức nào khác về truyện này.",
     "<chuong>", text, "</chuong>",
@@ -1082,7 +1083,9 @@ function buildSummaryPrompt(text, n, names){
     "1) Chỉ dùng nhân vật, địa điểm, đồ vật, giờ giấc, lời thoại CÓ trong <chuong>. Không thêm, không suy diễn. Nếu chương không nêu giờ giấc hay chức danh thì KHÔNG ghi.",
     names && names.length ? "2) Tên nhân vật xuất hiện trong chương (chỉ dùng đúng các tên này): "+names.join(", ")+"." : "2) Dùng đúng tên nhân vật như viết trong chương.",
     "3) Định dạng: mở đầu bằng dòng \"**Tóm tắt chương:**\", rồi 1 câu nêu mạch chính, sau đó 4-5 đoạn ngắn theo diễn biến (mỗi đoạn một cảnh/mốc). Không dùng nhãn Đầu/Giữa/Cuối, không gạch đầu dòng, không mô tả tiêu chí tóm tắt.",
-    "4) Với cảnh nhạy cảm (18+/bạo lực/cưỡng ép): thuật lại ngắn gọn, trung lập ai làm gì với ai, câu nói/mệnh lệnh chính và hệ quả — không bỏ cảnh, không thêm chi tiết ngoài văn bản.",
+    adult
+      ? "4) Chương này có cảnh người lớn (18+/khống chế): thuật lại CỤ THỂ, không nói giảm nói tránh — nêu đúng ai làm gì với ai, hành động, đạo cụ, tư thế/vị trí, câu nói/mệnh lệnh chính và hệ quả, dùng đúng từ ngữ mà chương đã dùng; không rút gọn thành 'cảnh nóng/thân mật', không bỏ cảnh, không thêm chi tiết ngoài văn bản, không bình luận đạo đức."
+      : "4) Với cảnh nhạy cảm (18+/bạo lực/cưỡng ép): thuật lại ngắn gọn, trung lập ai làm gì với ai, câu nói/mệnh lệnh chính và hệ quả — không bỏ cảnh, không thêm chi tiết ngoài văn bản.",
     "5) Câu cuối: trạng thái cuối chương theo đúng văn bản.",
     "6) Độ dài 300-400 từ tiếng Việt, tối đa 400. Chỉ trả về bản tóm tắt."
   ].join("\n");
@@ -3479,7 +3482,7 @@ $ID("saveAdvancedRulesBtn").addEventListener("click", ()=>{
 });
 [directiveEl, nextChapterHintEl, difficultyEl, matureToggle, chapterMatureFocusEl].forEach(el=>{
   el.addEventListener("change", ()=>{
-    state.directive = directiveEl.value; state.nextChapterHint = nextChapterHintEl.value; { const hs=$ID("hintStyle"); if(hs) state.hintStyle=hs.value; }
+    state.directive = directiveEl.value; state.nextChapterHint = nextChapterHintEl.value; { const hs=$ID("hintStyle"); if(hs) state.hintStyle=hs.value; const hf=$ID("hintFormat"); if(hf) state.hintFormat=hf.value; }
     state.difficulty = difficultyEl.value;
     state.mature = matureToggle.checked;
     state.chapterMatureFocus = normalizeChapterMatureFocus(chapterMatureFocusEl.value);
@@ -5033,18 +5036,25 @@ function fullStoryTextCompressed(){
 /* ========== SUMMARY ========== */
 /* V12.10: chống tóm tắt bịa — kiểm tra tên/từ trong bản tóm tắt có thật trong chương không. */
 
+function adultModelFor(text){
+  // V12.15: tóm tắt/gợi ý chương 18+ dùng model 18+ (model chính hay nói giảm nói tránh)
+  if(!state.mature || (state.nsfwMode || "auto") === "never" || !state.modelNsfw) return undefined;
+  if(!matureFocusAllowsRouting()) return undefined;
+  return textHasNsfwKeyword(String(text || "").slice(-6000)) ? state.modelNsfw : undefined;
+}
 async function generateChapterSummary(text, chapterNumber, silent){
   if(!text) return "";
   const names = summaryNameList(text, state.characters);
-  const prompt = buildSummaryPrompt(text, chapterNumber, names);
+  const _mo = adultModelFor(text);
+  const prompt = buildSummaryPrompt(text, chapterNumber, names, !!_mo);
   const looksMeta = s => !/\*\*Tóm tắt chương:?\*\*/i.test(s) || /^(Ngắn gọn|Súc tích|Đủ chi tiết|Cấu trúc rõ|Trung lập)\s*[:：]/im.test(s);
   try{
-    let { text: summary } = await callAI(prompt, {maxTokens:1400, temperature:0.2});
+    let { text: summary } = await callAI(prompt, {maxTokens:1400, temperature:0.2, modelOverride:_mo});
     summary = (summary||"").trim();
     let g = summaryGrounded(summary, text);
     if(looksMeta(summary) || !g.ok){
       try{
-        const retry = await callAI(prompt + summaryRetryNote(g), {maxTokens:1400, temperature:0.1});
+        const retry = await callAI(prompt + summaryRetryNote(g), {maxTokens:1400, temperature:0.1, modelOverride:_mo});
         if(retry.text && retry.text.trim()) summary = retry.text.trim();
       }catch(_){}
     }
@@ -5052,7 +5062,7 @@ async function generateChapterSummary(text, chapterNumber, silent){
     if(wc(summary) > 450){
       try{
         const rc = "Rút gọn bản tóm tắt sau xuống 300-400 từ tiếng Việt. Giữ dòng mở đầu \"**Tóm tắt chương:**\", giữ trình tự thời gian, tên đầy đủ; bỏ chi tiết phụ; không thêm gì mới. Chỉ trả về bản đã rút gọn.\n\n" + summary;
-        const r3 = await callAI(rc, {maxTokens:1400, temperature:0.15});
+        const r3 = await callAI(rc, {maxTokens:1400, temperature:0.15, modelOverride:_mo});
         if(r3.text && r3.text.trim() && wc(r3.text) < wc(summary)) summary = r3.text.trim();
       }catch(_){}
       if(wc(summary) > 450){
@@ -5087,9 +5097,14 @@ async function generateNextChapterHint(text, summary, chapterNumber){
     .map(f=>"- "+f.description).join("\n");
   const names = (state.characters||[]).filter(c=>!c.dead).slice(0,40).map(c=>c.name).filter(Boolean).join(", ");
   const styleKey = state.hintStyle || "normal";
+  const _mo = adultModelFor(text + "\n" + (summary || ""));
+  const beats = (state.hintFormat || "detail") === "beats";
+  const hLo = beats ? 150 : 400, hHi = beats ? 260 : 600;
   const prompt = [
     "Bạn vừa đọc xong CHƯƠNG " + chapterNumber + " của một truyện dài kỳ. Hãy viết GỢI Ý CHI TIẾT cho CHƯƠNG " + (chapterNumber+1) + ".",
-    "ĐỊNH DẠNG: mở đầu bằng dòng \"**Gợi ý ngắn Chương " + (chapterNumber+1) + ":**\", sau đó 4-6 đoạn ngắn, mỗi đoạn là một cảnh/nhịp truyện theo thứ tự: (1) mở chương — nối TRỰC TIẾP từ đoạn kết chương trước, (2) cảnh chính, (3) cảnh phát triển/căng thẳng, (4) cú chốt cuối chương.",
+    beats
+      ? ("ĐỊNH DẠNG GỌN THEO NHỊP: mở đầu bằng dòng \"**Gợi ý ngắn Chương " + (chapterNumber+1) + ":**\", sau đó 1–3 đoạn ngắn kể lần lượt các nhịp chính theo đúng thứ tự diễn ra, mỗi nhịp 1–2 câu (ai làm gì, ở đâu, với đạo cụ/thiết lập nào, hệ quả), giữ nhịp độ liền mạch. Câu cuối là dòng riêng bắt đầu bằng \"→ Kết chương ở:\" nêu rõ khoảnh khắc chương dừng lại. Không liệt kê gạch đầu dòng, không bình luận.")
+      : ("ĐỊNH DẠNG: mở đầu bằng dòng \"**Gợi ý ngắn Chương " + (chapterNumber+1) + ":**\", sau đó 4-6 đoạn ngắn, mỗi đoạn là một cảnh/nhịp truyện theo thứ tự: (1) mở chương — nối TRỰC TIẾP từ đoạn kết chương trước, (2) cảnh chính, (3) cảnh phát triển/căng thẳng, (4) cú chốt cuối chương."),
     "Mỗi đoạn phải dùng TÊN NHÂN VẬT cụ thể, nêu rõ hành động, địa điểm, giờ giấc nếu có, xung đột, cảm xúc và hệ quả — KHÔNG nói chung chung. Các mốc đã hẹn trong chương trước (giờ họp, lệnh, hạn chót) phải được xử lý.",
     "THỨ TỰ ƯU TIÊN TUYỆT ĐỐI: (1) mạch truyện chính đang diễn ra và đoạn kết chương vừa viết, (2) yêu cầu/mệnh lệnh người dùng, (3) nhân vật chính và quan hệ trung tâm, (4) nếu đang có tuyến trưởng thành/18+ là trọng tâm thì phải tiếp tục đúng tuyến đó và tập trung vào diễn biến trực tiếp của tuyến chính, (5) hậu quả trực tiếp của chương vừa viết, (6) chỉ dùng THREADS/FORESHADOWING nếu chúng liên quan trực tiếp đến 5 mục trên.",
     "KHÔNG ĐƯỢC biến GỢI Ý CHƯƠNG SAU thành kế hoạch mở rộng thế giới hoặc mở nhiều tuyến phụ. Không mở tuyến truyện mới, không tự tạo mục tiêu mới, không đưa thêm nhân vật quan trọng, địa điểm lớn hoặc bí mật mới chỉ để làm truyện phong phú hơn.",
@@ -5097,6 +5112,7 @@ async function generateNextChapterHint(text, summary, chapterNumber){
     "Nếu chương vừa viết đang tập trung vào một quan hệ/tuyến chính cụ thể, chương sau phải tiếp tục hoặc xử lý hậu quả của chính tuyến đó trước; KHÔNG chuyển trọng tâm sang tuyến phụ chỉ vì thread đó đang mở.",
     "Nếu truyện đang bật 18+ nhưng chương vừa viết không có tuyến trưởng thành là trọng tâm, không được tự ép thêm tuyến trưởng thành mới. Ngược lại, nếu mạch chính hiện tại đã đặt tuyến trưởng thành làm trọng tâm, phải ưu tiên tiếp nối mạch đó thay vì mở tuyến khác.",
     "Bám sát giọng điệu, thể loại, cách xưng hô và dữ kiện của chính truyện; không mâu thuẫn dữ kiện đã có.",
+    _mo ? "ĐỘ TRỰC DIỆN (truyện 18+): mạch chính đang có cảnh người lớn/khống chế nên hãy mô tả các nhịp đó THẲNG và CỤ THỂ đúng như cách chương vừa viết đã làm — nêu rõ hành động, đạo cụ, tư thế/vị trí và diễn biến bằng đúng từ ngữ của truyện. KHÔNG nói giảm nói tránh, không lược bỏ, không thay bằng cụm chung chung như \"cảnh nóng\"/\"cảnh thân mật\", không nhắc nhở hay bình luận đạo đức. Mọi nhân vật liên quan đều là người trưởng thành." : "",
     "HƯỚNG CHƯƠNG SAU: " + (HINT_STYLES[styleKey] || HINT_STYLES.normal),
     names ? ("NHÂN VẬT (dùng đúng tên): " + names) : "",
     "", "TÓM TẮT CHƯƠNG VỪA VIẾT:", summary || text.slice(-2000),
@@ -5106,12 +5122,12 @@ async function generateNextChapterHint(text, summary, chapterNumber){
     "\nNGÔN NGỮ ĐẦU RA BẮT BUỘC: 100% tiếng Việt có dấu.",
     "KHÔNG viết phân tích, không viết quá trình suy luận, không dùng tiếng Anh để giải thích yêu cầu.",
     "KHÔNG được bắt đầu bằng các cụm như \"For Chapter\", \"Let me start\", \"based on\", \"Requirements\" hoặc bất kỳ phần phân tích nào.",
-    "ĐỘ DÀI BẮT BUỘC: khoảng 400–600 từ, không được vượt quá 600 từ. Nếu nội dung có thể nói ngắn hơn thì vẫn phải đủ chi tiết trong khoảng này.",
+    "ĐỘ DÀI BẮT BUỘC: khoảng " + hLo + "–" + hHi + " từ, không được vượt quá " + hHi + " từ." + (beats ? " Viết cô đọng, không lan man." : " Nếu nội dung có thể nói ngắn hơn thì vẫn phải đủ chi tiết trong khoảng này."),
     "Chỉ trả về NỘI DUNG CUỐI CÙNG của gợi ý chương theo đúng định dạng đã yêu cầu."
   ].filter(x=>x!=="" && x!=null).join("\n");
   try{
     // Aion 3.5 Mini là model reasoning: dành đủ ngân sách cho reasoning nhưng khóa FINAL ở khoảng 400–600 từ.
-    const { text: hint } = await callAI(prompt, {maxTokens:2800, temperature:0.55});
+    const { text: hint } = await callAI(prompt, {maxTokens:2800, temperature:0.55, modelOverride:_mo});
     let out = hint.trim();
     if(!out) return "";
     // Nếu final content vẫn lẫn tiếng Anh, yêu cầu model viết lại phần FINAL bằng tiếng Việt.
@@ -5124,35 +5140,35 @@ async function generateNextChapterHint(text, summary, chapterNumber){
         "\nNỘI DUNG CẦN SỬA:\n" + out
       ].join("\n");
       try{
-        const fixed = await callAI(fixPrompt + "\n\nĐỘ DÀI: giữ trong khoảng 400–600 từ, tuyệt đối không vượt 600 từ.", {maxTokens:2400, temperature:0.25});
+        const fixed = await callAI(fixPrompt + "\n\nĐỘ DÀI: giữ trong khoảng " + hLo + "–" + hHi + " từ, tuyệt đối không vượt " + hHi + " từ." + (beats ? " Giữ dòng cuối bắt đầu bằng \"→ Kết chương ở:\"." : ""), {maxTokens:2400, temperature:0.25, modelOverride:_mo});
         if(fixed && !detectNonVietnamese(fixed)) out = fixed.trim();
       }catch(_){}
     }
 
-    // Giữ gợi ý ở quy mô vừa phải: 400–600 từ. Nếu model trả quá dài, yêu cầu nén lại.
+    // Giữ gợi ý ở quy mô vừa phải (theo kiểu đã chọn). Nếu model trả quá dài, yêu cầu nén lại.
     const countHintWords = (value)=>String(value||"").trim().split(/\s+/).filter(Boolean).length;
     let hintWords = countHintWords(out);
-    if(hintWords > 600){
+    if(hintWords > hHi){
       const compactPrompt = [
         "RÚT GỌN GỢI Ý CHƯƠNG DƯỚI ĐÂY.",
         "Giữ nguyên nhân vật, sự kiện, địa điểm, trình tự, xung đột và cú chốt.",
         "Không bỏ các chi tiết quan trọng; chỉ loại bỏ diễn giải, lặp ý và câu thừa.",
-        "Giữ đúng định dạng **Gợi ý ngắn Chương ...:** và 4–6 đoạn cảnh.",
-        "ĐỘ DÀI BẮT BUỘC: 400–600 từ, tuyệt đối không vượt 600 từ.",
+        beats ? "Giữ đúng định dạng **Gợi ý ngắn Chương ...:**, các đoạn kể nhịp và dòng cuối \"→ Kết chương ở: ...\"." : "Giữ đúng định dạng **Gợi ý ngắn Chương ...:** và 4–6 đoạn cảnh.",
+        "ĐỘ DÀI BẮT BUỘC: " + hLo + "–" + hHi + " từ, tuyệt đối không vượt " + hHi + " từ.",
         "CHỈ TRẢ BẢN GỢI Ý CUỐI CÙNG, 100% tiếng Việt có dấu.",
         "\nGỢI Ý CẦN RÚT GỌN:\n" + out
       ].join("\n");
       try{
-        const compact = await callAI(compactPrompt, {maxTokens:2200, temperature:0.2});
+        const compact = await callAI(compactPrompt, {maxTokens:2200, temperature:0.2, modelOverride:_mo});
         if(compact && !detectNonVietnamese(compact)) out = compact.trim();
       }catch(_){}
       hintWords = countHintWords(out);
     }
 
     // Hard cap cuối cùng để không bao giờ lưu một gợi ý quá dài vào state.
-    if(hintWords > 600){
+    if(hintWords > hHi){
       const words = out.split(/\s+/).filter(Boolean);
-      let clipped = words.slice(0,600).join(" ");
+      let clipped = words.slice(0,hHi).join(" ");
       const lastStop = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("!"), clipped.lastIndexOf("?"));
       if(lastStop > Math.floor(clipped.length*0.80)) clipped = clipped.slice(0,lastStop+1);
       out = clipped.trim();
@@ -5175,7 +5191,7 @@ $ID("regenSummaryBtn").addEventListener("click", async ()=>{
 $ID("regenHintBtn").addEventListener("click", async ()=>{
   const idx = state.chapters.length-1;
   if(idx < 0){ setStatus("Chưa có chương.", false); return; }
-  const hs=$ID("hintStyle"); if(hs) state.hintStyle=hs.value;
+  const hs=$ID("hintStyle"); if(hs) state.hintStyle=hs.value; const hf=$ID("hintFormat"); if(hf) state.hintFormat=hf.value;
   setStatus("Đang tạo gợi ý chương sau...", true);
   try{
     const ch = state.chapters[idx];
@@ -7009,7 +7025,7 @@ function hydrateFormFromState(){
   storyBibleLockEl.checked = !!state.storyBibleLocked;
   storyClockEl.value = state.storyClock || "";
   directiveEl.value = state.directive || "";
-  nextChapterHintEl.value = state.nextChapterHint || ""; { const hs=$ID("hintStyle"); if(hs) hs.value = state.hintStyle || "normal"; }
+  nextChapterHintEl.value = state.nextChapterHint || ""; { const hs=$ID("hintStyle"); if(hs) hs.value = state.hintStyle || "normal"; const hf=$ID("hintFormat"); if(hf) hf.value = state.hintFormat || "detail"; }
   advancedRulesEl.value = state.advancedRules || DEFAULT_ADVANCED_RULES;
   difficultyEl.value = state.difficulty || "vua";
   matureToggle.checked = !!state.mature;
@@ -7278,7 +7294,7 @@ async function startBackgroundWrite(){
   const bgFocus = normalizeChapterMatureFocus(state.chapterMatureFocus);
   const bgForceNsfw = bgFocus !== "none" && ((state.nsfwMode === "always") ||
     (state.nsfwMode === "mature_only" && state.mature === true) || bgFocus === "primary");
-  const payload={hintStyle:state.hintStyle||"normal",storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:bgForceNsfw};
+  const payload={hintStyle:state.hintStyle||"normal",hintFormat:state.hintFormat||"detail",storyState:storyBlob,apiKey:key,apiEndpoint:state.apiEndpoint||apiEndpointInput.value.trim(),model:state.model||"deepseek/deepseek-v3.2",modelNsfw:state.modelNsfw||"aion-labs/aion-2.0",forceNsfw:bgForceNsfw};
   setBgStatus("☁ Đang tạo job an toàn trên server...",true); $ID("bgWriteBtn").disabled=true;
   try{
     const _pc=getAppPasscode(); const _hd={"Content-Type":"application/json"}; if(_pc)_hd["X-App-Passcode"]=_pc;
