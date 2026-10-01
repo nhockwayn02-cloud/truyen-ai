@@ -309,6 +309,14 @@ const _VN_SFX_RUN = /(.)\1{2,}/i;                                   // aaaa, ahh
 const _VN_SFX_LAUGH = /^[aeiou]?([hk][aeiou])\1+h?$/i;               // hahaha, hihi, hehe, huhuhu, kekeke, ahaha
 const _VN_SFX_WORD = /^(?:h+m+|sh+|ps+t+|ts+k+|gr+|zz+z*|uh+m*|ah+|oh+|eh+)$/i;
 function _isSoundEffect(low) { return _VN_SFX_RUN.test(low) || _VN_SFX_LAUGH.test(low) || _VN_SFX_WORD.test(low); }
+// V12.19: bằng chứng đổi hồ sơ (thăng chức...) phải TRÍCH từ chính chương: >=70% từ của bằng chứng có trong văn bản nguồn.
+function evidenceInText(evidence, text) {
+  const ev = _normWords(String(evidence || "")).filter(w => w.length >= 2);
+  if (ev.length < 3) return false;
+  const have = new Set(_normWords(String(text || "")));
+  let hit = 0; ev.forEach(w => { if (have.has(w)) hit++; });
+  return hit / ev.length >= 0.7;
+}
 // Liệt kê từ Latinh lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo.
 function findStrayWords(text, allowNames) {
   const out = []; const seen = new Set();
@@ -1504,6 +1512,10 @@ function compactCharacterList(state) {
       const cur = ["appearance","personality","goals"].map(k => c[k] ? `${k}: ${String(c[k]).slice(-260)}` : "").filter(Boolean).join(" | ");
       if (cur) line += `\n    hiện có -> ${cur}`;
     }
+    const missingF = ["age","gender","role","occupation","appearance","personality","goals"].filter(k => !String(c[k] || "").trim());
+    if (missingF.length) line += `\n    CHƯA CÓ (hãy điền nếu chương nêu rõ) -> ${missingF.join(", ")}`;
+    const jobInfo = ["role","occupation","position","faction"].map(k => c[k] ? `${k}: ${String(c[k]).slice(0, 80)}` : "").filter(Boolean).join(" | ");
+    if (jobInfo) line += `\n    nghề/chức vụ GỐC (giữ nguyên) -> ${jobInfo}`;
     return line;
   }).join("\n") || "(chưa có)";
 }
@@ -1523,7 +1535,21 @@ function mergeTextField(oldValue, newValue, max = 2500) {
   return parts.join("; ").slice(-max);
 }
 
-function mergeCharacter(state, u, chapterNumber) {
+/* V12.19: các trường trước đây hiển thị trong UI nhưng AI không bao giờ cập nhật. */
+const CHAR_EXTRA_ACCUM = ["independentPlot","strength","speech","sexualExperience","boundaries","taboos","preferences","attractionToMC","tensionWithMC","consentNotes"];
+const CHAR_ADULT_ONLY = ["sexualExperience","boundaries","taboos","preferences","attractionToMC","tensionWithMC","consentNotes"];
+const CHAR_STABLE_FILL = ["voice","scent","style","scars","tattoos"];
+function applyCharExtras(c, u) {
+  const age = parseAgeNum(c.age || u.age);
+  CHAR_EXTRA_ACCUM.forEach(k => {
+    if (!u[k] || !String(u[k]).trim()) return;
+    if (CHAR_ADULT_ONLY.includes(k) && age !== null && age < 18) return; // khớp rào chắn tuổi
+    c[k] = mergeTextField(c[k], u[k]);
+  });
+  CHAR_STABLE_FILL.forEach(k => { if (u[k] && !String(c[k] || "").trim()) c[k] = u[k]; });
+  if (u.schedule && String(u.schedule).trim()) c.schedule = u.schedule;
+}
+function mergeCharacter(state, u, chapterNumber, sourceText) {
   if (!u?.name) return { created: false, updated: false };
   const name = String(u.name).trim();
   if (!name) return { created: false, updated: false };
@@ -1534,15 +1560,16 @@ function mergeCharacter(state, u, chapterNumber) {
   let created = false;
   if (!c) {
     c = {
-      id: genId("c"), name, tier: u.tier || "supporting", role: u.role || "", relevanceToMC: u.relevanceToMC || "",
+      id: genId("c"), name, tier: u.tier || "supporting", age: u.age || "", gender: u.gender || "", position: u.position || "", speech: u.speech || "", height: u.height || "", bodyType: u.bodyType || "", hair: u.hair || "", eyes: u.eyes || "", skin: u.skin || "", role: u.role || "", relevanceToMC: u.relevanceToMC || "",
       appearance: u.appearance || "", personality: u.personality || "", occupation: u.occupation || "", faction: u.faction || "",
       goals: u.goals || "", secret: u.secret || "", weakness: u.weakness || "", fear: u.fear || "", knowledge: u.knowledge || "",
-      currentLocation: u.currentLocation || "", physicalState: u.physicalState || "", mentalState: u.mentalState || "", independentPlot: "",
+      currentLocation: u.currentLocation || "", physicalState: u.physicalState || "", mentalState: u.mentalState || "", independentPlot: u.independentPlot || "", strength: u.strength || "", voice: u.voice || "", scent: u.scent || "", style: u.style || "", scars: u.scars || "", tattoos: u.tattoos || "", schedule: u.schedule || "",
       relationships: [], firstAppearance: chapterNumber, lastAppearance: chapterNumber, locked: false, dead: !!u.isDead,
       deathChapter: u.isDead ? chapterNumber : null, history: []
     };
     if (!Array.isArray(state.characters)) state.characters = [];
     state.characters.push(c); created = true;
+    applyCharExtras(c, u);
   } else {
     const coreLocked = c.coreLocked !== false;
     const coreFields = ["name","age","gender","appearance","personality","goals","role","position","occupation","faction"];
@@ -1551,19 +1578,54 @@ function mergeCharacter(state, u, chapterNumber) {
     if(coreLocked){
       coreFields.forEach(k=>{ if(c.coreIdentity[k] === undefined) c.coreIdentity[k] = c[k] || ""; });
     }
-    accum.forEach(k => { if (u[k] && (!coreLocked || !coreFields.includes(k))) { c[k] = mergeTextField(c[k], u[k]); if (!coreLocked && coreFields.includes(k)) c.coreIdentity[k] = c[k]; } });
-    ["role","relevanceToMC","occupation","faction"].forEach(k => { if (u[k] && (!coreLocked || !coreFields.includes(k))) c[k] = u[k]; });
+    /* V12.19: khóa hồ sơ gốc chỉ chặn GHI ĐÈ giá trị đã có; trường còn trống vẫn được điền. */
+    accum.forEach(k => {
+      if (!u[k]) return;
+      const emptyNow = !String(c[k] || "").trim();
+      if (coreLocked && coreFields.includes(k) && !emptyNow) return;
+      c[k] = mergeTextField(c[k], u[k]);
+      if (coreFields.includes(k) && (!coreLocked || emptyNow)) c.coreIdentity[k] = c[k];
+    });
+    ["age","gender","position","speech","height","bodyType","hair","eyes","skin"].forEach(k => {
+      if (u[k] && !String(c[k] || "").trim()) { c[k] = u[k]; if (coreFields.includes(k)) c.coreIdentity[k] = c[k]; }
+    });
+    /* V12.19: nghề/chức vụ đã có chỉ đổi khi có sự kiện + bằng chứng trích đúng từ chương (kể cả NV đã mở khóa). */
+    const explicitJobChange = u.explicitCoreChange === true && String(u.changeEvidence || "").trim().length >= 12 && (sourceText == null || evidenceInText(u.changeEvidence, sourceText));
+    ["role","relevanceToMC","occupation","faction"].forEach(k => {
+      if (!u[k]) return;
+      const emptyNow = !String(c[k] || "").trim();
+      if (coreLocked && coreFields.includes(k) && !explicitJobChange && !emptyNow) return;
+      if (k !== "relevanceToMC" && !emptyNow && normalizeName(c[k]) !== normalizeName(u[k]) && !explicitJobChange) return;
+      c[k] = u[k];
+      if (coreFields.includes(k) && (emptyNow || explicitJobChange)) c.coreIdentity[k] = c[k];
+    });
     ["currentLocation","physicalState","mentalState"].forEach(k => { if (u[k]) c[k] = u[k]; });
+    applyCharExtras(c, u);
     if (u.tier && !c.locked) c.tier = u.tier;
     if (u.isDead === true && !c.dead) { c.dead = true; c.deathChapter = chapterNumber; }
     c.lastAppearance = chapterNumber;
   }
   if (!Array.isArray(c.relationships)) c.relationships = [];
+  const _agR = parseAgeNum(c.age || u.age), minorAge = _agR !== null && _agR < 18;
+  /* V12.19: quan hệ với nhân vật chính (bản chạy nền trước đây bỏ sót hoàn toàn). */
+  if (u.relationshipWithMain && typeof u.relationshipWithMain === "object" && Object.values(u.relationshipWithMain).some(v => v)) {
+    let rm = c.relationships.find(x => normalizeName(x.withName).includes("nhan vat chinh"));
+    if (!rm) { rm = { withName: "Nhân vật chính", stage: "", trust: "", notes: "", history: [] }; c.relationships.push(rm); }
+    Object.keys(u.relationshipWithMain).forEach(k => {
+      const v = u.relationshipWithMain[k]; if (!v) return;
+      if ((k === "attraction" || k === "boundaries") && minorAge) return;
+      rm[k] = v;
+    });
+  }
   (Array.isArray(u.relationships) ? u.relationships : []).forEach(r => {
     if (!r?.withName) return;
     let rel = c.relationships.find(x => normalizeName(x.withName) === normalizeName(r.withName));
     if (!rel) { rel = { withName: r.withName, stage: "", trust: "", notes: "", history: [] }; c.relationships.push(rel); }
-    ["stage","trust","notes"].forEach(k => { if (r[k]) rel[k] = r[k]; });
+    ["stage","trust","respect","affection","attraction","suspicion","tension","boundaries","notes"].forEach(k => {
+      if (!r[k]) return;
+      if ((k === "attraction" || k === "boundaries") && minorAge) return; // khớp rào chắn tuổi
+      rel[k] = r[k];
+    });
     if (r.notes) { if (!Array.isArray(rel.history)) rel.history = []; rel.history.push({ chapter: chapterNumber, change: r.notes }); }
   });
   if (u.chapterEvent) { if (!Array.isArray(c.history)) c.history = []; c.history.push({ chapter: chapterNumber, event: u.chapterEvent }); }
@@ -1592,10 +1654,12 @@ async function updateCharacters(job, chapter, n, state) {
       `CẬP NHẬT NHÂN VẬT — CHƯƠNG ${n}, PHẦN ${i + 1}/${chunks.length}.`,
       "Chỉ liệt kê nhân vật thực sự xuất hiện hoặc được nhắc tới có ý nghĩa trong PHẦN này. Không bịa.",
       (state.mainCharProfile && state.mainCharProfile.name) ? `Nhân vật chính tên là "${state.mainCharProfile.name}" — khi ghi nhân vật chính PHẢI dùng đúng tên này; KHÔNG tạo mục tên "nhân vật chính".` : "",
-      "Tối đa 12 nhân vật; mỗi trường mô tả (appearance/personality/goals/knowledge) khoảng 30-60 từ, cụ thể (đặc điểm, hành vi, chi tiết mới lộ ra trong phần này); chỉ ghi điểm MỚI so với mục \"hiện có\", không lặp lại hồ sơ cũ; NV đang [KHÓA HỒ SƠ GỐC] thì để trống appearance/personality/goals. Không dùng dấu \" bên trong giá trị chuỗi. Chỉ trả về JSON array.",
+      "Tối đa 12 nhân vật; mỗi trường mô tả (appearance/personality/goals/knowledge) khoảng 30-60 từ, cụ thể (đặc điểm, hành vi, chi tiết mới lộ ra trong phần này); chỉ ghi điểm MỚI so với mục \"hiện có\", không lặp lại hồ sơ cũ; NV đang [KHÓA HỒ SƠ GỐC] thì để trống các trường ĐÃ CÓ giá trị (appearance/personality/goals...), nhưng trường nằm trong mục CHƯA CÓ thì phải điền nếu chương nêu rõ. Trường nằm trong mục \"CHƯA CÓ\" của nhân vật: hãy ĐIỀN nếu chương nêu rõ (ví dụ \"nữ thư ký\" → gender: nữ, occupation: thư ký; tuổi/chiều cao/tóc/mắt chỉ khi có con số hoặc mô tả trực tiếp). Trường đã có giá trị thì để trống, không ghi đè. Không đoán. Không dùng dấu \" bên trong giá trị chuỗi. Chỉ trả về JSON array.",
+      "Nghề/chức vụ (role, occupation, position, faction) là DỮ LIỆU GỐC: KHÔNG đổi, KHÔNG suy diễn từ cách người khác xưng hô, từ việc nhân vật làm việc với giám đốc/sếp, hay từ cảnh nhân vật ngồi ghế/ở phòng của ai. Chỉ đổi khi chương KỂ RÕ một sự kiện thăng chức/bổ nhiệm/từ chức/đổi nghề đã xảy ra; khi đó đặt explicitCoreChange=true và changeEvidence phải TRÍCH NGUYÊN VĂN câu trong chương cho thấy sự kiện đó. Nếu không có, để trống role/occupation/position/faction.",
+      "Giải thích thêm: speech = cách nói riêng (giọng, khẩu ngữ, câu cửa miệng); strength = điểm mạnh/kỹ năng thể hiện trong chương; independentPlot = TUYẾN TRUYỆN RIÊNG của NV (việc họ tự làm/âm mưu ngoài tuyến chính, chỉ ghi diễn biến MỚI); các trường 18+ (sexualExperience, boundaries, taboos, preferences, attractionToMC, tensionWithMC, consentNotes) CHỈ ghi khi chương thể hiện rõ về NV trưởng thành, nếu không thì để trống.",
       "Danh sách tên đã biết:", compactCharacterList(state),
       "NỘI DUNG PHẦN:", chunks[i],
-      'JSON: [{"name":"","tier":"background|minor|supporting|important|major","role":"","relevanceToMC":"","appearance":"","personality":"","occupation":"","faction":"","goals":"","secret":"","weakness":"","fear":"","knowledge":"","currentLocation":"","physicalState":"","mentalState":"","chapterEvent":"","relationships":[{"withName":"","stage":"","trust":"","notes":""}],"isDead":false}]'
+      'JSON: [{"name":"","tier":"background|minor|supporting|important|major","age":"","gender":"","position":"","speech":"","height":"","bodyType":"","hair":"","eyes":"","skin":"","role":"","relevanceToMC":"","voice":"","scent":"","style":"","scars":"","tattoos":"","schedule":"","strength":"","independentPlot":"","sexualExperience":"","boundaries":"","taboos":"","preferences":"","attractionToMC":"","tensionWithMC":"","consentNotes":"","appearance":"","personality":"","occupation":"","faction":"","goals":"","secret":"","weakness":"","fear":"","knowledge":"","currentLocation":"","physicalState":"","mentalState":"","chapterEvent":"","relationshipWithMain":{"trust":"","respect":"","affection":"","attraction":"","suspicion":"","tension":"","boundaries":"","stage":"","notes":""},"relationships":[{"withName":"","stage":"","trust":"","respect":"","affection":"","attraction":"","suspicion":"","tension":"","boundaries":"","notes":""}],"isDead":false,"explicitCoreChange":false,"changeEvidence":""}]'
     ].join("\n\n");
     try {
       const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: job.model, messages: [{ role: "system", content: "Bạn là bộ máy trích xuất dữ liệu nhân vật. Không được viết văn xuôi. Chỉ trả JSON hợp lệ." }, { role: "user", content: prompt }], maxTokens: 11500, temperature: 0.15 }, 2);
@@ -1607,7 +1671,7 @@ async function updateCharacters(job, chapter, n, state) {
       }
       let created = 0, upd = 0, merr = 0;
       parsed.items.forEach(u => {
-        try { const x = mergeCharacter(state, u, n); if (x.created) created++; else if (x.updated) upd++; }
+        try { const x = mergeCharacter(state, u, n, chunks[i]); if (x.created) created++; else if (x.updated) upd++; }
         catch (e) { merr++; }
       });
       res.nNew += created; res.nUpdated += upd; res.dropped += (parsed.dropped || 0) + merr;
