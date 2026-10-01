@@ -304,7 +304,7 @@ function dropRestartedContinuation(baseText, contText) {
   }
   return paras.slice(0, cut).join("\n\n");
 }
-const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker","vest","blazer","jacket","cardigan","sandal","jeans","shorts","bikini","lingerie","corset","sofa","mascara","vecni","lipstick","gloss","lotion","serum","shampoo","parfum","spa","massage","gym","yoga","pilates","sandwich","burger","pizza","coffee","latte","cappuccino","cocktail","whisky","vodka","chanel","dior","gucci","prada","hermes","versace","nike","adidas","lelo","durex","kindle","netflix","spotify","messenger","instagram","iphone","android","samsung","café","cafe","bar","pub","resort","menu","blouse","boxer","ballet","salon","shop","box","stylist","designer","leader","model","manager","outfit","style","cocktail"]);
+const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker","vest","blazer","jacket","cardigan","sandal","jeans","shorts","bikini","lingerie","corset","sofa","mascara","vecni","lipstick","gloss","lotion","serum","shampoo","parfum","spa","massage","gym","yoga","pilates","sandwich","burger","pizza","coffee","latte","cappuccino","cocktail","whisky","vodka","chanel","dior","gucci","prada","hermes","versace","nike","adidas","lelo","durex","kindle","netflix","spotify","messenger","instagram","iphone","android","samsung","alô","alo","hello","okay","bye","café","cafe","bar","pub","resort","menu","blouse","boxer","ballet","salon","shop","box","stylist","designer","leader","model","manager","outfit","style","cocktail"]);
 const _VN_SYL = /^(ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdghklmnpqrstvx])?[aeiouy]{1,3}(ng|nh|ch|[cmnpt])?$/;
 // V12.19: tiếng cười/hét/thở/tượng thanh viết bằng chữ không dấu (Aaaa, hahaha, hihi, hmmm, shhh...) KHÔNG phải từ lạ.
 const _VN_SFX_RUN = /(.)\1{2,}/i;                                   // aaaa, ahhh, hmmm, shhh, ooooh
@@ -1406,6 +1406,48 @@ async function fixStrayWordsWithAI(job, text, allowNames, model, isNsfw) {
   return res;
 }
 
+
+/* V12.20 — Mở rộng chương ngắn TẠI CHỖ: viết lại bản đầy đủ dài hơn, giữ nguyên sự kiện/thứ tự/cú chốt, chỉ làm dày miêu tả - nội tâm - thoại.
+   Chỉ nhận kết quả nếu dài hơn rõ rệt, không vượt giới hạn và đoạn kết vẫn là đoạn kết cũ (không bịa thêm cảnh sau cú chốt). */
+async function expandChapterInPlace(job, text, o) {
+  const cur = countWords(text);
+  if (writeTimeLeft(o.isNsfw) < 150000) return { ok: false, reason: "hết thời gian job" };
+  const goal = Math.min(o.maxWords - 100, o.minWords);
+  const st = o.state || {};
+  const prompt = [
+    `MỞ RỘNG CHƯƠNG. Bản hiện tại có ${cur} từ; cần bản đầy đủ khoảng ${goal} từ (tuyệt đối không vượt ${o.maxWords} từ).`,
+    "Viết lại TOÀN BỘ chương thành bản dài hơn, theo đúng quy tắc:",
+    "1) GIỮ NGUYÊN mọi sự kiện, thứ tự sự kiện, nhân vật, địa điểm, lời thoại quan trọng và đặc biệt là ĐOẠN KẾT (cú chốt): chương vẫn kết thúc đúng ở điểm đó.",
+    "2) Làm dài bằng cách ĐÀO SÂU: miêu tả không gian/ánh sáng/âm thanh/mùi/xúc giác, ngôn ngữ cơ thể và ánh mắt, nội tâm và suy nghĩ của nhân vật, nhịp thoại (ngập ngừng, im lặng, phản ứng nhỏ), chi tiết vật dụng, khoảnh khắc chuyển tiếp giữa các hành động.",
+    "3) CẤM: thêm sự kiện/biến cố/nhân vật/manh mối mới, thêm cảnh mới, viết gì sau cú chốt, tóm tắt, lặp ý cho đủ chữ.",
+    "4) Giữ nguyên giọng văn, ngôi kể, thì, xưng hô. 100% tiếng Việt có dấu. Chỉ trả văn xuôi của chương, không tiêu đề/ghi chú.",
+    (st.directive || st.nextChapterHint) ? ("KẾ HOẠCH CỦA NGƯỜI DÙNG (để đối chiếu, KHÔNG thêm ngoài kế hoạch):\n" + [st.directive, st.nextChapterHint].filter(Boolean).map(x => String(x).trim()).join("\n")) : "",
+    o.closingBeat ? ("CÚ CHỐT CUỐI CHƯƠNG (giữ làm câu/cảnh cuối): " + o.closingBeat) : "",
+    "===== BẢN HIỆN TẠI =====", text, "===== HẾT ====="
+  ].filter(Boolean).join("\n\n");
+  try {
+    const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: o.model,
+      messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }],
+      maxTokens: o.isNsfw ? 24000 : 16000, temperature: CREATIVE_TEMP, totalMs: Math.max(60000, Math.min(420000, writeTimeLeft(o.isNsfw) - 20000)), creative: true }, 1);
+    let out = String(r.text || "").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "").replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim();
+    out = stripForeign(out);
+    if (r.finishReason === "length") return { ok: false, reason: "bản mở rộng bị cắt giữa chừng, giữ bản gốc" };
+    const nw = countWords(out);
+    if (nw < cur * 1.1) return { ok: false, reason: `không dài hơn đáng kể (${nw}/${cur} từ)` };
+    // vượt giới hạn: KHÔNG cắt (sẽ mất cú chốt ở cuối) -> bỏ bản mở rộng, giữ bản gốc
+    if (nw > o.maxWords) return { ok: false, reason: `bản mở rộng vượt giới hạn (${nw}/${o.maxWords} từ), giữ bản gốc` };
+    // đoạn kết phải còn là đoạn kết cũ (chống bịa thêm sau cú chốt)
+    const lastPara = (t) => { const ps = String(t).split(/\n\s*\n|\n/).map(x => x.trim()).filter(Boolean); return ps[ps.length - 1] || ""; };
+    const a = new Set(_normWords(lastPara(text))), b = _normWords(lastPara(out));
+    const hit = b.filter(w => a.has(w)).length;
+    if (a.size && hit / Math.max(1, Math.min(a.size, b.length)) < 0.4) return { ok: false, reason: "đoạn kết bị đổi, giữ bản gốc" };
+    // sự kiện cũ không được biến mất: câu đầu của chương gốc phải còn dấu vết
+    const headG = new Set(_normWords(text.slice(0, 400))), outHead = _normWords(out.slice(0, 900));
+    if (headG.size && outHead.filter(w => headG.has(w)).length / headG.size < 0.35) return { ok: false, reason: "phần mở đầu bị đổi, giữ bản gốc" };
+    return { ok: true, text: out };
+  } catch (e) { return { ok: false, reason: (e && e.message) || "lỗi gọi AI" }; }
+}
+
 /* V12.20 — Khép câu cuối bị cụt: nhờ model viết nốt 1–3 câu; nếu không được thì lùi về câu hoàn chỉnh gần nhất. */
 async function closeDanglingEnding(job, text, closingBeat, model, isNsfw) {
   const base = String(text || "").replace(/\s+$/, "");
@@ -1540,7 +1582,6 @@ async function generateOneChapter(job) {
   const maxAttempts = isNsfw ? Math.max(4, Math.min(8, configuredAttempts)) : Math.max(0, Math.min(8, configuredAttempts));
   // V12.20: có gợi ý/mệnh lệnh thì CHỈ viết tiếp khi model bị cắt giữa chừng (hết token/đứt kết nối).
   // Trước đây bản nền thấy chưa đủ số từ là tự gọi "Viết TIẾP" không kèm gợi ý -> model hết ý nên bịa cảnh mới.
-  if (hasBrief && !truncated && countWords(text) < minWords) issues.push(`Chương ${countWords(text)}/${minWords} từ vì bám đúng gợi ý của bạn — không kéo dài để tránh bịa thêm`);
   while (countWords(text) < minWords && countWords(text) < maxWords && attempts < maxAttempts && (!hasBrief || truncated)) {
     if (writeTimeLeft(isNsfw) < 30000) { issues.push("Dừng viết tiếp vì hết ngân sách thời gian của job"); break; }
     attempts++;
@@ -1589,6 +1630,15 @@ async function generateOneChapter(job) {
     } catch (e) { issues.push(`Viết tiếp #${attempts}: ${e.message}`); break; }
   }
   { const dd = dedupeRepeatedScene(text); if (dd.length < text.length) { text = dd; issues.push("Đã cắt phần chương bị viết lặp lại từ đầu"); } }
+  // V12.20: chương có gợi ý mà còn ngắn -> MỞ RỘNG TẠI CHỖ (miêu tả/nội tâm/thoại) thay vì viết nối thêm cuối chương.
+  if (hasBrief && !truncated && countWords(text) < minWords * 0.9) {
+    for (let pass = 0; pass < 2 && countWords(text) < minWords * 0.9; pass++) {
+      const ex = await expandChapterInPlace(job, text, { minWords, maxWords, closingBeat, model, isNsfw, state });
+      if (!ex.ok) { issues.push("Mở rộng chương không đạt: " + ex.reason); break; }
+      issues.push(`Đã mở rộng chương bằng miêu tả sâu hơn: ${countWords(text)} → ${countWords(ex.text)} từ`);
+      text = ex.text;
+    }
+  }
   text = formatParagraphs(stripForeign(text));
   const _allowNames = (state.characters || []).map(x => x && x.name).filter(Boolean);
   // V12.20: tự sửa từ lỗi ghép (mươititude, bănnton, bọcampo...) bằng cách nhờ model chép lại ĐÚNG câu chứa từ đó.
@@ -1604,7 +1654,7 @@ async function generateOneChapter(job) {
     issues.push(ce.how === "ai" ? "Câu cuối bị cụt — đã nhờ AI khép chương" : (ce.how === "trim" ? "Câu cuối bị cụt — đã lùi về câu hoàn chỉnh gần nhất" : "Câu cuối có thể còn cụt — hãy kiểm tra"));
   }
   const wordCount = countWords(text);
-  if (wordCount < minWords * 0.9 && !(hasBrief && !truncated)) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
+  if (wordCount < minWords * 0.9) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
   return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], versions: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.3", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords, control };
 }
 
