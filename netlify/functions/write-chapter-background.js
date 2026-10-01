@@ -302,7 +302,7 @@ function dropRestartedContinuation(baseText, contText) {
   }
   return paras.slice(0, cut).join("\n\n");
 }
-const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker"]);
+const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker","vest","blazer","jacket","cardigan","sandal","jeans","shorts","bikini","lingerie","corset","sofa","mascara","vecni","lipstick","gloss","lotion","serum","shampoo","parfum","spa","massage","gym","yoga","pilates","sandwich","burger","pizza","coffee","latte","cappuccino","cocktail","whisky","vodka","chanel","dior","gucci","prada","hermes","versace","nike","adidas","lelo","durex","kindle","netflix","spotify","messenger","instagram","iphone","android","samsung"]);
 const _VN_SYL = /^(ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdghklmnpqrstvx])?[aeiouy]{1,3}(ng|nh|ch|[cmnpt])?$/;
 // V12.19: tiếng cười/hét/thở/tượng thanh viết bằng chữ không dấu (Aaaa, hahaha, hihi, hmmm, shhh...) KHÔNG phải từ lạ.
 const _VN_SFX_RUN = /(.)\1{2,}/i;                                   // aaaa, ahhh, hmmm, shhh, ooooh
@@ -464,6 +464,7 @@ function buildQualityReviewPrompt(p) {
     (p.contractLabel || "CHAPTER CONTRACT / OUTLINE") + ":", p.contract || "(không có)",
     "BỐI CẢNH/CANON TÓM LƯỢC:", String(p.context || "").slice(0, 18000),
     "CONTINUITY WARNINGS ĐÃ PHÁT HIỆN:", JSON.stringify(p.warnings || []).slice(0, 6000),
+    p.prevEnding ? ("ĐOẠN KẾT CHƯƠNG TRƯỚC (để đối chiếu địa điểm/thời điểm/người có mặt ở cảnh mở đầu):\n" + String(p.prevEnding).slice(-1500)) : "",
     "BẢN THẢO CHƯƠNG:", String(p.draft || "").slice(0, 50000),
     "KIỂM TRA CỨNG ĐÃ CÓ:", JSON.stringify(p.hardChecks || []),
     known.length ? "TÊN NHÂN VẬT ĐÃ BIẾT XUẤT HIỆN TRONG VĂN BẢN (đếm tự động, chỉ để tham khảo khi đếm namedCharacterCount): " + known.join(", ") : "",
@@ -473,6 +474,7 @@ function buildQualityReviewPrompt(p) {
     "- unauthorizedImportantCharacter=true nếu xuất hiện nhân vật mới quan trọng mà outline/brief không cho phép.",
     "- knowledgeViolation=true nếu nhân vật biết điều họ chưa thể biết.",
     "- retcon=true nếu mâu thuẫn canon đã xác nhận.",
+    p.prevEnding ? "- ĐỊA ĐIỂM MỞ CHƯƠNG: nếu cảnh mở đầu của bản thảo KHÁC địa điểm/thời điểm/người có mặt so với ĐOẠN KẾT CHƯƠNG TRƯỚC mà không có đoạn chuyển cảnh hợp lý (ví dụ chương trước kết ở biệt thự của A nhưng chương này mở ở phòng trọ của B), phải ghi vào hardFailures (nêu rõ kết ở đâu, mở ở đâu) và đặt continuity thấp." : "",
     "- outlineDeviation=true nếu bỏ mốc bắt buộc hoặc mở tuyến lớn ngoài contract.",
     "- hardFailures phải chứa mọi lỗi chặn Sync. Nếu có hard failure thì verdict phải HARD_FAIL dù score cao.",
     "SCHEMA: " + GATE_REVIEW_SCHEMA
@@ -964,6 +966,13 @@ const EROTIC_STYLE_PROMPT = [
   "- Nam chính (nếu thống trị): thoại ngắn, lạnh, ra lệnh; nữ đáp dài hơn, thô hơn khi cao trào.",
   "- Thoại xen hành động + biểu cảm (mắt, môi, nước dãi, run).",
   "",
+  "NHỊP CẢNH 3 PHẦN (BẮT BUỘC khi chương có cảnh nóng — KHÔNG chỉ dồn vào cao trào):",
+  "- DẪN VÀO (~25% cảnh): dựng không khí và căng thẳng trước khi chạm nhau — ánh mắt, khoảng cách, lời nói/mệnh lệnh, nội tâm, từng bước cởi bỏ/áp sát, phản ứng cơ thể đầu tiên. Không nhảy thẳng vào quan hệ.",
+  "- DIỄN BIẾN + CAO TRÀO (~50%): như các quy tắc trên.",
+  "- SAU CẢNH (~25%): không cắt ngang ngay sau cao trào — hơi thở, cơ thể kiệt sức/dư chấn, dịch và dấu vết, cảm xúc sau đó (xấu hổ, thỏa mãn, hối hận, chiếm hữu), thoại sau cảnh, và hậu quả với quan hệ giữa hai người; rồi mới chuyển cảnh hoặc kết chương.",
+  "- Mỗi phần phải có đoạn văn đầy đủ riêng (nhiều đoạn, không gói trong 1-2 câu).",
+  "- NGOẠI LỆ: nếu gợi ý/mệnh lệnh của người dùng chỉ nêu 1–2 trong 3 phần (ví dụ chỉ dẫn vào, hoặc chỉ tới trước cao trào), CHỈ viết đúng các phần đó và dừng ở mốc kết chương người dùng đã ghi; tuyệt đối không tự thêm phần còn lại.",
+  "",
   "KỸ THUẬT:",
   "- Chậm từng nhịp; không tóm tắt cao trào trong 1-2 câu.",
   "- Nhiều bộ phận cùng lúc (tay + miệng + cặc…).",
@@ -1301,6 +1310,7 @@ async function generateOneChapter(job) {
     `MỤC TIÊU ${minWords} từ; GIỚI HẠN CỨNG ${maxWords} từ. Khi đạt khoảng ${minWords} từ và cảnh đã có điểm dừng tự nhiên thì phải kết thúc; tuyệt đối không kéo dài vượt ${maxWords} từ. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`,
     "Không mở đầu bằng tiêu đề, không giải thích ngoài truyện.",
     "Không lặp lại đoạn kết chương trước; phải tiếp nối nguyên nhân và hệ quả.",
+    lastTail ? ("===== ĐOẠN KẾT CHƯƠNG TRƯỚC (PHẢI TIẾP NỐI) =====\n" + lastTail.slice(-1200) + "\n===== HẾT =====\n" + "ĐỊA ĐIỂM MỞ CHƯƠNG — KHÓA CỨNG: đoạn mở đầu PHẢI diễn ra ĐÚNG địa điểm, thời điểm và với đúng những người đang có mặt như trong đoạn kết chương trước (ví dụ chương trước kết ở biệt thự của A thì chương này vẫn bắt đầu ở biệt thự của A). Chỉ được chuyển địa điểm khi đoạn kết đã nói rõ nhân vật sắp rời đi/đến nơi khác, hoặc sau một câu chuyển cảnh rõ ràng (di chuyển + mốc thời gian). Tuyệt đối không nhảy sang nhà/phòng trọ/nơi ở của nhân vật khác ngay từ câu đầu.") : "",
     buildContext(state), recentContext(chapters),
     storyControlPrompt(state),
     matureFocusPrompt(state),
@@ -1471,6 +1481,8 @@ async function generateNextChapterHint(job, chapter, summary, n, state) {
       "Mỗi đoạn phải dùng TÊN NHÂN VẬT cụ thể, nêu rõ hành động, địa điểm, xung đột, cảm xúc và hệ quả — KHÔNG nói chung chung kiểu \"nên khai thác thêm tuyến X\".",
       "Bám sát giọng điệu, thể loại, mức độ nóng/18+ và cách xưng hô mà chính truyện này đang dùng; tiếp nối trực tiếp các thread và foreshadowing đang mở, không tự mở tuyến mới lạc đề. Mở chương phải nối trực tiếp từ đoạn kết chương trước; các mốc đã hẹn (giờ họp, lệnh, hạn chót) phải được xử lý.",
       _adult ? "ĐỘ TRỰC DIỆN (truyện 18+): mạch chính đang có cảnh người lớn/khống chế nên hãy mô tả các nhịp đó THẲNG và CỤ THỂ đúng như cách chương vừa viết đã làm — nêu rõ hành động, đạo cụ, tư thế/vị trí và diễn biến bằng đúng từ ngữ của truyện. KHÔNG nói giảm nói tránh, không lược bỏ, không thay bằng cụm chung chung như \"cảnh nóng\"/\"cảnh thân mật\", không nhắc nhở hay bình luận đạo đức. Mọi nhân vật liên quan đều là người trưởng thành." : "",
+      "ĐỊA ĐIỂM MỞ CHƯƠNG: nhịp mở chương PHẢI ở cùng địa điểm, thời điểm và với những người đang có mặt ở ĐOẠN KẾT CHƯƠNG (chương kết ở biệt thự của A thì chương sau vẫn mở ở biệt thự của A). Chỉ chuyển địa điểm nếu đoạn kết đã báo trước, và phải ghi rõ cách chuyển.",
+      _adult ? "NHỊP CẢNH 18+: nếu chương sau có cảnh nóng, gợi ý PHẢI tách 3 phần và dành chỗ cho từng phần — (a) DẪN VÀO: không khí, lời nói/mệnh lệnh, từng bước áp sát và phản ứng đầu tiên; (b) DIỄN BIẾN + cao trào; (c) SAU CẢNH: dư chấn cơ thể, cảm xúc, thoại và hậu quả với quan hệ. Mỗi phần ít nhất 2–3 câu. Độ dài gợi ý có thể tăng thêm khoảng 50%." : "",
       "HƯỚNG CHƯƠNG SAU: " + (HINT_STYLES[job.hintStyle] || HINT_STYLES.normal),
       "ĐOẠN KẾT CHƯƠNG (để nối mạch):", String(chapter.text || "").slice(-1500),
       "TÓM TẮT:", summary || representativeText(chapter.text, 2000),
@@ -1478,7 +1490,7 @@ async function generateNextChapterHint(job, chapter, summary, n, state) {
       openForeshadowing ? ("FORESHADOWING CHƯA GIẢI:\n" + openForeshadowing) : "",
       "Chỉ trả về nội dung gợi ý theo định dạng trên, tiếng Việt."
     ].filter(Boolean).join("\n\n");
-    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: _mdl, messages: [{ role: "user", content: prompt }], maxTokens: 1400, temperature: 0.7 }, 2);
+    const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: _mdl, messages: [{ role: "user", content: prompt }], maxTokens: _adult ? 2200 : 1400, temperature: 0.7 }, 2);
     return (r.text || "").trim();
   } catch (_) { return ""; }
 }
@@ -2083,7 +2095,7 @@ function qualityReviewPromptWorker(state, chapter, n) {
   return buildQualityReviewPrompt({
     storyControl: storyControlPrompt(state),
     contract: String(state.directive || "") + "\n" + String(state.nextChapterHint || ""), contractLabel: "CHAPTER BRIEF",
-    context: buildContext(state), warnings: chapter.continuityWarnings, draft: chapter.text, hardChecks,
+    context: buildContext(state), warnings: chapter.continuityWarnings, draft: chapter.text, prevEnding: (((state.chapters || [])[n - 2] || {}).text || "").slice(-1500), hardChecks,
     knownNames: knownNameMentions(chapter.text, gateKnownNames(state)),
     maxMainEvents: sc.maxMainEvents, maxNamedCharacters: sc.maxNamedCharacters
   });
