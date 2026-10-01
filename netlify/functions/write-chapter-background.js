@@ -13,6 +13,7 @@ const crypto = require("crypto");
  * - Job-status dùng accessToken, không trả secret/API key.
  */
 
+const CREATIVE_TEMP = 0.7; // V12.20: hạ từ 0.82 để bớt từ lỗi
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const MAX_JOB_AGE_MS = 24 * 60 * 60 * 1000;
 let DEADLINE = Infinity; // đặt lại ở đầu handler
@@ -94,7 +95,8 @@ function trimToWordLimit(text, maxWords) {
   while ((mt = re.exec(s))) { n++; end = mt.index + mt[0].length; if (n >= maxWords) break; }
   let out = s.slice(0, end);
   const m = out.match(/^([\s\S]*[.!?…][”"’']?)(?:\s|$)/);
-  if (m && countWords(m[1]) >= Math.max(1, maxWords - 180)) out = m[1];
+  // V12.20: ngưỡng 70% giới hạn (bản cũ chỉ 180 từ cuối -> hay cắt cụt giữa câu khi đoạn dài)
+  if (m && countWords(m[1]) >= Math.max(1, Math.floor(maxWords * 0.7))) out = m[1];
   return { text: out.trim(), trimmed: true };
 }
 
@@ -302,7 +304,7 @@ function dropRestartedContinuation(baseText, contText) {
   }
   return paras.slice(0, cut).join("\n\n");
 }
-const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker","vest","blazer","jacket","cardigan","sandal","jeans","shorts","bikini","lingerie","corset","sofa","mascara","vecni","lipstick","gloss","lotion","serum","shampoo","parfum","spa","massage","gym","yoga","pilates","sandwich","burger","pizza","coffee","latte","cappuccino","cocktail","whisky","vodka","chanel","dior","gucci","prada","hermes","versace","nike","adidas","lelo","durex","kindle","netflix","spotify","messenger","instagram","iphone","android","samsung"]);
+const _VN_OK = new Set(["sedan","neon","email","wifi","online","offline","game","app","video","office","laptop","zalo","facebook","youtube","internet","tiktok","inbox","mail","file","link","logo","menu","poster","taxi","radio","karaoke","video","casino","hotel","studio","check","deadline","ceo","kpi","vip","boss","sexy","show","team","sale","sales","manager","ipad","iphone","macbook","google","zoom","slack","excel","word","pdf","silicon","latex","titan","inox","laser","camera","remote","vibrator","plug","cuff","temp","lock","sexy","porn","sms","wifi","bluetooth","smartphone","selfie","livestream","hashtag","comment","story","stress","stalker","vest","blazer","jacket","cardigan","sandal","jeans","shorts","bikini","lingerie","corset","sofa","mascara","vecni","lipstick","gloss","lotion","serum","shampoo","parfum","spa","massage","gym","yoga","pilates","sandwich","burger","pizza","coffee","latte","cappuccino","cocktail","whisky","vodka","chanel","dior","gucci","prada","hermes","versace","nike","adidas","lelo","durex","kindle","netflix","spotify","messenger","instagram","iphone","android","samsung","café","cafe","bar","pub","resort","menu","blouse","boxer","ballet","salon","shop","box","stylist","designer","leader","model","manager","outfit","style","cocktail"]);
 const _VN_SYL = /^(ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdghklmnpqrstvx])?[aeiouy]{1,3}(ng|nh|ch|[cmnpt])?$/;
 // V12.19: tiếng cười/hét/thở/tượng thanh viết bằng chữ không dấu (Aaaa, hahaha, hihi, hmmm, shhh...) KHÔNG phải từ lạ.
 const _VN_SFX_RUN = /(.)\1{2,}/i;                                   // aaaa, ahhh, hmmm, shhh, ooooh
@@ -317,19 +319,98 @@ function evidenceInText(evidence, text) {
   let hit = 0; ev.forEach(w => { if (have.has(w)) hit++; });
   return hit / ev.length >= 0.7;
 }
-// Liệt kê từ Latinh lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo.
-function findStrayWords(text, allowNames) {
-  const out = []; const seen = new Set();
+// V12.20: kiểm tra một âm tiết tiếng Việt hợp lệ (bỏ dấu thanh, giữ ă â ê ô ơ ư đ). Bắt lỗi kiểu "mươititude", "bănnton", "bọcampo".
+const _VN_SYL_FULL = /^(?:ngh|ng|nh|kh|gh|gi|ph|qu|th|tr|ch|[bcdđghklmnpqrstvx])?[aăâeêioôơuưy]{1,3}(?:ng|nh|ch|[cmnpt])?$/;
+function _stripToneMarks(s) { return String(s).normalize("NFD").replace(/[\u0300\u0301\u0303\u0309\u0323]/g, "").normalize("NFC"); }
+function _isValidVnSyllable(low) { return _VN_SYL_FULL.test(_stripToneMarks(low)); }
+function _hasVnDiacritic(t) { return /[ăâêôơưđàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/i.test(t); }
+// Liệt kê từ lạ (không phải âm tiết tiếng Việt) chen trong văn bản. Chỉ để cảnh báo / làm đầu vào cho bước tự sửa.
+// V12.20: bắt cả từ CÓ DẤU bị ghép lỗi (mươititude, bănnton, bọcampo); trước đây chỉ bắt từ không dấu.
+function findStrayWords(text, allowNames, limit) {
+  const out = []; const seen = new Set(); const max = Number(limit) || 12;
   const allow = new Set(_normWords((allowNames || []).join(" ")).map(w => w.normalize("NFD").replace(/[\u0300-\u036f]/g, "")));
+  const allowExact = new Set(_normWords((allowNames || []).join(" ")));
   const toks = String(text || "").match(/\p{L}+/gu) || [];
   for (const t of toks) {
-    if (t.length < 4 || !/^[A-Za-z]+$/.test(t)) continue;
     const low = t.toLowerCase();
-    if (_VN_OK.has(low) || _VN_SYL.test(low) || _isSoundEffect(low) || seen.has(low) || allow.has(low)) continue;
+    if (seen.has(low)) continue;
+    if (/^[A-Za-z]+$/.test(t)) {
+      if (t.length < 4) continue;
+      if (_VN_OK.has(low) || _VN_SYL.test(low) || _isSoundEffect(low) || allow.has(low)) continue;
+    } else {
+      // Có dấu tiếng Việt: hợp lệ nếu là một âm tiết đúng cấu trúc. Chữ cái ngoài bảng chữ cái Việt (ü, ñ...) bỏ qua.
+      if (t.length < 3 || !/^[\p{Script=Latin}]+$/u.test(t) || !_hasVnDiacritic(t)) continue;
+      if (/[^a-zA-ZăâêôơưđĂÂÊÔƠƯĐàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵÀÁẢÃẠẰẮẲẴẶẦẤẨẪẬÈÉẺẼẸỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌỒỐỔỖỘỜỚỞỠỢÙÚỦŨỤỪỨỬỮỰỲÝỶỸỴ]/.test(t)) continue;
+      if (_isValidVnSyllable(low) || _VN_OK.has(low) || allowExact.has(low) || allow.has(low.normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) continue;
+    }
     seen.add(low); out.push(t);
-    if (out.length >= 12) break;
+    if (out.length >= max) break;
   }
   return out;
+}
+
+// V12.20: tìm câu chứa từng từ lỗi để gửi AI sửa. Trả mảng { word, start, end, sentence, before } (không chồng lấn, theo thứ tự xuất hiện).
+function locateWordSentences(text, words) {
+  const src = String(text || ""); const found = [];
+  const isL = (ch) => !!ch && /\p{L}/u.test(ch);
+  for (const w of words || []) {
+    let from = 0;
+    while (from < src.length) {
+      const i = src.indexOf(w, from); if (i < 0) break;
+      from = i + w.length;
+      if (isL(src[i - 1]) || isL(src[i + w.length])) continue;
+      let a = i; while (a > 0 && !/[.!?…\n]/.test(src[a - 1])) a--;
+      let b = i + w.length; while (b < src.length && !/[.!?…\n]/.test(src[b])) b++;
+      while (b < src.length && /[.!?…”"’')]/.test(src[b]) && src[b] !== "\n") b++;
+      const sentence = src.slice(a, b).replace(/^\s+/, ""); const start = b - sentence.length;
+      found.push({ word: w, start, end: b, sentence, before: src.slice(Math.max(0, start - 160), start).replace(/\s+/g, " ").trim() });
+      break; // mỗi từ lỗi xử lý lần xuất hiện đầu tiên; các lần sau sẽ được quét lại ở vòng kế
+    }
+  }
+  found.sort((x, y) => x.start - y.start);
+  const out = []; let lastEnd = -1;
+  for (const f of found) { if (f.start < lastEnd) { out[out.length - 1].extra = (out[out.length - 1].extra || []).concat(f.word); continue; } out.push(f); lastEnd = f.end; }
+  return out;
+}
+
+// V12.20: câu sửa của AI chỉ được nhận nếu bỏ từ lỗi, độ dài gần câu gốc, và giữ phần lớn các từ còn lại.
+function acceptWordFix(orig, fixed, badWords) {
+  const f = String(fixed || "").trim(), o = String(orig || "").trim();
+  if (!f || f.length < 8) return false;
+  for (const w of badWords || []) if (f.includes(w)) return false;
+  if (/[\u3400-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF]/.test(f)) return false;
+  const ow = _normWords(o), fw = _normWords(f);
+  if (Math.abs(ow.length - fw.length) > 6 || f.length > o.length * 1.5 + 20) return false;
+  const bad = new Set((badWords || []).map(w => _normWords(w)[0]));
+  const keep = ow.filter(w => !bad.has(w)); if (!keep.length) return true;
+  const have = new Set(fw); let hit = 0; keep.forEach(w => { if (have.has(w)) hit++; });
+  return hit / keep.length >= 0.7;
+}
+
+// V12.20: câu cuối đã kết thúc đúng cách chưa (. ! ? … có thể kèm ngoặc/nháy đóng).
+function endsCleanly(text) {
+  const t = String(text || "").replace(/[\s*_]+$/, "");
+  if (!t) return true;
+  return /[.!?…][”"’')\]）»]*$/.test(t) || /[—–]$/.test(t);
+}
+// V12.20: lùi về câu hoàn chỉnh gần nhất. Giữ lại ít nhất minRatio độ dài; nếu không có chỗ cắt hợp lý thì trả nguyên.
+function trimToLastSentence(text, minRatio) {
+  const t = String(text || "").replace(/\s+$/, "");
+  if (endsCleanly(t)) return { text: t, cut: false };
+  const re = /[.!?…][”"’')\]）»]*(?=\s|$)/g; let m, last = -1;
+  while ((m = re.exec(t))) last = m.index + m[0].length;
+  if (last < 0 || last < t.length * (minRatio || 0.6)) return { text: t, cut: false };
+  return { text: t.slice(0, last).replace(/\s+$/, ""), cut: true };
+}
+// V12.20: lấy "cú chốt / kết chương" mà người dùng ghi trong gợi ý/mệnh lệnh (để nhắc AI dừng đúng chỗ và để khép chương khi bị cụt).
+function extractClosingBeat(text) {
+  const src = String(text || ""); if (!src.trim()) return "";
+  const re = /(cú chốt|câu chốt|chốt chương|chốt cuối|kết thúc chương|kết chương|kết bằng|khép chương|cliffhanger)/i;
+  const lines = src.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) if (re.test(lines[i])) return lines[i].slice(0, 500);
+  const sents = src.split(/(?<=[.!?…])\s+/);
+  for (let i = sents.length - 1; i >= 0; i--) if (re.test(sents[i])) return sents.slice(i).join(" ").slice(0, 500);
+  return "";
 }
 
 // ===== V12.17: Quality Gate — phần THUẦN (không gọi AI, không đụng DOM/state toàn cục) =====
@@ -1062,6 +1143,9 @@ async function callOpenRouter({ endpoint, apiKey, model, messages, maxTokens = 4
         "X-Title": "Xuong Truyen AI v9"
       },
       body: JSON.stringify(Object.assign({ model, messages, max_tokens: maxTokens, temperature, stream: true },
+        // V12.20: siết lấy mẫu khi viết văn để giảm từ lỗi ghép (mươititude, bănnton...). top_k chỉ gửi cho OpenRouter.
+        creative ? { top_p: 0.88 } : {},
+        (creative && /openrouter\.ai/i.test(endpoint || DEFAULT_ENDPOINT)) ? { top_k: 40 } : {},
         // Penalty chỉ dùng khi VIẾT VĂN. Với JSON, penalty làm model né lặp key/dấu ngoặc -> JSON hỏng.
         {} ,
           // Model có "thinking" sẽ ăn hết max_tokens vào reasoning -> content rỗng/bị cắt. Tắt cho trích xuất (chỉ OpenRouter).
@@ -1213,7 +1297,7 @@ function buildContext(state) {
   if (state.femaleCharacterDefinition) p.push("ĐỊNH NGHĨA CHUNG NHÂN VẬT NỮ — ÁP DỤNG CHO MỌI NHÂN VẬT NỮ:\n" + String(state.femaleCharacterDefinition).trim() + "\nAI tự xây dựng từng nhân vật nữ theo diễn biến truyện; không gán nguyên xi một nhân vật cho nhân vật khác; không tự đổi thông tin đã được truyện xác nhận.");
   if (state.currentStatus) p.push("CURRENT STATUS:\n" + state.currentStatus);
   if (state.directive) p.push("MỆNH LỆNH:\n" + state.directive);
-  if (state.nextChapterHint) p.push("ĐỊNH HƯỚNG CHO CHƯƠNG NÀY (nên bám theo, trừ khi mâu thuẫn với MỆNH LỆNH thì MỆNH LỆNH thắng):\n" + state.nextChapterHint);
+  if (state.nextChapterHint) p.push("KẾ HOẠCH CHƯƠNG NÀY (người dùng viết — bám đúng thứ tự, không thêm tuyến khác; ý cuối là điểm kết chương; nếu mâu thuẫn MỆNH LỆNH thì MỆNH LỆNH thắng):\n" + state.nextChapterHint);
   if (state.advancedRules) p.push("QUY TẮC:\n" + state.advancedRules);
   if (state.mainCharProfile?.name) p.push("NHÂN VẬT CHÍNH (BẮT BUỘC xuất hiện, là trung tâm mọi chương, không đổi tên/nhầm sang NV khác):\n" + JSON.stringify(state.mainCharProfile));
   else if (state.mainPlot || state.worldSetting) p.push("⚠ CHƯA khai báo Nhân Vật Chính. Nếu Cốt Truyện/Bối Cảnh có nhắc tên nhân vật chính, PHẢI dùng đúng tên đó xuyên suốt, không tự đặt tên khác.");
@@ -1283,6 +1367,73 @@ const MATURE_POST_PROCESS_RESERVE_MS = 210 * 1000;
 const writeTimeLeft = (isMature = false) => timeLeft() - (isMature ? MATURE_POST_PROCESS_RESERVE_MS : NORMAL_POST_PROCESS_RESERVE_MS);
 
 // ===== V12 Writing Engine =====
+
+/* V12.20 — Tự sửa từ lỗi ghép: gửi các CÂU chứa từ lỗi cho model, nhận lại câu đã sửa, chỉ nhận nếu bỏ từ lỗi và giữ phần lớn từ còn lại. */
+async function fixStrayWordsWithAI(job, text, allowNames, model, isNsfw) {
+  const res = { text, fixed: 0, samples: [] };
+  try {
+    let cur = String(text || "");
+    for (let round = 0; round < 2; round++) {
+      if (writeTimeLeft(isNsfw) < 45000) break;
+      const stray = findStrayWords(cur, allowNames, 40).filter(w => _hasVnDiacritic(w) || w[0] === w[0].toLowerCase());
+      if (!stray.length) break;
+      const items = locateWordSentences(cur, stray).slice(0, 30);
+      if (!items.length) break;
+      const lines = items.map((it, i) => `${i + 1}) Từ lỗi: "${it.word}"${it.extra ? " + " + it.extra.map(x => '"' + x + '"').join(", ") : ""}\n   Ngay trước đó: ${it.before || "(đầu đoạn)"}\n   Câu lỗi: ${it.sentence.replace(/\n+/g, " ")}`);
+      const prompt = [
+        "Đây là các câu trong một truyện tiếng Việt. Mỗi câu có một từ bị LỖI SINH CHỮ (model ghép nhầm âm tiết tiếng Việt với chữ tiếng Anh/ký tự lạ, ví dụ \"mươititude\", \"bănnton\").",
+        "NHIỆM VỤ: viết lại ĐÚNG câu đó, CHỈ thay từ lỗi bằng từ/cụm tiếng Việt tự nhiên đúng ý câu (suy từ ngữ cảnh). Giữ nguyên mọi chữ khác, tên riêng, dấu câu, giọng văn. Không thêm ý, không bỏ ý, không giải thích.",
+        "Trả về mỗi câu một dòng đúng định dạng:  số|câu đã sửa   (một dòng cho mỗi câu, giữ nguyên số thứ tự).",
+        "", lines.join("\n")
+      ].join("\n");
+      const r = await callExtract({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "user", content: prompt }], maxTokens: Math.min(4000, 400 + items.length * 220), temperature: 0.2 }, 1);
+      const map = new Map();
+      String(r.text || "").split(/\n+/).forEach(l => { const m = l.match(/^\s*(\d+)\s*[|)\]:.]\s*(.+)$/); if (m) map.set(Number(m[1]), m[2].trim()); });
+      let out = cur, any = 0;
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i], fixed = map.get(i + 1);
+        if (!fixed) continue;
+        const bads = [it.word].concat(it.extra || []);
+        if (!acceptWordFix(it.sentence, fixed, bads)) continue;
+        out = out.slice(0, it.start) + fixed + out.slice(it.end);
+        any++; res.fixed++; if (res.samples.length < 3) res.samples.push(it.word);
+      }
+      cur = out;
+      if (!any) break;
+    }
+    res.text = cur;
+  } catch (e) { /* sửa lỗi chữ là phần phụ: lỗi thì giữ nguyên văn bản */ }
+  return res;
+}
+
+/* V12.20 — Khép câu cuối bị cụt: nhờ model viết nốt 1–3 câu; nếu không được thì lùi về câu hoàn chỉnh gần nhất. */
+async function closeDanglingEnding(job, text, closingBeat, model, isNsfw) {
+  const base = String(text || "").replace(/\s+$/, "");
+  if (writeTimeLeft(isNsfw) > 40000) {
+    try {
+      const prompt = [
+        "Đoạn cuối của chương truyện dưới đây bị CỤT giữa câu (hết dung lượng/đứt kết nối).",
+        "Viết NỐT đúng từ chỗ cụt: bắt đầu bằng phần còn thiếu của chính câu đang dở (KHÔNG chép lại phần đã có), hoàn tất câu rồi khép chương trong tổng cộng 1–3 câu ngắn. Không thêm sự kiện, nhân vật hay cảnh mới; không tóm tắt; không giải thích.",
+        closingBeat ? ("Người dùng muốn chương kết ở: " + closingBeat + "\n(Chỉ dùng nếu câu dở đang dẫn tới đó; nếu ý đó đã được viết rồi thì chỉ hoàn tất câu và dừng.)") : "",
+        "ĐOẠN CUỐI:", base.slice(-1800),
+        "Chỉ trả về phần viết nốt."
+      ].filter(Boolean).join("\n\n");
+      const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 500, temperature: 0.5, totalMs: 60000, creative: true }, 1);
+      let add = stripForeign(String(r.text || "").trim());
+      add = add.replace(/^\s*(?:\.\.\.|…)\s*/, "").trim();
+      if (add && add.length < 900 && !detectNonVietnamese(add)) {
+        const sep = /\s$/.test(text) || /^[,.!?…;:”"’')]/.test(add) ? "" : " ";
+        const joined = base + sep + add;
+        if (endsCleanly(joined)) return { text: joined, how: "ai" };
+        const tr = trimToLastSentence(joined, 0.6);
+        if (tr.cut || endsCleanly(tr.text)) return { text: tr.text, how: "ai" };
+      }
+    } catch (_) {}
+  }
+  const tr = trimToLastSentence(base, 0.5);
+  return { text: tr.text, how: tr.cut ? "trim" : "none" };
+}
+
 // V8-inspired prose path: temperature 0.82, no repetition penalties, prose-only output, style-lock continuation.
 async function generateOneChapter(job) {
   const state = job.storyState;
@@ -1313,9 +1464,13 @@ async function generateOneChapter(job) {
     if (heat >= threshold) isNsfw = true;
   }
   const model = isNsfw ? (routingNsfwModel || job.model) : job.model;
+  const hasBrief = !!(String(state.directive || "").trim() || String(state.nextChapterHint || "").trim());
+  const closingBeat = extractClosingBeat(state.nextChapterHint) || extractClosingBeat(state.directive);
   const prompt = [
     `VIẾT CHƯƠNG ${chapterNumber}. Truyện đã có ${chapters.length} chương.`,
-    `MỤC TIÊU ${minWords} từ; GIỚI HẠN CỨNG ${maxWords} từ. Khi đạt khoảng ${minWords} từ và cảnh đã có điểm dừng tự nhiên thì phải kết thúc; tuyệt đối không kéo dài vượt ${maxWords} từ. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`,
+    hasBrief
+      ? `MỤC TIÊU THAM KHẢO ${minWords} từ; GIỚI HẠN CỨNG ${maxWords} từ. CHƯƠNG NÀY CÓ KẾ HOẠCH CỦA NGƯỜI DÙNG: độ dài do kế hoạch quyết định. Triển khai ĐỦ mọi ý theo đúng thứ tự rồi DỪNG ở ý cuối. Nếu xong kế hoạch mà chưa đủ ${minWords} từ thì chấp nhận ngắn hơn — TUYỆT ĐỐI không bịa thêm cảnh/biến cố/nhân vật để cho đủ từ. Muốn dài hơn chỉ được mở rộng thoại, nội tâm, giác quan TRONG các ý đã có. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`
+      : `MỤC TIÊU ${minWords} từ; GIỚI HẠN CỨNG ${maxWords} từ. Khi đạt khoảng ${minWords} từ và cảnh đã có điểm dừng tự nhiên thì phải kết thúc; tuyệt đối không kéo dài vượt ${maxWords} từ. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`,
     "Không mở đầu bằng tiêu đề, không giải thích ngoài truyện.",
     "Không lặp lại đoạn kết chương trước; phải tiếp nối nguyên nhân và hệ quả.",
     lastTail ? ("===== ĐOẠN KẾT CHƯƠNG TRƯỚC (PHẢI TIẾP NỐI) =====\n" + lastTail.slice(-1200) + "\n===== HẾT =====\n" + "ĐỊA ĐIỂM MỞ CHƯƠNG — KHÓA CỨNG: đoạn mở đầu PHẢI diễn ra ĐÚNG địa điểm, thời điểm và với đúng những người đang có mặt như trong đoạn kết chương trước (ví dụ chương trước kết ở biệt thự của A thì chương này vẫn bắt đầu ở biệt thự của A). Chỉ được chuyển địa điểm khi đoạn kết đã nói rõ nhân vật sắp rời đi/đến nơi khác, hoặc sau một câu chuyển cảnh rõ ràng (di chuyển + mốc thời gian). Tuyệt đối không nhảy sang nhà/phòng trọ/nơi ở của nhân vật khác ngay từ câu đầu.") : "",
@@ -1335,14 +1490,24 @@ async function generateOneChapter(job) {
       (state.directive ? ("- MỆNH LỆNH CHƯƠNG NÀY (GIỮ NGUYÊN TOÀN BỘ, KHÔNG RÚT GỌN): " + String(state.directive) + "\n") : ""),
     "QUY TẮC ĐẦU RA V12: Chỉ viết văn xuôi của chương. Không xuất TIÊU ĐỀ:, NỘI DUNG:, markdown, ghi chú hay lời giải thích. Tên chương do hệ thống quản lý riêng.",
     "VĂN PHONG V12: câu văn tự nhiên như tiểu thuyết tiếng Việt được biên tập bởi người Việt; thay đổi nhịp câu theo cảnh; không cố làm mọi câu hoa mỹ; không né từ tự nhiên chỉ vì sợ lặp.",
-    "KẾT THÚC: nếu gần đủ độ dài và cảnh đã có điểm dừng tự nhiên, kết thúc gọn tại điểm đó; không thêm biến cố mới chỉ để đủ số từ."
+    "KẾT THÚC: nếu gần đủ độ dài và cảnh đã có điểm dừng tự nhiên, kết thúc gọn tại điểm đó; không thêm biến cố mới chỉ để đủ số từ.",
+    // V12.20: khối khóa kế hoạch đặt CUỐI prompt (model chú ý nhất phần cuối)
+    hasBrief ? [
+      "===== KẾ HOẠCH CHƯƠNG — NGUỒN SỰ THẬT DUY NHẤT (NGƯỜI DÙNG VIẾT) =====",
+      state.directive ? ("MỆNH LỆNH: " + String(state.directive).trim()) : "",
+      state.nextChapterHint ? ("GỢI Ý: " + String(state.nextChapterHint).trim()) : "",
+      "===== HẾT KẾ HOẠCH =====",
+      "LUẬT BÁM KẾ HOẠCH: (1) Viết đúng thứ tự các ý ở trên. (2) Không thêm sự kiện, cảnh, nhân vật hay manh mối mà kế hoạch không nhắc. (3) Ý cuối cùng của kế hoạch là ĐIỂM KẾT CHƯƠNG: viết xong ý đó thì DỪNG HẲN, không viết thêm đoạn nào sau nó, không thêm cảnh kế tiếp, không tóm tắt, không dự báo.",
+      closingBeat ? ("CÚ CHỐT BẮT BUỘC LÀ CÂU/CẢNH CUỐI CÙNG CỦA CHƯƠNG: " + closingBeat) : "",
+      "Câu cuối chương phải là câu hoàn chỉnh, kết thúc bằng dấu câu."
+    ].filter(Boolean).join("\n") : ""
   ].filter(Boolean).join("\n\n");
 
   // V12.2: nhánh trưởng thành có ngân sách output lớn hơn để không bị cụt sau một đoạn.
   const writeLeft = writeTimeLeft(isNsfw);
   const mainMaxTokens = isNsfw ? 24000 : 16000;
   const mainCallBudget = Math.max(60000, Math.min(480000, writeLeft - 15000));
-  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: mainMaxTokens, temperature: 0.82, totalMs: mainCallBudget, creative: true }, 2);
+  let result = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: mainMaxTokens, temperature: CREATIVE_TEMP, totalMs: mainCallBudget, creative: true }, 2);
   // V12: prose-only output; strip legacy labels if a model still emits them.
   let text = String(result.text || "").trim();
   text = text.replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "");
@@ -1373,7 +1538,10 @@ async function generateOneChapter(job) {
   // chỉ đặt 4. Mỗi lượt vẫn dùng chính model đã route ở trên.
   const configuredAttempts = Number(state.autoContinueMax) || 4;
   const maxAttempts = isNsfw ? Math.max(4, Math.min(8, configuredAttempts)) : Math.max(0, Math.min(8, configuredAttempts));
-  while (countWords(text) < minWords && countWords(text) < maxWords && attempts < maxAttempts) {
+  // V12.20: có gợi ý/mệnh lệnh thì CHỈ viết tiếp khi model bị cắt giữa chừng (hết token/đứt kết nối).
+  // Trước đây bản nền thấy chưa đủ số từ là tự gọi "Viết TIẾP" không kèm gợi ý -> model hết ý nên bịa cảnh mới.
+  if (hasBrief && !truncated && countWords(text) < minWords) issues.push(`Chương ${countWords(text)}/${minWords} từ vì bám đúng gợi ý của bạn — không kéo dài để tránh bịa thêm`);
+  while (countWords(text) < minWords && countWords(text) < maxWords && attempts < maxAttempts && (!hasBrief || truncated)) {
     if (writeTimeLeft(isNsfw) < 30000) { issues.push("Dừng viết tiếp vì hết ngân sách thời gian của job"); break; }
     attempts++;
     const current = countWords(text);
@@ -1389,11 +1557,12 @@ async function generateOneChapter(job) {
             ? "Đây là continuation của cùng một cảnh trưởng thành đã được chọn đúng model. Giữ nguyên mạch, nhịp, POV, xưng hô và trạng thái nhân vật; không tự chuyển sang cảnh mới chỉ vì đã viết được một đoạn. Tiếp tục cho đến khi đạt mục tiêu độ dài hoặc model thực sự hết output."
             : "Nếu diễn biến đã tự nhiên đi tới điểm dừng hợp lý gần đủ số từ, hãy kết thúc chương ở đó — KHÔNG cố nhồi thêm sự kiện/tình tiết mới chỉ để kéo dài.",
           storyControlPrompt(state),
+          hasBrief ? ("KẾ HOẠCH CỦA NGƯỜI DÙNG (chỉ viết nốt các ý CHƯA được viết trong đoạn đã có, đúng thứ tự; ý cuối là điểm kết chương — viết xong thì DỪNG, không thêm gì sau đó):\n" + [state.directive ? ("MỆNH LỆNH: " + String(state.directive).trim()) : "", state.nextChapterHint ? ("GỢI Ý: " + String(state.nextChapterHint).trim()) : ""].filter(Boolean).join("\n") + (closingBeat ? ("\nCÚ CHỐT CUỐI CHƯƠNG: " + closingBeat) : "") + "\nNếu các ý trong kế hoạch đã được viết hết trong đoạn đã có thì chỉ khép chương bằng 1–2 câu rồi dừng.") : "",
           "ĐOẠN CUỐI (giữ giọng văn, nhịp câu, POV, thì kể, xưng hô của đoạn này):", tail,
           "Bắt đầu ngay sau câu cuối; TUYỆT ĐỐI không viết lại từ đầu chương và không nhắc lại phần đã viết. Nếu cảnh đã khép lại tự nhiên thì chỉ viết tiếp sang diễn biến kế tiếp, không chép lại.",
           "Chỉ trả văn xuôi tiếp theo."
         ].join("\n\n") }],
-        maxTokens: isNsfw ? 12000 : 9000, temperature: 0.82, totalMs: Math.max(45000, Math.min(420000, writeTimeLeft(isNsfw) - 12000)), creative: true
+        maxTokens: isNsfw ? 12000 : 9000, temperature: CREATIVE_TEMP, totalMs: Math.max(45000, Math.min(420000, writeTimeLeft(isNsfw) - 12000)), creative: true
       }, 2);
       if (!cont.text || cont.text.trim().length < 50) { issues.push(`Viết tiếp #${attempts} quá ngắn`); break; }
       let contText = String(cont.text).trim();
@@ -1421,12 +1590,21 @@ async function generateOneChapter(job) {
   }
   { const dd = dedupeRepeatedScene(text); if (dd.length < text.length) { text = dd; issues.push("Đã cắt phần chương bị viết lặp lại từ đầu"); } }
   text = formatParagraphs(stripForeign(text));
-  { const stray = findStrayWords(text, (state.characters || []).map(x => x && x.name).filter(Boolean)); if (stray.length) issues.push("Từ lạ cần kiểm tra: " + stray.slice(0, 8).join(", ")); }
+  const _allowNames = (state.characters || []).map(x => x && x.name).filter(Boolean);
+  // V12.20: tự sửa từ lỗi ghép (mươititude, bănnton, bọcampo...) bằng cách nhờ model chép lại ĐÚNG câu chứa từ đó.
+  { const fx = await fixStrayWordsWithAI(job, text, _allowNames, model, isNsfw); text = fx.text; if (fx.fixed) issues.push(`Đã tự sửa ${fx.fixed} từ lỗi (vd: ${fx.samples.join(", ")})`); }
+  { const stray = findStrayWords(text, _allowNames); if (stray.length) issues.push("Từ lạ cần kiểm tra: " + stray.slice(0, 8).join(", ")); }
   const finalCap = trimToWordLimit(text, maxWords);
   text = finalCap.text;
   if (finalCap.trimmed) issues.push(`Đã khóa độ dài: tối đa ${maxWords} từ`);
+  // V12.20: câu cuối bị cụt giữa chừng -> nhờ model khép 1–3 câu; không được thì lùi về câu hoàn chỉnh gần nhất.
+  if (!endsCleanly(text)) {
+    const ce = await closeDanglingEnding(job, text, closingBeat, model, isNsfw);
+    text = ce.text; truncated = false;
+    issues.push(ce.how === "ai" ? "Câu cuối bị cụt — đã nhờ AI khép chương" : (ce.how === "trim" ? "Câu cuối bị cụt — đã lùi về câu hoàn chỉnh gần nhất" : "Câu cuối có thể còn cụt — hãy kiểm tra"));
+  }
   const wordCount = countWords(text);
-  if (wordCount < minWords * 0.9) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
+  if (wordCount < minWords * 0.9 && !(hasBrief && !truncated)) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
   return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], versions: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.3", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords, control };
 }
 
@@ -2200,7 +2378,8 @@ async function rewriteWorkerDraft(job, chapter, n, review) {
     const acc = checkRewriteAcceptable(oldWc, cap.text, newWc);
     if (!acc.ok) return acc;
     backupBeforeRewrite(chapter, "Trước khi Quality Gate sửa");
-    chapter.text = cap.text; chapter.wordCount = newWc; chapter.truncated = chapter.truncated || cap.trimmed;
+    { const tl = trimToLastSentence(cap.text, 0.8); if (tl.cut) { cap.text = tl.text; } }
+    chapter.text = cap.text; chapter.wordCount = countWords(cap.text); chapter.truncated = chapter.truncated || cap.trimmed;
     return { ok: true };
   } catch (e) { return { ok: false, reason: (e && e.message) || "lỗi gọi AI" }; }
 }
