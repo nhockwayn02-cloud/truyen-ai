@@ -52,7 +52,7 @@ exports.handler = async (event) => {
     const apiKeyEncrypted = encryptApiKey(apiKey);
     const now = Date.now();
     const job = {
-      schemaVersion: 10.2,
+      schemaVersion: 13,
       jobId,
       storyId: storyState.storyId || null,
       baseChapterCount: Array.isArray(storyState.chapters) ? storyState.chapters.length : 0,

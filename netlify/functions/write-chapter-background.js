@@ -80,11 +80,91 @@ function normalizeName(s) {
   return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
 }
 
-function chapterWordLimits(st) {
-  // Client gọi không tham số (dùng state toàn cục); worker truyền state của job.
+function normalizeChapterWordSettings(st) {
   if (!st && typeof state !== "undefined") st = state;
-  const target = Math.min(Math.max(Number(st && st.minChapterWords) || 5000, 500), 6000);
-  return { target, hardMax: Math.ceil(target * 1.15) };
+  st = st || {};
+  const target = Math.min(Math.max(Number(st.minChapterWords) || 5000, 500), 12000);
+  const minRatio = Math.min(0.99, Math.max(0.85, Number(st.chapterMinRatio) || 0.95));
+  const maxRatio = Math.min(1.35, Math.max(1.02, Number(st.chapterHardMaxRatio) || 1.15));
+  return { target, minWords: Math.floor(target * minRatio), hardMax: Math.ceil(target * maxRatio), minRatio, maxRatio };
+}
+
+function chapterWordLimits(st) {
+  // V13: KHÔNG hard-code 4.500/5.000. Mọi độ dài đều xuất phát từ target người dùng nhập.
+  const x = normalizeChapterWordSettings(st);
+  return { target: x.target, minWords: x.minWords, hardMax: x.hardMax, minRatio: x.minRatio, maxRatio: x.maxRatio };
+}
+
+function chapterWordBudgetLabel(st) {
+  const x = normalizeChapterWordSettings(st);
+  return `Mục tiêu ${x.target.toLocaleString("vi-VN")} từ · đạt tự nhiên từ ${x.minWords.toLocaleString("vi-VN")} · trần cứng ${x.hardMax.toLocaleString("vi-VN")} từ`;
+}
+
+function splitPlanPoints(plan) {
+  const src = String(plan || "").replace(/\r/g, "\n").trim();
+  if (!src) return [];
+  const lines = src.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  const out = [];
+  const push = x => {
+    x = String(x || "").replace(/^[-*•]+\s*/, "").replace(/^\d+[.)]\s*/, "").trim();
+    if (x.length >= 6) out.push(x.slice(0, 700));
+  };
+  lines.forEach(push);
+  if (out.length <= 1) {
+    return src.split(/(?<=[.!?…])\s+/).map(x => x.trim()).filter(x => x.length >= 20).slice(0, 12);
+  }
+  return out.slice(0, 12);
+}
+
+function allocateChapterBudget(plan, target, maxBeats) {
+  const points = splitPlanPoints(plan);
+  const t = Math.max(500, Number(target) || 5000);
+  if (!points.length) return { target: t, beats: [], total: 0 };
+  const max = Math.max(1, Math.min(12, Number(maxBeats) || 8));
+  const selected = points.slice(0, max);
+  // Trọng số theo độ dài mô tả nhưng có sàn để beat ngắn vẫn đủ chỗ phát triển.
+  const weights = selected.map(x => Math.max(1, Math.min(3, x.length / 180)));
+  const sum = weights.reduce((a,b)=>a+b,0);
+  const floor = Math.max(180, Math.floor(t * 0.07));
+  let budgets = selected.map((x,i)=>Math.max(floor, Math.round(t * weights[i] / sum)));
+  let total = budgets.reduce((a,b)=>a+b,0);
+  while (total > t) {
+    let i = budgets.indexOf(Math.max(...budgets));
+    if (budgets[i] <= floor) break;
+    const d = Math.min(50, budgets[i] - floor); budgets[i] -= d; total -= d;
+  }
+  while (total < t) {
+    const i = budgets.indexOf(Math.min(...budgets));
+    budgets[i] += Math.min(50, t-total); total += Math.min(50, t-total);
+  }
+  return { target: t, beats: selected.map((text,i)=>({ id:`B${i+1}`, text, targetWords:budgets[i] })), total };
+}
+
+function buildChapterBlueprint(plan, st) {
+  const sc = (st && st.storyControl) || st || {};
+  const maxEvents = Math.max(1, Math.min(3, Number(sc.maxMainEvents) || 3));
+  const limits = normalizeChapterWordSettings(st);
+  const budget = allocateChapterBudget(plan, limits.target, 8);
+  const beats = budget.beats;
+  const events = [];
+  if (beats.length) {
+    const perEvent = Math.ceil(beats.length / maxEvents);
+    for (let i=0;i<beats.length;i+=perEvent) events.push({ id:`E${events.length+1}`, beats:beats.slice(i,i+perEvent).map(b=>b.id) });
+  }
+  return { schemaVersion:1, targetWords:limits.target, minWords:limits.minWords, hardMax:limits.hardMax, maxMainEvents:maxEvents, events, beats };
+}
+
+function chapterBlueprintPrompt(blueprint) {
+  if (!blueprint || !blueprint.beats || !blueprint.beats.length) return "";
+  return [
+    "V13 CHAPTER BLUEPRINT — KHÓA CẤU TRÚC, KHÔNG PHẢI VĂN XUÔI:",
+    `- Target: ${blueprint.targetWords} từ; vùng đạt tự nhiên: ${blueprint.minWords}–${blueprint.hardMax} từ.`,
+    `- Tối đa ${blueprint.maxMainEvents} sự kiện chính.`,
+    "- Không dùng ngân sách của beat này để tạo sự kiện mới; nếu beat đã hoàn tất thì chuyển sang beat kế tiếp.",
+    "- Không cần đạt đúng từng con số; đây là ngân sách tương đối để giữ nhịp toàn chương.",
+    "- Khi toàn bộ beat đã hoàn thành, DỪNG theo điểm kết của brief.",
+    blueprint.beats.map(b=>`[${b.id}] ~${b.targetWords} từ: ${b.text}`).join("\n")
+  ].join("\n");
 }
 
 function trimToWordLimit(text, maxWords) {
@@ -100,7 +180,28 @@ function trimToWordLimit(text, maxWords) {
   return { text: out.trim(), trimmed: true };
 }
 
+// V12.21: xóa phần lập kế hoạch tiếng Anh mà một số model thinking nhúng vào đầu output.
+function stripThinkingOutput(text) {
+  if (!text) return text;
+  let t = String(text);
+  t = t.replace(/<think(?:ing)?[\s>][\s\S]*?<\/think(?:ing)?>/gi, '');
+  const viRe = /[\u00C0-\u024F\u1EA0-\u1EF9]/;
+  const paras = t.split(/\n{2,}/); let start = 0;
+  for (let i = 0; i < paras.length; i++) {
+    const p = paras[i].trim(); if (!p) continue;
+    if (viRe.test(p)) { start = i; break; }
+    const ascii = (p.match(/[a-zA-Z0-9 .,!?:;()\-*_#]/g)||[]).length;
+    if (ascii / (p.replace(/\s/g,'').length||1) > 0.75 && p.length > 150) start = i + 1;
+  }
+  if (start > 0) t = paras.slice(start).join('\n\n');
+  t = t.replace(/^\s*\*{0,2}Block\s+[A-Z][:\s].{0,120}\n/gim, '')
+       .replace(/^\s*(?:Let me|Let's|I'll|I will|I need|Note:|Draft:)[^\n]*/gim, '')
+       .replace(/^\s*[-*]{3,}\s*$/gm, '');
+  return t.replace(/^\s+/, '').trim();
+}
+
 function stripForeign(text) {
+  text = stripThinkingOutput(text); // V12.21
   // V12.10: dọn chữ Hán/Nhật/Hàn/Cyrillic/Thái/Ả Rập/Hindi còn sót (kể cả khi dưới ngưỡng viết lại).
   if (!text) return text;
   let t = String(text)
@@ -1447,7 +1548,7 @@ async function expandChapterInPlace(job, text, o) {
       const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: o.model,
         messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }],
         maxTokens: Math.min(9000, Math.round(tw * 3) + 600), temperature: CREATIVE_TEMP, totalMs: Math.max(45000, Math.min(240000, writeTimeLeft(o.isNsfw) - 20000)), creative: true }, 1);
-      let out = stripForeign(String(r.text || "").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "").replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim());
+      let out = stripForeign(stripThinkingOutput(String(r.text || "").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "").replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim()));
       if (r.finishReason === "length") return null;
       const nw = countWords(out);
       if (nw < c.words * 1.08) return null;
@@ -1496,7 +1597,7 @@ async function closeDanglingEnding(job, text, closingBeat, model, isNsfw) {
         "Chỉ trả về phần viết nốt."
       ].filter(Boolean).join("\n\n");
       const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }], maxTokens: 500, temperature: 0.5, totalMs: 60000, creative: true }, 1);
-      let add = stripForeign(String(r.text || "").trim());
+      let add = stripForeign(stripThinkingOutput(String(r.text || "").trim()));
       add = add.replace(/^\s*(?:\.\.\.|…)\s*/, "").trim();
       if (add && add.length < 900 && !detectNonVietnamese(add)) {
         const sep = /\s$/.test(text) || /^[,.!?…;:”"’')]/.test(add) ? "" : " ";
@@ -1546,12 +1647,13 @@ async function generateOneChapter(job) {
   const prompt = [
     `VIẾT CHƯƠNG ${chapterNumber}. Truyện đã có ${chapters.length} chương.`,
     hasBrief
-      ? `MỤC TIÊU THAM KHẢO ${minWords} từ; GIỚI HẠN CỨNG ${maxWords} từ. CHƯƠNG NÀY CÓ KẾ HOẠCH CỦA NGƯỜI DÙNG: độ dài do kế hoạch quyết định. Triển khai ĐỦ mọi ý theo đúng thứ tự rồi DỪNG ở ý cuối. Độ dài tối thiểu ${Math.round(minWords * 0.95)} từ: đạt bằng cách sống CHẬM từng khoảnh khắc của các ý đã có, KHÔNG bằng cách thêm cảnh/biến cố/nhân vật mới và KHÔNG nhảy cóc thời gian, KHÔNG tóm tắt. Mỗi ý trong kế hoạch phải viết thành một khối ~${Math.round(minWords / 5)}–${Math.round(minWords / 4)} từ, dùng các kỹ thuật: (1) giác quan chậm và cụ thể (ánh sáng, âm thanh, mùi, xúc giác, nhiệt độ); (2) nội tâm giằng co, mâu thuẫn giữa suy nghĩ và phản ứng cơ thể; (3) lặp có biến tấu — mỗi lần lặp phải mang thêm cảm xúc/mức độ/phản ứng mới; (4) thoại ngập ngừng, khoảng lặng, phản ứng nhỏ; (5) chi tiết môi trường và vật dụng. Mỗi khối phải có một chuyển biến nhỏ (đổi quyết định, lộ chi tiết, đổi thế chủ động). Xen câu dài miêu tả với câu ngắn, thoại, khoảng lặng. Cảnh càng căng/nhục nhã/kích thích thì càng viết chậm và chi tiết. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`
+      ? `MỤC TIÊU THAM KHẢO ${minWords} từ; GIỚI HẠN CỨNG ${maxWords} từ. CHƯƠNG NÀY CÓ KẾ HOẠCH CỦA NGƯỜI DÙNG: độ dài do kế hoạch quyết định. Triển khai ĐỦ mọi ý theo đúng thứ tự rồi DỪNG ở ý cuối. Độ dài tối thiểu ${Math.round(minWords * 0.95)} từ: đạt bằng cách sống CHẬM từng khoảnh khắc của các ý đã có, KHÔNG bằng cách thêm cảnh/biến cố/nhân vật mới và KHÔNG nhảy cóc thời gian, KHÔNG tóm tắt. Không chia đều cứng theo số ý. Hãy dùng V13 CHAPTER BLUEPRINT để phân bổ ngân sách động cho từng beat; beat dài/ngắn khác nhau được phép lệch ngân sách miễn toàn chương giữ đúng target và không vượt hard max. Dùng các kỹ thuật: (1) giác quan chậm và cụ thể (ánh sáng, âm thanh, mùi, xúc giác, nhiệt độ); (2) nội tâm giằng co, mâu thuẫn giữa suy nghĩ và phản ứng cơ thể; (3) lặp có biến tấu — mỗi lần lặp phải mang thêm cảm xúc/mức độ/phản ứng mới; (4) thoại ngập ngừng, khoảng lặng, phản ứng nhỏ; (5) chi tiết môi trường và vật dụng. Mỗi khối phải có một chuyển biến nhỏ (đổi quyết định, lộ chi tiết, đổi thế chủ động). Xen câu dài miêu tả với câu ngắn, thoại, khoảng lặng. Cảnh càng căng/nhục nhã/kích thích thì càng viết chậm và chi tiết. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`
       : `MỤC TIÊU ${minWords} từ; GIỚI HẠN CỨNG ${maxWords} từ. Khi đạt khoảng ${minWords} từ và cảnh đã có điểm dừng tự nhiên thì phải kết thúc; tuyệt đối không kéo dài vượt ${maxWords} từ. ${DESCRIPTION_PROMPTS[state.descriptionLevel] || DESCRIPTION_PROMPTS.balanced}`,
     "Không mở đầu bằng tiêu đề, không giải thích ngoài truyện.",
     "Không lặp lại đoạn kết chương trước; phải tiếp nối nguyên nhân và hệ quả.",
     lastTail ? ("===== ĐOẠN KẾT CHƯƠNG TRƯỚC (PHẢI TIẾP NỐI) =====\n" + lastTail.slice(-1200) + "\n===== HẾT =====\n" + "ĐỊA ĐIỂM MỞ CHƯƠNG — KHÓA CỨNG: đoạn mở đầu PHẢI diễn ra ĐÚNG địa điểm, thời điểm và với đúng những người đang có mặt như trong đoạn kết chương trước (ví dụ chương trước kết ở biệt thự của A thì chương này vẫn bắt đầu ở biệt thự của A). Chỉ được chuyển địa điểm khi đoạn kết đã nói rõ nhân vật sắp rời đi/đến nơi khác, hoặc sau một câu chuyển cảnh rõ ràng (di chuyển + mốc thời gian). Tuyệt đối không nhảy sang nhà/phòng trọ/nơi ở của nhân vật khác ngay từ câu đầu.") : "",
     buildContext(state), recentContext(chapters),
+    hasBrief ? chapterBlueprintPrompt(buildChapterBlueprint([state.directive, state.nextChapterHint].filter(Boolean).join("\n"), state)) : "",
     storyControlPrompt(state),
     matureFocusPrompt(state),
     isNsfw ? EROTIC_STYLE_PROMPT : "",
@@ -1674,7 +1776,7 @@ async function generateOneChapter(job) {
       text = ex.text;
     }
   }
-  text = formatParagraphs(stripForeign(text));
+  text = formatParagraphs(stripForeign(stripThinkingOutput(text)));
   const _allowNames = (state.characters || []).map(x => x && x.name).filter(Boolean);
   // V12.20: tự sửa từ lỗi ghép (mươititude, bănnton, bọcampo...) bằng cách nhờ model chép lại ĐÚNG câu chứa từ đó.
   { const fx = await fixStrayWordsWithAI(job, text, _allowNames, model, isNsfw); text = fx.text; if (fx.fixed) issues.push(`Đã tự sửa ${fx.fixed} từ lỗi (vd: ${fx.samples.join(", ")})`); }
@@ -1690,7 +1792,7 @@ async function generateOneChapter(job) {
   }
   const wordCount = countWords(text);
   if (wordCount < minWords * 0.95) issues.push(`Thiếu từ: ${wordCount}/${minWords}`);
-  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], versions: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v12.3", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords, control };
+  return { title, text, wordCount, truncated, plan: "", continuityWarnings: [], versions: [], modelUsed: model, isNsfw, routingModel: model, routingReason: job.forceNsfw ? "forced" : (hotKeyword ? "keyword" : (isNsfw ? "heat" : "normal")), polished: false, summary: "", versions: [], compressed: false, createdBy: "background-v13", createdAt: Date.now(), autoUpdateIssues: issues, minWordsTarget: minWords, control };
 }
 
 /* V12.10: chống tóm tắt bịa — kiểm tra tên/từ trong bản tóm tắt có thật trong chương không. */
@@ -2365,20 +2467,20 @@ async function updateLongMemory(job, chapter, n, state) {
     const b = [state.timeline.length, state.foreshadowing.length, state.knowledgeLedger.length];
     (Array.isArray(obj.events) ? obj.events : []).forEach(e => {
       if (!e?.summary) return;
-      state.timeline.push({ id: genId("ev"), chapter: n, type: e.type || "event", summary: e.summary, causes: e.causes || "", consequences: e.consequences || "" });
+      state.timeline.push({ id: genId("ev"), chapter: n, sourceChapter: n, sourceType: "chapter_text", type: e.type || "event", summary: e.summary, causes: e.causes || "", consequences: e.consequences || "" });
     });
     (Array.isArray(obj.foreshadowing) ? obj.foreshadowing : []).forEach(f => {
       if (!f?.description) return;
       const key = normalizeName(f.match || f.description).slice(0, 60);
       let x = state.foreshadowing.find(a => normalizeName(a.description).slice(0, 60) === key || normalizeName(a.description).includes(key.slice(0, 30)));
-      if (!x) state.foreshadowing.push({ id: genId("fs"), description: f.description, status: f.status || "seeded", plantedChapter: n, lastUpdated: n, characters: f.characters || "" });
+      if (!x) state.foreshadowing.push({ id: genId("fs"), description: f.description, status: f.status || "seeded", plantedChapter: n, sourceChapter: n, sourceType: "chapter_text", lastUpdated: n, characters: f.characters || "" });
       else { if (f.status) x.status = f.status; x.lastUpdated = n; if (f.characters) x.characters = f.characters; }
     });
     (Array.isArray(obj.knowledge) ? obj.knowledge : []).forEach(k => {
       if (!k?.character || !k?.fact) return;
       const key = normalizeName(k.character) + "|" + normalizeName(k.fact).slice(0, 80);
       let x = state.knowledgeLedger.find(a => normalizeName(a.character) + "|" + normalizeName(a.fact).slice(0, 80) === key);
-      if (!x) state.knowledgeLedger.push({ id: genId("kl"), character: k.character, fact: k.fact, confidence: k.confidence || "direct", firstChapter: n, lastUpdated: n });
+      if (!x) state.knowledgeLedger.push({ id: genId("kl"), character: k.character, fact: k.fact, confidence: k.confidence || "direct", firstChapter: n, sourceChapter: n, sourceType: "chapter_text", lastUpdated: n });
       else x.lastUpdated = n;
     });
     const added = [state.timeline.length - b[0], state.foreshadowing.length - b[1], state.knowledgeLedger.length - b[2]];
@@ -2409,6 +2511,34 @@ async function scanScenes(job, chapter, n, state) {
     res.notes.push(`Scene: ${fin(r)}, parse=${parsed.method || "?"}, +${added} cảnh`);
     return res;
   } catch (e) { res.ok = false; res.notes.push(`Scene: LỖI — ${sampleOf(e.message, 160)}`); res.problems.push("Scene: lỗi gọi model"); return res; }
+}
+
+function captureWorkerChapterSnapshot(state, chapterNumber, chapter) {
+  const snap = {
+    schemaVersion: 13, capturedAt: Date.now(), chapter: chapterNumber,
+    currentStatus: state.currentStatus || "",
+    statusState: JSON.parse(JSON.stringify(state.statusState || {})),
+    storyClock: state.storyClock || "",
+    mainCharProfile: state.mainCharProfile ? JSON.parse(JSON.stringify(state.mainCharProfile)) : null,
+    mainCharCoreIdentity: JSON.parse(JSON.stringify(state.mainCharCoreIdentity || {})),
+    femaleCharacterDefinition: state.femaleCharacterDefinition || "",
+    characters: JSON.parse(JSON.stringify(state.characters || [])),
+    locations: JSON.parse(JSON.stringify(state.locations || [])),
+    items: JSON.parse(JSON.stringify(state.items || [])),
+    threads: JSON.parse(JSON.stringify(state.threads || [])),
+    timeline: JSON.parse(JSON.stringify(state.timeline || [])),
+    foreshadowing: JSON.parse(JSON.stringify(state.foreshadowing || [])),
+    knowledgeLedger: JSON.parse(JSON.stringify(state.knowledgeLedger || [])),
+    memoryEvents: JSON.parse(JSON.stringify(state.memoryEvents || [])),
+    characterStateTracker: JSON.parse(JSON.stringify(state.characterStateTracker || {})),
+    lastStatusChapter: Number(state.lastStatusChapter || 0),
+    lastMemorySyncChapter: Number(state.lastMemorySyncChapter || 0)
+  };
+  if (chapter && typeof chapter === "object") {
+    chapter.stateSnapshot = snap;
+    chapter.stateSnapshots = [snap].concat(Array.isArray(chapter.stateSnapshots) ? chapter.stateSnapshots : []).slice(0, 7);
+  }
+  return snap;
 }
 
 function cleanJobForStore(job) {
@@ -2457,7 +2587,7 @@ async function rewriteWorkerDraft(job, chapter, n, review) {
       maxTokens: 16000, temperature: 0.55, totalMs: Math.max(45000, Math.min(240000, writeTimeLeft(false) - 10000)), creative: true
     }, 1);
     let text = String(r.text || "").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "").replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim();
-    text = formatParagraphs(stripForeign(dedupeRepeatedScene(text)));
+    text = formatParagraphs(stripForeign(stripThinkingOutput(dedupeRepeatedScene(text))));
     const cap = trimToWordLimit(text, chapterWordLimits(st).hardMax);
     const newWc = countWords(cap.text);
     const acc = checkRewriteAcceptable(oldWc, cap.text, newWc);
@@ -2574,6 +2704,7 @@ exports.handler = async (event) => {
       })
     ]);
     await checkpoint("Đang lưu kết quả...");
+    captureWorkerChapterSnapshot(newState, n, chapter);
     applyCanonSync(newState, chapter);
     job.progress = "Đã Sync Canon v" + newState.canonVersion;
 
