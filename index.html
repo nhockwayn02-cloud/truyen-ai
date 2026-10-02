@@ -318,7 +318,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="brand-mark"></div>
 <div>
 <div class="brand-name">Xưởng Truyện AI Pro Max</div>
-<div class="brand-sub">v12.18 · Dọn nhân vật trùng · Quality Gate dùng chung · Tiếng Việt</div>
+<div class="brand-sub">v13.0 · Story Compiler · Canon Lock · Dynamic Word Budget · Quality Gate</div>
 </div>
 </div>
 <div class="topbar-actions">
@@ -712,7 +712,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <option value="pacing">Cải thiện nhịp</option>
 </select>
 </div>
-<div class="field"><label>Độ dài mục tiêu (từ, đếm theo âm tiết) · tối đa 6.000</label><input id="minWordsInput" max="6000" min="500" step="500" type="number" value="5000"/></div>
+<div class="field"><label>Độ dài mục tiêu (từ) · V13 tự linh hoạt theo mục tiêu</label><input id="minWordsInput" max="12000" min="500" step="100" type="number" value="5000"/><div class="hint" id="wordBudgetInfo">Mục tiêu 5.000 từ · đạt tự nhiên từ 4.750 · trần cứng 5.750 từ</div></div>
 <div class="field"><label>Auto-continue tối đa</label><input id="autoContinueMaxInput" max="8" min="0" type="number" value="4"/></div>
 <div class="field"><label>🎨 Mức độ miêu tả</label>
 <select id="descriptionLevelSelect">
@@ -981,11 +981,91 @@ function normalizeName(s) {
   return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
 }
 
-function chapterWordLimits(st) {
-  // Client gọi không tham số (dùng state toàn cục); worker truyền state của job.
+function normalizeChapterWordSettings(st) {
   if (!st && typeof state !== "undefined") st = state;
-  const target = Math.min(Math.max(Number(st && st.minChapterWords) || 5000, 500), 6000);
-  return { target, hardMax: Math.ceil(target * 1.15) };
+  st = st || {};
+  const target = Math.min(Math.max(Number(st.minChapterWords) || 5000, 500), 12000);
+  const minRatio = Math.min(0.99, Math.max(0.85, Number(st.chapterMinRatio) || 0.95));
+  const maxRatio = Math.min(1.35, Math.max(1.02, Number(st.chapterHardMaxRatio) || 1.15));
+  return { target, minWords: Math.floor(target * minRatio), hardMax: Math.ceil(target * maxRatio), minRatio, maxRatio };
+}
+
+function chapterWordLimits(st) {
+  // V13: KHÔNG hard-code 4.500/5.000. Mọi độ dài đều xuất phát từ target người dùng nhập.
+  const x = normalizeChapterWordSettings(st);
+  return { target: x.target, minWords: x.minWords, hardMax: x.hardMax, minRatio: x.minRatio, maxRatio: x.maxRatio };
+}
+
+function chapterWordBudgetLabel(st) {
+  const x = normalizeChapterWordSettings(st);
+  return `Mục tiêu ${x.target.toLocaleString("vi-VN")} từ · đạt tự nhiên từ ${x.minWords.toLocaleString("vi-VN")} · trần cứng ${x.hardMax.toLocaleString("vi-VN")} từ`;
+}
+
+function splitPlanPoints(plan) {
+  const src = String(plan || "").replace(/\r/g, "\n").trim();
+  if (!src) return [];
+  const lines = src.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  const out = [];
+  const push = x => {
+    x = String(x || "").replace(/^[-*•]+\s*/, "").replace(/^\d+[.)]\s*/, "").trim();
+    if (x.length >= 6) out.push(x.slice(0, 700));
+  };
+  lines.forEach(push);
+  if (out.length <= 1) {
+    return src.split(/(?<=[.!?…])\s+/).map(x => x.trim()).filter(x => x.length >= 20).slice(0, 12);
+  }
+  return out.slice(0, 12);
+}
+
+function allocateChapterBudget(plan, target, maxBeats) {
+  const points = splitPlanPoints(plan);
+  const t = Math.max(500, Number(target) || 5000);
+  if (!points.length) return { target: t, beats: [], total: 0 };
+  const max = Math.max(1, Math.min(12, Number(maxBeats) || 8));
+  const selected = points.slice(0, max);
+  // Trọng số theo độ dài mô tả nhưng có sàn để beat ngắn vẫn đủ chỗ phát triển.
+  const weights = selected.map(x => Math.max(1, Math.min(3, x.length / 180)));
+  const sum = weights.reduce((a,b)=>a+b,0);
+  const floor = Math.max(180, Math.floor(t * 0.07));
+  let budgets = selected.map((x,i)=>Math.max(floor, Math.round(t * weights[i] / sum)));
+  let total = budgets.reduce((a,b)=>a+b,0);
+  while (total > t) {
+    let i = budgets.indexOf(Math.max(...budgets));
+    if (budgets[i] <= floor) break;
+    const d = Math.min(50, budgets[i] - floor); budgets[i] -= d; total -= d;
+  }
+  while (total < t) {
+    const i = budgets.indexOf(Math.min(...budgets));
+    budgets[i] += Math.min(50, t-total); total += Math.min(50, t-total);
+  }
+  return { target: t, beats: selected.map((text,i)=>({ id:`B${i+1}`, text, targetWords:budgets[i] })), total };
+}
+
+function buildChapterBlueprint(plan, st) {
+  const sc = (st && st.storyControl) || st || {};
+  const maxEvents = Math.max(1, Math.min(3, Number(sc.maxMainEvents) || 3));
+  const limits = normalizeChapterWordSettings(st);
+  const budget = allocateChapterBudget(plan, limits.target, 8);
+  const beats = budget.beats;
+  const events = [];
+  if (beats.length) {
+    const perEvent = Math.ceil(beats.length / maxEvents);
+    for (let i=0;i<beats.length;i+=perEvent) events.push({ id:`E${events.length+1}`, beats:beats.slice(i,i+perEvent).map(b=>b.id) });
+  }
+  return { schemaVersion:1, targetWords:limits.target, minWords:limits.minWords, hardMax:limits.hardMax, maxMainEvents:maxEvents, events, beats };
+}
+
+function chapterBlueprintPrompt(blueprint) {
+  if (!blueprint || !blueprint.beats || !blueprint.beats.length) return "";
+  return [
+    "V13 CHAPTER BLUEPRINT — KHÓA CẤU TRÚC, KHÔNG PHẢI VĂN XUÔI:",
+    `- Target: ${blueprint.targetWords} từ; vùng đạt tự nhiên: ${blueprint.minWords}–${blueprint.hardMax} từ.`,
+    `- Tối đa ${blueprint.maxMainEvents} sự kiện chính.`,
+    "- Không dùng ngân sách của beat này để tạo sự kiện mới; nếu beat đã hoàn tất thì chuyển sang beat kế tiếp.",
+    "- Không cần đạt đúng từng con số; đây là ngân sách tương đối để giữ nhịp toàn chương.",
+    "- Khi toàn bộ beat đã hoàn thành, DỪNG theo điểm kết của brief.",
+    blueprint.beats.map(b=>`[${b.id}] ~${b.targetWords} từ: ${b.text}`).join("\n")
+  ].join("\n");
 }
 
 function trimToWordLimit(text, maxWords) {
@@ -1001,7 +1081,28 @@ function trimToWordLimit(text, maxWords) {
   return { text: out.trim(), trimmed: true };
 }
 
+// V12.21: xóa phần lập kế hoạch tiếng Anh mà một số model thinking nhúng vào đầu output.
+function stripThinkingOutput(text) {
+  if (!text) return text;
+  let t = String(text);
+  t = t.replace(/<think(?:ing)?[\s>][\s\S]*?<\/think(?:ing)?>/gi, '');
+  const viRe = /[\u00C0-\u024F\u1EA0-\u1EF9]/;
+  const paras = t.split(/\n{2,}/); let start = 0;
+  for (let i = 0; i < paras.length; i++) {
+    const p = paras[i].trim(); if (!p) continue;
+    if (viRe.test(p)) { start = i; break; }
+    const ascii = (p.match(/[a-zA-Z0-9 .,!?:;()\-*_#]/g)||[]).length;
+    if (ascii / (p.replace(/\s/g,'').length||1) > 0.75 && p.length > 150) start = i + 1;
+  }
+  if (start > 0) t = paras.slice(start).join('\n\n');
+  t = t.replace(/^\s*\*{0,2}Block\s+[A-Z][:\s].{0,120}\n/gim, '')
+       .replace(/^\s*(?:Let me|Let's|I'll|I will|I need|Note:|Draft:)[^\n]*/gim, '')
+       .replace(/^\s*[-*]{3,}\s*$/gm, '');
+  return t.replace(/^\s+/, '').trim();
+}
+
 function stripForeign(text) {
+  text = stripThinkingOutput(text); // V12.21
   // V12.10: dọn chữ Hán/Nhật/Hàn/Cyrillic/Thái/Ả Rập/Hindi còn sót (kể cả khi dưới ngưỡng viết lại).
   if (!text) return text;
   let t = String(text)
@@ -1999,7 +2100,7 @@ function buildChapterData(source){
   };
 }
 function serializeStoryRecord(source){
-  return { schemaVersion:11, storyId:source.storyId, updatedAt:Date.now(),
+  return { schemaVersion:13, storyId:source.storyId, updatedAt:Date.now(),
     StoryMetaData:buildStoryMetaData(source),
     ChapterData:buildChapterData(source)
   };
@@ -2113,7 +2214,7 @@ async function initIndexedDBStorage(){
 }
 /* ========== STATE ========== */
 const state = {
-  schemaVersion: 9,
+  schemaVersion: 13,
   apiEndpoint: "https://openrouter.ai/api/v1/chat/completions", apiKey: "",
   model: "deepseek/deepseek-v3.2", modelNsfw: "aion-labs/aion-2.0",
   nsfwMode: "auto", nsfwAutoThreshold: 6, chapterMatureFocus: "none",
@@ -2170,7 +2271,7 @@ function newMainCharProfile(){
 }
 function newStoryState(name){
   return {
-    schemaVersion: 12, lorebook: [], loreBudgetTokens: 2000, storyId: newStoryId(), storyName: name || ("Truyện " + (storiesIndex.length + 1)),
+    schemaVersion: 13, lorebook: [], loreBudgetTokens: 2000, storyId: newStoryId(), storyName: name || ("Truyện " + (storiesIndex.length + 1)),
     styleBible: { pov:"third_limited", tense:"past", tone:"", sample:"", extra:"" },
     mainPlot:"", genre:"", worldSetting:"", worldRules:"", antagonist:"",
     pronounRules:"", worldDescription:"", storyBibleLocked:false,
@@ -2447,7 +2548,7 @@ async function loadCurrentStoryIntoState(){
   }
   if(!state.mainCharProfile) state.mainCharProfile = newMainCharProfile();
   // V12.3: chuẩn hóa độ dài cũ về 500–6.000 từ; hard cap thực tế là +15%.
-  state.minChapterWords = Math.min(6000, Math.max(500, Number(state.minChapterWords) || 5000));
+  state.minChapterWords = Math.min(12000, Math.max(500, Number(state.minChapterWords) || 5000));
   if(!state.styleBible) state.styleBible = { pov:"third_limited", tense:"past", tone:"", sample:"", extra:"" };
   if(!state.vocabulary) state.vocabulary = { preferred:"", banned:"", overused:"", anatomy:"" };
   if(!Array.isArray(state.locations)) state.locations = [];
@@ -2480,7 +2581,7 @@ async function loadCurrentStoryIntoState(){
   if(!Number.isFinite(Number(state.snapshotLimit))) state.snapshotLimit=7;
   if(state.wakeLockEnabled==null) state.wakeLockEnabled=true;
   if(!Number.isFinite(Number(state.slidingWindowWords))) state.slidingWindowWords=1500;
-  state.schemaVersion = 10;
+  state.schemaVersion = 13;
 }
 
 /* ========== DOM REFS ========== */
@@ -3773,9 +3874,14 @@ streamingToggle.addEventListener("change", ()=>{ state.streamingEnabled = stream
 queueToggle.addEventListener("change", ()=>{ state.queueEnabled = queueToggle.checked; persist(); });
 parallelToggle.addEventListener("change", ()=>{ state.parallelEnabled = parallelToggle.checked; persist(); });
 checkpointToggle.addEventListener("change", ()=>{ state.checkpointEnabled = checkpointToggle.checked; persist(); });
+function updateWordBudgetInfo(){
+  const el=$ID("wordBudgetInfo");
+  if(!el) return;
+  el.textContent=chapterWordBudgetLabel();
+}
 minWordsInput.addEventListener("change", ()=>{
-  state.minChapterWords = Math.min(6000, Math.max(500, parseInt(minWordsInput.value,10) || 5000));
-  minWordsInput.value = state.minChapterWords; persist();
+  state.minChapterWords = Math.min(12000, Math.max(500, parseInt(minWordsInput.value,10) || 5000));
+  minWordsInput.value = state.minChapterWords; updateWordBudgetInfo(); persist();
 });
 autoContinueMaxInput.addEventListener("change", ()=>{
   state.autoContinueMax = Math.max(0, Math.min(8, parseInt(autoContinueMaxInput.value,10) || 4));
@@ -5677,6 +5783,79 @@ async function buildChapterPlan(context, recent, chapterNumber){
   try{ const { text } = await callAI(prompt, {maxTokens:1400, temperature:0.45}); return text; }catch(err){ return ""; }
 }
 
+/* ========== V12.21: MỞ RỘNG CHƯƠNG NGẮN TẠI CHỖ (đồng bộ với expandChapterInPlace của worker nền) ==========
+   Model thường dừng ~3000 từ dù mục tiêu 4500. Chia chương thành các khối ~900 từ, viết lại từng khối dày hơn
+   (giác quan, nội tâm, lặp có biến tấu, thoại, môi trường) mà KHÔNG thêm sự kiện mới. Khối nào hỏng/không dài hơn >=8% thì thử lại 1 lần,
+   vẫn hỏng thì giữ bản gốc. Chạy TUẦN TỰ (callAI dùng 1 bộ hủy chung nên nút Dừng chỉ hủy được 1 lượt song song). */
+async function expandChapterInPlaceClient(text, o){
+  const cur = countWords(text);
+  const goal = Math.min(o.maxWords - 80, o.minWords);
+  const factor = Math.min(2.2, goal / Math.max(1, cur));
+  if(factor < 1.05) return { ok:false, reason:"đã đủ độ dài" };
+  const paras = String(text).split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+  const nChunks = Math.max(1, Math.min(6, Math.round(cur / 900)));
+  const per = cur / nChunks; const chunks = []; let bufP = [], bufW = 0;
+  paras.forEach((pp, i)=>{
+    bufP.push(pp); bufW += countWords(pp);
+    const left = paras.length - 1 - i;
+    if((bufW >= per && chunks.length < nChunks - 1) || left === 0){ chunks.push({ text: bufP.join("\n\n"), words: bufW }); bufP = []; bufW = 0; }
+  });
+  const brief = (state.directive || state.nextChapterHint)
+    ? ("KẾ HOẠCH CỦA NGƯỜI DÙNG (để đối chiếu, KHÔNG thêm ngoài kế hoạch):\n" + [state.directive, state.nextChapterHint].filter(Boolean).map(x=>String(x).trim()).join("\n")) : "";
+  const lastPara = (t)=>{ const ps = String(t).split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean); return ps[ps.length-1] || ""; };
+  const overlap = (a, b)=>{ const A = new Set(_normWords(a)), B = new Set(_normWords(b)); if(!A.size || !B.size) return 1; let h = 0; A.forEach(w=>{ if(B.has(w)) h++; }); return h / Math.min(A.size, B.size); };
+  const pronounBlock = state.pronounRules ? ("QUY TẮC XƯNG HÔ:\n" + state.pronounRules) : "";
+  const doChunkOnce = async (i, retryNote)=>{
+    const c = chunks[i], tw = Math.round(c.words * factor), isFirst = i === 0, isLast = i === chunks.length - 1;
+    const prompt = [
+      "MỞ RỘNG ĐOẠN " + (i+1) + "/" + chunks.length + " của một chương truyện. Đoạn gốc dưới đây có " + c.words + " từ. Hãy viết lại thành khoảng " + tw + " từ (BẮT BUỘC dài hơn ít nhất " + Math.round(c.words * Math.min(factor, 1.6) * 0.9) + " từ; không vượt " + Math.round(tw * 1.25) + " từ).",
+      "CÁCH LÀM DÀI (áp dụng lần lượt cho TỪNG hành động/lời thoại gốc): (1) giác quan chậm và cụ thể — ánh sáng, âm thanh, mùi, xúc giác, nhiệt độ, nhịp thở; (2) nội tâm giằng co, mâu thuẫn giữa suy nghĩ và phản ứng cơ thể; (3) lặp có biến tấu — mỗi lần nhắc lại phải thêm một thông tin/cảm xúc/mức độ mới, không chép lại cấu trúc câu; (4) thoại có ngập ngừng, khoảng lặng, phản ứng nhỏ của người nghe; (5) chi tiết môi trường và vật dụng. Sống chậm từng khoảnh khắc, không tóm tắt, không nhảy thời gian; đoạn càng căng càng viết chậm. Xen câu dài với câu ngắn và thoại, đừng để mọi đoạn cùng một nhịp. Mỗi hành động/lời thoại gốc phải được GIỮ và khai triển, không bỏ.",
+      "CẤM: thêm sự kiện/biến cố/nhân vật/manh mối mới; thêm cảnh mới; tóm tắt; lặp ý cho đủ chữ; viết sang nội dung của đoạn trước/đoạn sau.",
+      isFirst ? "Đây là ĐOẠN ĐẦU chương: giữ đúng cách mở chương (địa điểm, thời điểm, người có mặt)." : "",
+      isLast ? ("Đây là ĐOẠN CUỐI chương: giữ nguyên câu/cảnh cuối làm điểm kết, KHÔNG viết thêm gì sau đó." + (o.closingBeat ? " Cú chốt: " + o.closingBeat : "") + " Câu cuối phải hoàn chỉnh, có dấu kết thúc.") : "",
+      "Giữ nguyên giọng văn, ngôi kể, thì, xưng hô. 100% tiếng Việt có dấu. Chỉ trả văn xuôi của đoạn đã mở rộng, không tiêu đề/ghi chú.",
+      retryNote || "",
+      pronounBlock,
+      brief,
+      i > 0 ? ("ĐOẠN TRƯỚC (chỉ để nối mạch, KHÔNG viết lại):\n..." + chunks[i-1].text.slice(-500)) : "",
+      !isLast ? ("ĐOẠN SAU (chỉ để biết điều gì tới sau, KHÔNG viết):\n" + chunks[i+1].text.slice(0, 350) + "...") : "",
+      "===== ĐOẠN GỐC CẦN MỞ RỘNG =====", c.text, "===== HẾT ĐOẠN GỐC ====="
+    ].filter(Boolean).join("\n\n");
+    try{
+      const r = await callAI(prompt, { maxTokens: Math.min(9000, Math.round(tw * 3) + 600), temperature: 0.7, frequency_penalty: 0.15, presence_penalty: 0.1, modelOverride: o.model });
+      if(r.finishReason === "length") return null;
+      const out = stripForeign(stripThinkingOutput(String(r.text || "").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "").replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim()));
+      const nw = countWords(out);
+      if(nw < c.words * 1.08) return null;
+      if(overlap(c.text.slice(0, 500), out.slice(0, 900)) < 0.3) return null;
+      if(isLast && overlap(lastPara(c.text), lastPara(out)) < 0.4) return null;
+      if(isLast && !endsCleanly(out)) return null;
+      return { text: out, words: nw };
+    }catch(e){ if(e && e.userAbort) throw e; return null; }
+  };
+  const doChunk = async (i)=>{
+    let r = await doChunkOnce(i, "");
+    if(!r && !userStopRequested) r = await doChunkOnce(i, "LẦN THỬ LẠI: bản trước không đủ dài hoặc lệch nội dung. Lần này hãy viết CHẬM hơn nữa, mỗi hành động/lời thoại gốc thành 2–4 câu có giác quan + nội tâm, vẫn giữ đúng thứ tự và điểm mở/kết của đoạn.");
+    return r;
+  };
+  const results = new Array(chunks.length).fill(null);
+  for(let i = 0; i < chunks.length; i++){
+    if(userStopRequested) break;
+    setStatus("✍️ Làm dày chương: đoạn " + (i+1) + "/" + chunks.length + " (đang " + countWords(text) + "/" + o.minWords + " từ)...", true);
+    results[i] = await doChunk(i);
+  }
+  let total = 0; const origRest = (from)=>chunks.slice(from).reduce((a, c)=>a + c.words, 0);
+  const parts = []; let used = 0;
+  chunks.forEach((c, i)=>{
+    const r = results[i];
+    if(r && total + r.words + origRest(i+1) <= o.maxWords){ parts.push(r.text); total += r.words; used++; }
+    else { parts.push(c.text); total += c.words; }
+  });
+  const out = parts.join("\n\n"), nw = countWords(out);
+  if(!used || nw < cur * 1.05) return { ok:false, reason:"chỉ " + used + "/" + chunks.length + " đoạn mở rộng được (" + nw + "/" + cur + " từ)" };
+  return { ok:true, text: out, used: used, total: chunks.length };
+}
+
 /* ========== AUTO-CONTINUE ========== */
 async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, initialNsfw, onChunk){
   let targetModel = initialModel;
@@ -5762,7 +5941,7 @@ async function autoContinueUntilDone(chapterObj, chapterNumber, initialModel, in
       { const dd = dropRestartedContinuation(chapterObj.text, contText);
         if(!dd.trim() || countWords(dd) < 40){ setStatus("Phần viết tiếp lặp lại nội dung đã có nên bị bỏ.", false); break; }
         contText = dd; }
-      contText = formatParagraphs(stripForeign(contText));
+      contText = formatParagraphs(stripForeign(stripThinkingOutput(contText)));
       let cleaned = contText.trim();
       const lastSentences = tail.slice(-200).replace(/\s+/g, " ");
       if(cleaned.slice(0, 120).replace(/\s+/g, " ").includes(lastSentences.slice(-80))){
@@ -5865,7 +6044,7 @@ function estimateCurrentPromptV102(){
     const context=buildContextBlock();
     const directive=state.directive||"";
     const tokens=estimateTokens(context+"\\n"+directive);
-    const out=Math.min(6000,Math.max(500,Number(state.minChapterWords)||5000))*1.15;
+    const out=chapterWordLimits().hardMax;
     const p=priceForModel(state.model);
     const cost=(tokens/1000000)*p.in+(out/1000000)*p.out;
     if($ID("tokenEstimate")) $ID("tokenEstimate").textContent=(tokens+Math.round(out)).toLocaleString("vi-VN")+" (~"+tokens.toLocaleString("vi-VN")+" input)";
@@ -6124,7 +6303,7 @@ async function rewriteDraftFromReview(chapter, review, chapterNumber, plan, cont
   try{
     const r=await callAI(prompt,{maxTokens:16000,temperature:0.55,modelOverride:chapter.modelUsed||state.model});
     let text=String(r.text||"").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i,"").replace(/^\s*NỘI DUNG\s*:\s*/i,"").trim();
-    text=formatParagraphs(dedupeRepeatedScene(stripForeign(text)));
+    text=formatParagraphs(dedupeRepeatedScene(stripForeign(stripThinkingOutput(text))));
     const cap=trimToWordLimit(text,chapterWordLimits().hardMax);
     const newWc=countWords(cap.text);
     const acc=checkRewriteAcceptable(oldWc,cap.text,newWc);
@@ -6424,6 +6603,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       recentFullText ? ("\nChương gần (tránh lặp sự kiện / cấu trúc):\n" + recentFullText) : "",
       olderSummaries ? ("\nTÓM TẮT CHƯƠNG XA:\n" + olderSummaries) : "",
       plan ? ("\nKẾ HOẠCH CHƯƠNG " + chapterNumber + ":\n" + plan) : "",
+      plan ? ("\n" + chapterBlueprintPrompt(buildChapterBlueprint(plan, state))) : "",
       "\nNGÂN SÁCH SỰ KIỆN — BẮT BUỘC:",
       "- Toàn chương chỉ có 1–3 SỰ KIỆN CHÍNH. Không thêm sự kiện lớn thứ 4 dù còn dung lượng từ.",
       "- Các cảnh/beat nhỏ chỉ là bước triển khai, phản ứng hoặc hậu quả của 1–3 sự kiện chính; không được biến thành tuyến sự kiện mới.",
@@ -6517,7 +6697,7 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
       }catch(e){}
     }
 
-    rawText = formatParagraphs(dedupeRepeatedScene(stripForeign(rawText)));
+    rawText = formatParagraphs(dedupeRepeatedScene(stripForeign(stripThinkingOutput(rawText))));
     const titleMatch = rawText.match(/TIÊU ĐỀ:\s*(.+)/i);
     const bodyMatch = rawText.match(/NỘI DUNG:\s*([\s\S]*)/i);
 
@@ -6542,6 +6722,21 @@ async function generateChapter(regenIndex, regenMode, forceNsfw){
 
     await autoContinueUntilDone(chapterObj, chapterNumber, targetModel, usingNsfw, onChunk);
     cancelStream();
+    /* V13: chương có brief mà còn ngắn -> làm dày tại chỗ (giống worker nền), không bịa thêm sự kiện. */
+    try{
+      const lim21 = chapterWordLimits();
+      const hasBrief21 = !!(String(state.directive||"").trim() || String(state.nextChapterHint||"").trim());
+      if(hasBrief21 && chapterObj.truncated !== true && !userStopRequested && countWords(chapterObj.text) < lim21.target * 0.95){
+        const closing21 = extractClosingBeat(state.nextChapterHint) || extractClosingBeat(state.directive);
+        for(let pass = 0; pass < 2 && !userStopRequested && countWords(chapterObj.text) < lim21.target * 0.95; pass++){
+          const before21 = countWords(chapterObj.text);
+          const ex21 = await expandChapterInPlaceClient(chapterObj.text, { minWords: lim21.target, maxWords: lim21.hardMax, closingBeat: closing21, model: chapterObj.modelUsed || targetModel });
+          if(!ex21.ok){ console.warn("[Mở rộng chương] không đạt: " + ex21.reason); break; }
+          chapterObj.text = ex21.text; chapterObj.wordCount = countWords(ex21.text);
+          console.log("[Mở rộng chương] " + ex21.used + "/" + ex21.total + " đoạn: " + before21 + " → " + chapterObj.wordCount + " từ");
+        }
+      }
+    }catch(e21){ if(!(e21 && e21.userAbort)) console.warn("[Mở rộng chương]", e21 && e21.message); }
     const finalLimits=chapterWordLimits();
     const finalCapped=trimToWordLimit(chapterObj.text,finalLimits.hardMax);
     if(finalCapped.trimmed) chapterObj.truncated=true;
@@ -6698,7 +6893,7 @@ $ID("continueChapterBtn").addEventListener("click", async ()=>{
     { const dd = dropRestartedContinuation(baseText, contText);
       if(!dd.trim() || countWords(dd) < 40){ setStatus("Phần viết tiếp lặp lại nội dung đã có nên bị bỏ.", false); setGenerating(false); return; }
       contText = dd; }
-    contText = formatParagraphs(stripForeign(contText));
+    contText = formatParagraphs(stripForeign(stripThinkingOutput(contText)));
     if(state.spellCheckEnabled && contText){
       const fixed = await polishVietnamese(contText, { modelOverride: state.model });
       if(fixed) contText = fixed;
@@ -7457,6 +7652,7 @@ function hydrateFormFromState(){
   parallelToggle.checked = state.parallelEnabled !== false;
   checkpointToggle.checked = state.checkpointEnabled !== false;
   minWordsInput.value = state.minChapterWords || 5000;
+  updateWordBudgetInfo();
   autoContinueMaxInput.value = state.autoContinueMax || 4;
   descriptionLevelSelect.value = state.descriptionLevel || "balanced";
   explicitLevelSelect.value = state.explicitLevel || "sensual";
@@ -7702,7 +7898,7 @@ async function startBackgroundWrite(){
   }
   const storyBlob={};
   Object.keys(state).forEach(k=>{if(!GLOBAL_KEYS.includes(k))storyBlob[k]=state[k];});
-  ["minChapterWords","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","chapterMatureFocus","modelNsfw","advancedRules","includeScenesInPrompt","autoContinueMax"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
+  ["minChapterWords","chapterMinRatio","chapterHardMaxRatio","descriptionLevel","explicitLevel","nsfwMode","nsfwAutoThreshold","chapterMatureFocus","modelNsfw","advancedRules","includeScenesInPrompt","autoContinueMax"].forEach(k=>{if(state[k]!==undefined)storyBlob[k]=state[k];});
   // Background phải giữ nguyên lựa chọn NSFW của người dùng, không tự reset về false.
   // "always" luôn ép model NSFW; "mature_only" ép khi truyện đã đánh dấu trưởng thành.
   // "auto" vẫn để backend tự phát hiện theo ngữ cảnh.
