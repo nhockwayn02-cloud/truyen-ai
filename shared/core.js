@@ -8,11 +8,91 @@ function normalizeName(s) {
   return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
 }
 
-function chapterWordLimits(st) {
-  // Client gọi không tham số (dùng state toàn cục); worker truyền state của job.
+function normalizeChapterWordSettings(st) {
   if (!st && typeof state !== "undefined") st = state;
-  const target = Math.min(Math.max(Number(st && st.minChapterWords) || 5000, 500), 6000);
-  return { target, hardMax: Math.ceil(target * 1.15) };
+  st = st || {};
+  const target = Math.min(Math.max(Number(st.minChapterWords) || 5000, 500), 12000);
+  const minRatio = Math.min(0.99, Math.max(0.85, Number(st.chapterMinRatio) || 0.95));
+  const maxRatio = Math.min(1.35, Math.max(1.02, Number(st.chapterHardMaxRatio) || 1.15));
+  return { target, minWords: Math.floor(target * minRatio), hardMax: Math.ceil(target * maxRatio), minRatio, maxRatio };
+}
+
+function chapterWordLimits(st) {
+  // V13: KHÔNG hard-code 4.500/5.000. Mọi độ dài đều xuất phát từ target người dùng nhập.
+  const x = normalizeChapterWordSettings(st);
+  return { target: x.target, minWords: x.minWords, hardMax: x.hardMax, minRatio: x.minRatio, maxRatio: x.maxRatio };
+}
+
+function chapterWordBudgetLabel(st) {
+  const x = normalizeChapterWordSettings(st);
+  return `Mục tiêu ${x.target.toLocaleString("vi-VN")} từ · đạt tự nhiên từ ${x.minWords.toLocaleString("vi-VN")} · trần cứng ${x.hardMax.toLocaleString("vi-VN")} từ`;
+}
+
+function splitPlanPoints(plan) {
+  const src = String(plan || "").replace(/\r/g, "\n").trim();
+  if (!src) return [];
+  const lines = src.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  const out = [];
+  const push = x => {
+    x = String(x || "").replace(/^[-*•]+\s*/, "").replace(/^\d+[.)]\s*/, "").trim();
+    if (x.length >= 6) out.push(x.slice(0, 700));
+  };
+  lines.forEach(push);
+  if (out.length <= 1) {
+    return src.split(/(?<=[.!?…])\s+/).map(x => x.trim()).filter(x => x.length >= 20).slice(0, 12);
+  }
+  return out.slice(0, 12);
+}
+
+function allocateChapterBudget(plan, target, maxBeats) {
+  const points = splitPlanPoints(plan);
+  const t = Math.max(500, Number(target) || 5000);
+  if (!points.length) return { target: t, beats: [], total: 0 };
+  const max = Math.max(1, Math.min(12, Number(maxBeats) || 8));
+  const selected = points.slice(0, max);
+  // Trọng số theo độ dài mô tả nhưng có sàn để beat ngắn vẫn đủ chỗ phát triển.
+  const weights = selected.map(x => Math.max(1, Math.min(3, x.length / 180)));
+  const sum = weights.reduce((a,b)=>a+b,0);
+  const floor = Math.max(180, Math.floor(t * 0.07));
+  let budgets = selected.map((x,i)=>Math.max(floor, Math.round(t * weights[i] / sum)));
+  let total = budgets.reduce((a,b)=>a+b,0);
+  while (total > t) {
+    let i = budgets.indexOf(Math.max(...budgets));
+    if (budgets[i] <= floor) break;
+    const d = Math.min(50, budgets[i] - floor); budgets[i] -= d; total -= d;
+  }
+  while (total < t) {
+    const i = budgets.indexOf(Math.min(...budgets));
+    budgets[i] += Math.min(50, t-total); total += Math.min(50, t-total);
+  }
+  return { target: t, beats: selected.map((text,i)=>({ id:`B${i+1}`, text, targetWords:budgets[i] })), total };
+}
+
+function buildChapterBlueprint(plan, st) {
+  const sc = (st && st.storyControl) || st || {};
+  const maxEvents = Math.max(1, Math.min(3, Number(sc.maxMainEvents) || 3));
+  const limits = normalizeChapterWordSettings(st);
+  const budget = allocateChapterBudget(plan, limits.target, 8);
+  const beats = budget.beats;
+  const events = [];
+  if (beats.length) {
+    const perEvent = Math.ceil(beats.length / maxEvents);
+    for (let i=0;i<beats.length;i+=perEvent) events.push({ id:`E${events.length+1}`, beats:beats.slice(i,i+perEvent).map(b=>b.id) });
+  }
+  return { schemaVersion:1, targetWords:limits.target, minWords:limits.minWords, hardMax:limits.hardMax, maxMainEvents:maxEvents, events, beats };
+}
+
+function chapterBlueprintPrompt(blueprint) {
+  if (!blueprint || !blueprint.beats || !blueprint.beats.length) return "";
+  return [
+    "V13 CHAPTER BLUEPRINT — KHÓA CẤU TRÚC, KHÔNG PHẢI VĂN XUÔI:",
+    `- Target: ${blueprint.targetWords} từ; vùng đạt tự nhiên: ${blueprint.minWords}–${blueprint.hardMax} từ.`,
+    `- Tối đa ${blueprint.maxMainEvents} sự kiện chính.`,
+    "- Không dùng ngân sách của beat này để tạo sự kiện mới; nếu beat đã hoàn tất thì chuyển sang beat kế tiếp.",
+    "- Không cần đạt đúng từng con số; đây là ngân sách tương đối để giữ nhịp toàn chương.",
+    "- Khi toàn bộ beat đã hoàn thành, DỪNG theo điểm kết của brief.",
+    blueprint.beats.map(b=>`[${b.id}] ~${b.targetWords} từ: ${b.text}`).join("\n")
+  ].join("\n");
 }
 
 function trimToWordLimit(text, maxWords) {
