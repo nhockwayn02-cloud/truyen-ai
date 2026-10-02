@@ -6,7 +6,7 @@
 <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
 <meta content="yes" name="apple-mobile-web-app-capable"/>
 <meta content="#0e0f13" name="theme-color"/>
-<title>Xưởng Truyện AI Pro Max v10</title>
+<title>Xưởng Truyện AI Pro Max v14</title>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
 <style>
@@ -318,7 +318,7 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div class="brand-mark"></div>
 <div>
 <div class="brand-name">Xưởng Truyện AI Pro Max</div>
-<div class="brand-sub">v13.0 · Story Compiler · Canon Lock · Dynamic Word Budget · Quality Gate</div>
+<div class="brand-sub">v14.0 · Cloudflare Ready · Story Compiler · Canon Lock · Dynamic Word Budget · Quality Gate</div>
 </div>
 </div>
 <div class="topbar-actions">
@@ -369,6 +369,10 @@ input[type=range]{padding:4px 0;background:transparent;border:none;}
 <div style="margin-top:8px;">
 <label for="appPasscode">🔒 Mã truy cập server (chỉ cần nếu bạn đặt APP_PASSCODE)</label>
 <input id="appPasscode" placeholder="Để trống nếu không dùng" type="password" autocomplete="off"/>
+</div><div style="margin-top:8px;">
+<label for="bgServerUrl">☁ Máy chủ Viết nền</label>
+<input id="bgServerUrl" type="text" placeholder="Để trống: tự chọn theo nơi triển khai"/>
+<div class="hint">V14: khi chạy trên Cloudflare Pages, URL này thường để trống và Cloudflare proxy sẽ chuyển tới backend Netlify. Chỉ cần điền nếu bạn muốn dùng backend khác.</div>
 </div>
 <div style="margin-top:8px;">
 <label for="modelSelect">🤖 Model chính (cảnh thường)</label>
@@ -7863,9 +7867,22 @@ function renderAll(){
 }
 
 
-/* ========== BACKGROUND JOB (Netlify) ========== */
-const BG_JOB_KEY = "aiStoryWorkshop_bgJobId_v9";
-const BG_FUNCTIONS_BASE = "/.netlify/functions"; // khi deploy Netlify sẽ đúng path
+/* ========== BACKGROUND JOB (V14 · Netlify backend / Cloudflare proxy) ========== */
+const BG_JOB_KEY = "aiStoryWorkshop_bgJobId_v14";
+function getBgFunctionsBase(){
+  try{
+    const custom = String(localStorage.getItem("xta_bg_server_url") || "").trim().replace(/\\/+$/,"");
+    if(custom) return custom + "/.netlify/functions";
+  }catch(_){}
+  // V14: Cloudflare Pages dùng Pages Function proxy /api/bg/*.
+  // Netlify giữ nguyên đường dẫn cũ để không phá bản đang chạy.
+  const host = String(location.hostname || "").toLowerCase();
+  if(host.endsWith(".pages.dev") || host.includes(".workers.dev")){
+    return "/api/bg";
+  }
+  return "/.netlify/functions";
+}
+const BG_FUNCTIONS_BASE = getBgFunctionsBase();
 // Netlify Background Function tối đa 15 phút (DEADLINE trong write-chapter-background.js = 13.5 phút).
 // Cộng thêm thời gian trigger + polling trễ 12s → coi job là "có thể đã chết" nếu quá ngưỡng này mà vẫn pending/running.
 const BG_JOB_STALE_MS = 18 * 60 * 1000;
@@ -7936,6 +7953,18 @@ function getAppPasscode(){ try{ const el=$ID("appPasscode"); return ((el&&el.val
   const el=$ID("appPasscode"); if(!el) return;
   try{ el.value=localStorage.getItem("xta_passcode")||""; }catch(e){}
   el.addEventListener("change",()=>{ try{ if(el.value.trim()) localStorage.setItem("xta_passcode",el.value.trim()); else localStorage.removeItem("xta_passcode"); }catch(e){} });
+})();
+(function initBgServerField(){
+  const el=$ID("bgServerUrl"); if(!el) return;
+  try{ el.value=localStorage.getItem("xta_bg_server_url")||""; }catch(e){}
+  el.addEventListener("change",()=>{
+    try{
+      const v=el.value.trim().replace(/\/+$/,"");
+      if(v) localStorage.setItem("xta_bg_server_url",v);
+      else localStorage.removeItem("xta_bg_server_url");
+      location.reload();
+    }catch(e){}
+  });
 })();
 /* V12.14: sau khi đã hợp nhất xong, báo server xoá job (truyện + dữ liệu) khỏi Blobs ngay. */
 async function ackBackgroundJob(record){
