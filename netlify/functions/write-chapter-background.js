@@ -1508,80 +1508,193 @@ async function fixStrayWordsWithAI(job, text, allowNames, model, isNsfw) {
 }
 
 
-/* V12.20 — Mở rộng chương ngắn TẠI CHỖ, THEO TỪNG ĐOẠN: model không viết nổi 4500 từ trong một lần (thường dừng ~3000),
-   nên chia chương thành các khối ~550 từ, mỗi khối có chỉ tiêu từ riêng (gốc x hệ số) và được viết lại song song (3 khối/lượt).
-   Giữ nguyên sự kiện/thứ tự/cú chốt, chỉ làm dày miêu tả - nội tâm - thoại. Khối nào không dài hơn hoặc lệch nội dung thì giữ bản gốc. */
+/* V13.1 — Background expansion: adaptive, sequential, partial-output safe.
+   Không bỏ cả lô chỉ vì model bị cắt. Ưu tiên giữ nguyên bản gốc + bổ sung phần hợp lệ,
+   retry theo phần thiếu, và chỉ dùng warning ngôn ngữ làm cảnh báo chứ không biến thành hard-fail. */
+function buildExpansionPlan(cur, minWords, maxWords) {
+  const target = Math.max(cur, Math.min(Number(maxWords || minWords || cur), Number(minWords || cur)));
+  const need = Math.max(0, target - cur);
+  const chunks = Math.max(1, Math.min(6, Math.ceil(cur / 900)));
+  return { target, need, chunks };
+}
+
 async function expandChapterInPlace(job, text, o) {
   const cur = countWords(text);
-  if (writeTimeLeft(o.isNsfw) < 120000) return { ok: false, reason: "hết thời gian job" };
-  const goal = Math.min(o.maxWords - 80, o.minWords);
-  const factor = Math.min(2.2, goal / Math.max(1, cur));
-  if (factor < 1.05) return { ok: false, reason: "đã đủ độ dài" };
-  const st = o.state || {};
+  const target = Math.max(cur, Math.min(Number(o.minWords || cur), Number(o.maxWords || o.minWords || cur) - 80));
+  if (target <= cur + 20) return { ok: false, reason: "đã đủ độ dài" };
+  if (writeTimeLeft(o.isNsfw) < 90000) return { ok: false, reason: "hết thời gian job" };
+
+  const plan = buildExpansionPlan(cur, target, Number(o.maxWords || target));
   const paras = String(text).split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
-  const nChunks = Math.max(1, Math.min(6, Math.round(cur / 900)));  // V12.21: khối ~900 từ (trước 550) để model đủ chỗ đào sâu
-  const per = cur / nChunks; const chunks = []; let bufP = [], bufW = 0;
+  const nChunks = plan.chunks;
+  const per = cur / nChunks;
+  const chunks = [];
+  let bufP = [], bufW = 0;
   paras.forEach((p, i) => {
     bufP.push(p); bufW += countWords(p);
     const left = paras.length - 1 - i;
-    if ((bufW >= per && chunks.length < nChunks - 1) || left === 0) { chunks.push({ text: bufP.join("\n\n"), words: bufW }); bufP = []; bufW = 0; }
+    if ((bufW >= per && chunks.length < nChunks - 1) || left === 0) {
+      chunks.push({ text: bufP.join("\n\n"), words: bufW }); bufP = []; bufW = 0;
+    }
   });
-  const brief = (st.directive || st.nextChapterHint) ? ("KẾ HOẠCH CỦA NGƯỜI DÙNG (để đối chiếu, KHÔNG thêm ngoài kế hoạch):\n" + [st.directive, st.nextChapterHint].filter(Boolean).map(x => String(x).trim()).join("\n")) : "";
+
+  const st = o.state || {};
+  const brief = (st.directive || st.nextChapterHint)
+    ? ("KẾ HOẠCH CỦA NGƯỜI DÙNG (chỉ dùng để giữ mạch, không thêm sự kiện):\n" + [st.directive, st.nextChapterHint].filter(Boolean).map(x => String(x).trim()).join("\n")) : "";
   const lastPara = (t) => { const ps = String(t).split(/\n\s*\n|\n/).map(x => x.trim()).filter(Boolean); return ps[ps.length - 1] || ""; };
   const overlap = (a, b) => { const A = new Set(_normWords(a)), B = new Set(_normWords(b)); if (!A.size || !B.size) return 1; let h = 0; A.forEach(w => { if (B.has(w)) h++; }); return h / Math.min(A.size, B.size); };
-  const doChunkOnce = async (i, retryNote) => {
-    const c = chunks[i], tw = Math.round(c.words * factor), isFirst = i === 0, isLast = i === chunks.length - 1;
+  const clean = (x) => stripForeign(stripThinkingOutput(String(x || "").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "").replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim()));
+
+  async function rewriteChunk(i, c, desiredAdd, retryNote) {
+    const desiredTotal = Math.min(c.words + desiredAdd, Math.max(c.words + 80, Math.round(c.words * 2.0)));
+    const isFirst = i === 0, isLast = i === chunks.length - 1;
     const prompt = [
-      `MỞ RỘNG ĐOẠN ${i + 1}/${chunks.length} của một chương truyện. Đoạn gốc dưới đây có ${c.words} từ. Hãy viết lại thành khoảng ${tw} từ (BẮT BUỘC dài hơn ít nhất ${Math.round(c.words * Math.min(factor, 1.6) * 0.9)} từ; không vượt ${Math.round(tw * 1.25)} từ).`,
-      "CÁCH LÀM DÀI (áp dụng lần lượt cho TỪNG hành động/lời thoại gốc): (1) giác quan chậm và cụ thể — ánh sáng, âm thanh, mùi, xúc giác, nhiệt độ, nhịp thở; (2) nội tâm giằng co, mâu thuẫn giữa suy nghĩ và phản ứng cơ thể; (3) lặp có biến tấu — mỗi lần nhắc lại phải thêm một thông tin/cảm xúc/mức độ mới, không chép lại cấu trúc câu; (4) thoại có ngập ngừng, khoảng lặng, phản ứng nhỏ của người nghe; (5) chi tiết môi trường và vật dụng. Sống chậm từng khoảnh khắc, không tóm tắt, không nhảy thời gian; đoạn càng căng càng viết chậm. Xen câu dài với câu ngắn và thoại, đừng để mọi đoạn cùng một nhịp. Mỗi hành động/lời thoại gốc phải được GIỮ và khai triển, không bỏ.",
-      "CẤM: thêm sự kiện/biến cố/nhân vật/manh mối mới; thêm cảnh mới; tóm tắt; lặp ý cho đủ chữ; viết sang nội dung của đoạn trước/đoạn sau.",
-      isFirst ? "Đây là ĐOẠN ĐẦU chương: giữ đúng cách mở chương (địa điểm, thời điểm, người có mặt)." : "",
-      isLast ? ("Đây là ĐOẠN CUỐI chương: giữ nguyên câu/cảnh cuối làm điểm kết, KHÔNG viết thêm gì sau đó." + (o.closingBeat ? " Cú chốt: " + o.closingBeat : "") + " Câu cuối phải hoàn chỉnh, có dấu kết thúc.") : "",
-      "Giữ nguyên giọng văn, ngôi kể, thì, xưng hô. 100% tiếng Việt có dấu. Chỉ trả văn xuôi của đoạn đã mở rộng, không tiêu đề/ghi chú.",
+      `MỞ RỘNG ĐOẠN ${i + 1}/${chunks.length} của một chương truyện. Đoạn gốc dưới đây có ${c.words} từ. Hãy viết lại thành khoảng ${desiredTotal} từ (tăng thêm khoảng ${desiredAdd} từ).`,
+      "Giữ nguyên toàn bộ sự kiện, nhân vật, thứ tự hành động, địa điểm và điểm mở/kết. Chỉ làm dày bằng mô tả, cảm giác, nội tâm, phản ứng nhỏ, không thêm sự kiện mới.",
+      "Không tóm tắt, không lặp lại nguyên văn, không viết sang đoạn trước/sau. Chỉ trả văn xuôi.",
+      "100% tiếng Việt có dấu. Từ mượn hợp ngữ cảnh không phải lý do để bỏ cả đoạn; ưu tiên nội dung tự nhiên.",
+      isFirst ? "Đoạn đầu: giữ nguyên bối cảnh mở đầu." : "",
+      isLast ? "Đoạn cuối: giữ nguyên điểm kết và câu kết; không thêm diễn biến sau điểm kết." : "",
       retryNote || "",
       brief,
-      i > 0 ? ("ĐOẠN TRƯỚC (chỉ để nối mạch, KHÔNG viết lại):\n..." + chunks[i - 1].text.slice(-500)) : "",
-      !isLast ? ("ĐOẠN SAU (chỉ để biết điều gì tới sau, KHÔNG viết):\n" + chunks[i + 1].text.slice(0, 350) + "...") : "",
+      i > 0 ? ("ĐOẠN TRƯỚC (chỉ để nối mạch, không viết lại):\n..." + chunks[i - 1].text.slice(-500)) : "",
+      !isLast ? ("ĐOẠN SAU (chỉ để biết mạch, không viết):\n" + chunks[i + 1].text.slice(0, 350) + "...") : "",
       "===== ĐOẠN GỐC CẦN MỞ RỘNG =====", c.text, "===== HẾT ĐOẠN GỐC ====="
     ].filter(Boolean).join("\n\n");
     try {
       const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: o.model,
         messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }],
-        maxTokens: Math.min(9000, Math.round(tw * 3) + 600), temperature: CREATIVE_TEMP, totalMs: Math.max(45000, Math.min(240000, writeTimeLeft(o.isNsfw) - 20000)), creative: true }, 1);
-      let out = stripForeign(stripThinkingOutput(String(r.text || "").trim().replace(/^\s*(?:TIÊU ĐỀ|TITLE)\s*:\s*[^\n]+\n+/i, "").replace(/^\s*NỘI DUNG\s*:\s*/i, "").trim()));
-      if (r.finishReason === "length") return null;
+        maxTokens: Math.min(8000, Math.max(1200, Math.round(desiredTotal * 2.5))),
+        temperature: CREATIVE_TEMP, totalMs: Math.max(40000, Math.min(180000, writeTimeLeft(o.isNsfw) - 15000)), creative: true }, 1);
+      const out = clean(r.text);
       const nw = countWords(out);
-      if (nw < c.words * 1.08) return null;
-      if (overlap(c.text.slice(0, 500), out.slice(0, 900)) < 0.3) return null;               // mở đầu đoạn bị đổi/lạc đề
-      if (isLast && overlap(lastPara(c.text), lastPara(out)) < 0.4) return null;              // đoạn kết bị đổi (bịa thêm)
-      if (isLast && !endsCleanly(out)) return null;
-      return { text: out, words: nw };
-    } catch (e) { return null; }
-  };
-  // V12.21: khối nào hỏng/không dài hơn thì thử lại 1 lần với nhắc nhở mạnh hơn (nếu còn thời gian).
-  const doChunk = async (i) => {
-    let r = await doChunkOnce(i, "");
-    if (!r && writeTimeLeft(o.isNsfw) > 90000) r = await doChunkOnce(i, "LẦN THỬ LẠI: bản trước không đủ dài hoặc lệch nội dung. Lần này hãy viết CHẬM hơn nữa, mỗi hành động/lời thoại gốc thành 2–4 câu có giác quan + nội tâm, vẫn giữ đúng thứ tự và điểm mở/kết của đoạn.");
-    return r;
-  };
-  const results = new Array(chunks.length).fill(null);
-  for (let i = 0; i < chunks.length; i += 3) {
-    if (writeTimeLeft(o.isNsfw) < 60000) break;
-    const idx = [i, i + 1, i + 2].filter(k => k < chunks.length);
-    const rs = await Promise.all(idx.map(k => doChunk(k)));
-    idx.forEach((k, j) => { results[k] = rs[j]; });
+      if (nw < Math.max(c.words + 40, Math.round(c.words * 1.03))) return null;
+      // Đoạn cuối: ưu tiên báo đúng lý do reject để không fallback chèn sau cú chốt.
+      if (isLast && lastPara(c.text) && lastPara(out) !== lastPara(c.text)) return { rejectReason: "closing" };
+      if (overlap(c.text.slice(0, 500), out.slice(0, 900)) < 0.20) return null;
+      if (isLast && overlap(lastPara(c.text), lastPara(out)) < 0.25) return { rejectReason: "closing" };
+      // finishReason=length không còn là hard-fail nếu phần đã sinh là một đoạn hợp lệ.
+      const partial = r.finishReason === "length";
+      const safe = endsCleanly(out) ? out : trimToLastSentence(out, 0.55).text;
+      if (isLast && lastPara(c.text) && lastPara(safe) !== lastPara(c.text)) return { rejectReason: "closing" };
+      if (countWords(safe) < Math.max(c.words + 40, Math.round(c.words * 1.03))) return null;
+      return { text: safe, words: countWords(safe), partial };
+    } catch (_) { return null; }
   }
-  // Ghép lại; không vượt maxWords: khối nào làm vượt thì giữ bản gốc
-  let total = 0; const origRest = (from) => chunks.slice(from).reduce((a, c) => a + c.words, 0);
-  const parts = []; let used = 0;
-  chunks.forEach((c, i) => {
-    const r = results[i];
-    if (r && total + r.words + origRest(i + 1) <= o.maxWords) { parts.push(r.text); total += r.words; used++; }
-    else { parts.push(c.text); total += c.words; }
-  });
-  const out = parts.join("\n\n"), nw = countWords(out);
-  if (!used || nw < cur * 1.05) return { ok: false, reason: `chỉ ${used}/${chunks.length} đoạn mở rộng được (${nw}/${cur} từ)` };
-  return { ok: true, text: out, used, total: chunks.length };
+
+  async function appendChunk(i, c, desiredAdd, retryNote) {
+    const addTarget = Math.max(120, Math.min(650, desiredAdd));
+    const isLast = i === chunks.length - 1;
+    const prompt = [
+      `MỞ RỘNG ĐOẠN ${i + 1}/${chunks.length} — VIẾT THÊM khoảng ${addTarget} từ vào đoạn sau để làm dày nội dung, nhưng KHÔNG thay thế phần gốc.`,
+      "Bắt đầu ngay sau ý cuối của đoạn trích; không chép lại câu cuối, không thêm sự kiện/nhân vật/địa điểm mới, chỉ đào sâu hành động, cảm giác, nội tâm, môi trường và phản ứng đã có.",
+      isLast ? "Đây là đoạn cuối: phần bổ sung phải nằm TRƯỚC câu kết cuối cùng và không tạo diễn biến sau điểm kết." : "Phần bổ sung phải nối tự nhiên vào đúng đoạn này.",
+      "Chỉ trả phần văn xuôi mới, 100% tiếng Việt có dấu.",
+      retryNote || "",
+      "===== ĐOẠN GỐC =====", c.text.slice(-3500), "===== HẾT ====="
+    ].join("\n\n");
+    try {
+      const r = await callWithRetry({ endpoint: job.apiEndpoint, apiKey: job.apiKey, model: o.model,
+        messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: prompt }],
+        maxTokens: Math.min(5000, Math.max(900, Math.round(addTarget * 2.5))),
+        temperature: CREATIVE_TEMP, totalMs: Math.max(35000, Math.min(120000, writeTimeLeft(o.isNsfw) - 10000)), creative: true }, 1);
+      let out = clean(r.text);
+      if (!out || countWords(out) < 80) return null;
+      if (r.finishReason === "length" && !endsCleanly(out)) out = trimToLastSentence(out, 0.5).text;
+      if (!out || countWords(out) < 80) return null;
+      // Phần bổ sung phải bám vào ngữ cảnh; nếu model trả một cảnh mới/nhân vật mới thì bỏ.
+      if (overlap(c.text.slice(-900), out.slice(0, 900)) < 0.08) return null;
+      return { text: out, words: countWords(out), partial: r.finishReason === "length" };
+    } catch (_) { return null; }
+  }
+
+  const mergeAddition = (base, add, isLast) => {
+    if (!isLast) return base + "\n\n" + add;
+    const ending = lastPara(base);
+    if (!ending) return base + "\n\n" + add;
+    const pos = base.lastIndexOf(ending);
+    if (pos < 0) return base + "\n\n" + add;
+    const prefix = base.slice(0, pos).trim();
+    return (prefix ? prefix + "\n\n" : "") + add.trim() + "\n\n" + ending;
+  };
+
+  let current = cur;
+  let closingRejectedAny = false;
+  const results = chunks.map(c => ({ text: c.text, words: c.words, added: 0 }));
+  let remaining = target - current;
+  let accepted = 0;
+
+  // V13.1: xử lý tuần tự để mỗi lượt biết chính xác phần còn thiếu; không còn 4 lô song song rồi bỏ cả batch.
+  for (let i = 0; i < chunks.length && remaining > 20; i++) {
+    if (writeTimeLeft(o.isNsfw) < 50000) break;
+    const c = chunks[i];
+    const remainingChunks = chunks.length - i;
+    const desiredAdd = Math.max(120, Math.min(850, Math.ceil(remaining / remainingChunks)));
+    let r = await rewriteChunk(i, c, desiredAdd, "");
+    let closingRejected = !!(r && r.rejectReason === "closing");
+    if (closingRejected) closingRejectedAny = true;
+    if (r && r.rejectReason) r = null;
+    if (!r && !closingRejected && writeTimeLeft(o.isNsfw) > 70000) {
+      const rr = await rewriteChunk(i, c, Math.max(160, Math.round(desiredAdd * 0.75)), "LẦN THỬ LẠI: nếu không đủ dung lượng, ưu tiên một bản hoàn chỉnh và tự nhiên hơn thay vì cố kéo dài.");
+      closingRejected = !!(rr && rr.rejectReason === "closing");
+      if (closingRejected) closingRejectedAny = true;
+      r = rr && !rr.rejectReason ? rr : null;
+    }
+    if (r) {
+      const delta = Math.max(0, r.words - c.words);
+      const allowedDelta = Math.max(0, Number(o.maxWords || target) - 80 - current);
+      if (delta > 0 && allowedDelta > 0) {
+        let chosen = r.text;
+        if (delta > allowedDelta) {
+          const limit = c.words + allowedDelta;
+          const tr = trimToWordLimit(chosen, limit);
+          chosen = tr.text;
+        }
+        const nw = countWords(chosen);
+        const d = Math.max(0, nw - c.words);
+        if (d >= 40) { results[i] = { text: chosen, words: nw, added: d }; current += d; remaining = Math.max(0, target - current); accepted++; continue; }
+      }
+    }
+    // Fallback an toàn: không rewrite được thì chỉ bổ sung phần mới; bản gốc luôn được giữ.
+    if (!closingRejected && writeTimeLeft(o.isNsfw) > 50000 && remaining > 20) {
+      const a = await appendChunk(i, c, Math.min(desiredAdd, remaining), "ƯU TIÊN PHẦN BỔ SUNG NGẮN, KHÔNG VIẾT LẠI ĐOẠN GỐC.");
+      if (a) {
+        const allowedDelta = Math.max(0, Number(o.maxWords || target) - 80 - current);
+        const add = Math.min(a.words, allowedDelta);
+        if (add >= 80) {
+          let addText = a.text;
+          if (a.words > add) addText = trimToWordLimit(a.text, add).text;
+          const nw = countWords(addText);
+          results[i] = { text: mergeAddition(c.text, addText, i === chunks.length - 1), words: c.words + nw, added: nw };
+          current += nw; remaining = Math.max(0, target - current); accepted++;
+        }
+      }
+    }
+  }
+
+  // Nếu vẫn thiếu, thử một lần bổ sung vào đoạn áp chót để không phá câu kết cuối chương.
+  if (remaining > 20 && !closingRejectedAny && writeTimeLeft(o.isNsfw) > 45000 && chunks.length) {
+    const i = chunks.length > 1 ? chunks.length - 2 : 0;
+    const a = await appendChunk(i, chunks[i], Math.min(remaining, 500), "ĐÂY LÀ LẦN BỔ SUNG CUỐI. Không thêm sự kiện mới; chỉ làm dày nội dung đã có.");
+    if (a) {
+      const allowed = Math.max(0, Number(o.maxWords || target) - 80 - current);
+      const add = Math.min(a.words, allowed);
+      if (add >= 80) {
+        let addText = a.text;
+        if (a.words > add) addText = trimToWordLimit(a.text, add).text;
+        results[i].text = mergeAddition(results[i].text, addText, i === chunks.length - 1);
+        results[i].words += countWords(addText);
+        results[i].added += countWords(addText);
+        current += countWords(addText); remaining = Math.max(0, target - current); accepted++;
+      }
+    }
+  }
+
+  const out = results.map(r => r.text).join("\n\n");
+  const nw = countWords(out);
+  if (nw <= cur) return { ok: false, reason: `không nhận được phần mở rộng hợp lệ (${nw}/${cur} từ)` };
+  if (nw < cur * 1.03 && nw < target) return { ok: false, reason: `mở rộng quá ít (${nw}/${cur} từ)` };
+  return { ok: true, text: out, used: accepted, total: chunks.length, target, remaining: Math.max(0, target - nw) };
 }
 
 /* V12.20 — Khép câu cuối bị cụt: nhờ model viết nốt 1–3 câu; nếu không được thì lùi về câu hoàn chỉnh gần nhất. */
@@ -1779,7 +1892,7 @@ async function generateOneChapter(job) {
   text = formatParagraphs(stripForeign(stripThinkingOutput(text)));
   const _allowNames = (state.characters || []).map(x => x && x.name).filter(Boolean);
   // V12.20: tự sửa từ lỗi ghép (mươititude, bănnton, bọcampo...) bằng cách nhờ model chép lại ĐÚNG câu chứa từ đó.
-  { const fx = await fixStrayWordsWithAI(job, text, _allowNames, model, isNsfw); text = fx.text; if (fx.fixed) issues.push(`Đã tự sửa ${fx.fixed} từ lỗi (vd: ${fx.samples.join(", ")})`); }
+  { const fx = await fixStrayWordsWithAI(job, text, _allowNames, model, isNsfw); text = fx.text; if (fx.fixed) issues.push(`Đã tự sửa ${new Set(fx.samples).size || fx.fixed} từ lỗi (vd: ${fx.samples.join(", ")})`); }
   { const stray = findStrayWords(text, _allowNames); if (stray.length) issues.push("Từ lạ cần kiểm tra: " + stray.slice(0, 8).join(", ")); }
   const finalCap = trimToWordLimit(text, maxWords);
   text = finalCap.text;
