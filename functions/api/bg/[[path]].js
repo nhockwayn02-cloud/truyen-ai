@@ -1,73 +1,18 @@
-/*
- * Xưởng Truyện AI V14 — Cloudflare Pages proxy
- *
- * This proxy keeps the existing, battle-tested Netlify background engine.
- * The frontend on Cloudflare calls /api/bg/*; this Function forwards only
- * create-job and job-status to the Netlify backend configured by
- * BG_BACKEND_URL.
- *
- * Configure in Cloudflare Pages:
- *   BG_BACKEND_URL = https://YOUR-NETLIFY-SITE.netlify.app
- *
- * Do NOT put an API key here. The user's API key is sent only in the
- * authenticated create-job request and is handled by the existing backend.
+/* Xưởng Truyện AI V14 — Cloudflare Background API
+ * Netlify has been removed from the runtime path.
+ * create-job -> KV + Queue -> Cloudflare background Worker
+ * job-status -> KV
  */
+const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const ALLOWED = new Set(["create-job", "job-status"]);
-
-function cors(extra = {}) {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-App-Passcode",
-    "Cache-Control": "no-store",
-    ...extra
-  };
-}
-
-export async function onRequest(context) {
-  const req = context.request;
-  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors() });
-
-  const parts = context.params?.path;
-  const path = Array.isArray(parts) ? parts.join("/") : String(parts || "");
-  if (!ALLOWED.has(path)) {
-    return Response.json({ error: "Cloudflare BG proxy: endpoint không được phép." }, { status: 404, headers: cors() });
-  }
-
-  const raw = String(context.env.BG_BACKEND_URL || "").trim().replace(/\/+$/, "");
-  if (!raw) {
-    return Response.json({
-      error: "Chưa cấu hình BG_BACKEND_URL trên Cloudflare Pages. Hãy đặt URL site Netlify đang chứa backend Viết nền."
-    }, { status: 500, headers: cors() });
-  }
-
-  let base;
-  try {
-    base = new URL(raw);
-    if (base.protocol !== "https:") throw new Error("BG_BACKEND_URL phải dùng https://");
-  } catch (err) {
-    return Response.json({ error: "BG_BACKEND_URL không hợp lệ: " + err.message }, { status: 500, headers: cors() });
-  }
-
-  const target = new URL(base.toString());
-  target.pathname = `/ .netlify/functions/${path}`.replace("/ ", "/");
-  target.search = new URL(req.url).search;
-
-  const headers = new Headers();
-  for (const name of ["content-type", "authorization", "x-app-passcode"]) {
-    const value = req.headers.get(name);
-    if (value) headers.set(name, value);
-  }
-  headers.set("Accept", "application/json");
-
-  const init = { method: req.method, headers };
-  if (req.method !== "GET" && req.method !== "HEAD") init.body = req.body;
-
-  try {
-    const upstream = await fetch(target.toString(), init);
-    const outHeaders = cors({ "Content-Type": upstream.headers.get("content-type") || "application/json" });
-    return new Response(upstream.body, { status: upstream.status, headers: outHeaders });
-  } catch (err) {
-    return Response.json({ error: "Không kết nối được backend Viết nền: " + (err.message || err) }, { status: 502, headers: cors() });
-  }
-}
+function cors(extra = {}) { return {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization, X-App-Passcode","Cache-Control":"no-store",...extra}; }
+function b64u(bytes){let s="";const a=new Uint8Array(bytes);for(let i=0;i<a.length;i+=0x8000)s+=String.fromCharCode(...a.subarray(i,i+0x8000));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"");}
+function randomToken(){return b64u(crypto.getRandomValues(new Uint8Array(32)));}
+async function shaHex(v){const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(v||"")));return [...new Uint8Array(d)].map(x=>x.toString(16).padStart(2,"0")).join("");}
+async function encryptApiKey(apiKey,secret){if(!secret)return{encrypted:false,value:apiKey};const h=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(secret)));const key=await crypto.subtle.importKey("raw",h,{name:"AES-GCM"},false,["encrypt"]);const iv=crypto.getRandomValues(new Uint8Array(12));const all=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(apiKey)));return{encrypted:true,value:`${b64u(iv)}.${b64u(all.slice(-16))}.${b64u(all.slice(0,-16))}`};}
+function validEndpoint(raw,env){let u;try{u=new URL(String(raw||DEFAULT_ENDPOINT));}catch(_){return{ok:false,error:"Endpoint API không hợp lệ."};}if(u.protocol!=="https:")return{ok:false,error:"Endpoint API phải dùng https."};if(u.username||u.password)return{ok:false,error:"Endpoint API không được chứa user/password."};const h=u.hostname.toLowerCase();if(h==="localhost"||h.endsWith(".local")||h.endsWith(".internal")||/^127\./.test(h)||/^10\./.test(h)||/^192\.168\./.test(h))return{ok:false,error:"Endpoint API trỏ tới địa chỉ nội bộ — bị chặn."};const allow=String(env.ALLOWED_API_HOSTS||"").split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);if(allow.length&&!allow.some(x=>h===x||h.endsWith("."+x)))return{ok:false,error:"Endpoint API không nằm trong danh sách được phép."};return{ok:true,url:u.toString()};}
+function passcodeOk(req,body,env){const need=env.APP_PASSCODE;if(!need)return true;return(req.headers.get("x-app-passcode")||body?.passcode||"")===need;}
+function response(obj,status=200){return Response.json(obj,{status,headers:cors({"Content-Type":"application/json"})});}
+async function createJob(req,env){if(req.method!=="POST")return response({error:"Method not allowed"},405);const body=await req.json().catch(()=>({}));if(!passcodeOk(req,body,env))return response({error:"Sai hoặc thiếu mã truy cập (APP_PASSCODE).",needPasscode:true},401);const storyState=body.storyState,apiKey=String(body.apiKey||"").trim().replace(/^bearer\s+/i,"").replace(/^["']|["']$/g,"");if(!storyState||!apiKey)return response({error:"Thiếu storyState hoặc API key"},400);if(JSON.stringify(storyState).length>8000000)return response({error:"Story state quá lớn."},413);const ep=validEndpoint(body.apiEndpoint||DEFAULT_ENDPOINT,env);if(!ep.ok)return response({error:ep.error},400);const jobId="job_"+Date.now().toString(36)+"_"+b64u(crypto.getRandomValues(new Uint8Array(6)));const accessToken=randomToken(),workerToken=randomToken();const job={schemaVersion:13,jobId,storyId:storyState.storyId||null,baseChapterCount:Array.isArray(storyState.chapters)?storyState.chapters.length:0,status:"pending",createdAt:Date.now(),updatedAt:Date.now(),apiEndpoint:ep.url,model:body.model||"deepseek/deepseek-v3.2",modelNsfw:body.modelNsfw||"aion-labs/aion-2.0",forceNsfw:!!body.forceNsfw,hintStyle:String(body.hintStyle||"normal").slice(0,20),hintFormat:String(body.hintFormat||"detail").slice(0,20),apiKeyEncrypted:await encryptApiKey(apiKey,env.JOB_SECRET||""),apiKey:null,accessTokenHash:await shaHex(accessToken),workerTokenHash:await shaHex(workerToken),storyState,resultChapter:null,error:null,progress:"Đang chờ bắt đầu..."};await env.STORY_JOBS.put(jobId,JSON.stringify(job));await env.BACKGROUND_QUEUE.send({jobId,workerToken});return response({success:true,jobId,accessToken,warnings:env.JOB_SECRET?[]:["JOB_SECRET chưa cấu hình — API key sẽ không được mã hóa khi lưu job."],message:"Job đã được tạo. Có thể đóng/tắt iPhone; app sẽ tự kiểm tra và đồng bộ."});}
+async function jobStatus(req,env){if(req.method!=="GET")return response({error:"Method not allowed"},405);const u=new URL(req.url),jobId=u.searchParams.get("jobId"),token=u.searchParams.get("token")||(req.headers.get("authorization")||"").replace(/^Bearer\s+/i,"");if(!jobId)return response({error:"Missing jobId"},400);const job=await env.STORY_JOBS.get(jobId,{type:"json"});if(!job)return response({error:"Job not found"},404);if(job.accessTokenHash&&job.accessTokenHash!==(await shaHex(token)))return response({error:"Token không hợp lệ"},403);if(u.searchParams.get("ack")==="1"){if(job.status==="completed"||job.status==="failed"){await env.STORY_JOBS.delete(jobId);return response({deleted:true,jobId});}return response({error:"Job chưa kết thúc, không thể xoá."},409);}const safe={schemaVersion:job.schemaVersion||13,jobId:job.jobId,storyId:job.storyId||null,baseChapterCount:job.baseChapterCount||0,status:job.status,progress:job.progress,createdAt:job.createdAt,updatedAt:job.updatedAt,completedAt:job.completedAt||null,error:job.error||null,resultChapter:job.resultChapter||null,qualityGateFailed:!!job.qualityGateFailed,newChapterCount:job.storyState?.chapters?.length||0};if(job.status==="completed"&&job.storyState)safe.storyState=job.storyState;return response(safe);}
+export async function onRequest(context){const req=context.request;if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors()});const parts=context.params?.path,path=Array.isArray(parts)?parts.join("/"):String(parts||"");if(!ALLOWED.has(path))return response({error:"Cloudflare BG endpoint không được phép."},404);try{return path==="create-job"?await createJob(req,context.env):await jobStatus(req,context.env);}catch(err){console.error("Cloudflare BG API",err);return response({error:err.message||"Lỗi server"},500);}}
