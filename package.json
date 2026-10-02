@@ -1,0 +1,9 @@
+{
+  "name": "truyen-ai-v14",
+  "version": "14.0.0",
+  "private": true,
+  "description": "Xưởng Truyện AI V14 — static Cloudflare Pages app",
+  "scripts": {
+    "build": "echo \"Xưởng Truyện AI V14: static build, no compilation required\""
+  }
+}
