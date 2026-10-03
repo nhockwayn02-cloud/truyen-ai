@@ -1,0 +1,9 @@
+{
+  "name": "xuong-truyen-ai",
+  "private": true,
+  "version": "12.21.2",
+  "scripts": {
+    "test": "node tests/run-all.js",
+    "sync": "node scripts/sync-shared.js"
+  }
+}
