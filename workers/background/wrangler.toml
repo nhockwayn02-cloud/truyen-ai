@@ -1,0 +1,14 @@
+name = "truyen-ai-background"
+main = "index.js"
+compatibility_date = "2026-10-03"
+
+[[queues.consumers]]
+queue = "truyen-ai-background"
+max_batch_size = 1
+max_concurrency = 1
+max_retries = 3
+max_batch_timeout = 1
+
+[[kv_namespaces]]
+binding = "STORY_JOBS"
+id = "ed95b4613f8b41d5a5eae3453425afa2"
