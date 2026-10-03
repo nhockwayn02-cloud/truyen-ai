@@ -1,5 +1,7 @@
 {
-  "name": "truyen-ai",
-  "private": true,
-  "version": "14.1.0"
+  "name":"truyen-ai",
+  "private":true,
+  "version":"14.2.0",
+  "scripts":{"dev":"wrangler dev","deploy":"wrangler deploy","test":"node tests/run-all.js"},
+  "devDependencies":{"wrangler":"^4.0.0"}
 }
