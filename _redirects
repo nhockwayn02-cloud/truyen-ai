@@ -1,0 +1,2 @@
+/.netlify/functions/create-job /api/bg/create-job 200
+/.netlify/functions/job-status /api/bg/job-status 200
