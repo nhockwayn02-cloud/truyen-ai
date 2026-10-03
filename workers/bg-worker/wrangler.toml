@@ -1,0 +1,20 @@
+name = "truyen-ai-bg-v14"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "BG_JOBS"
+id = "ed95b4613f8b41d5a5eae3453425afa2"
+
+[[durable_objects.bindings]]
+name = "BG_RUNNER"
+class_name = "BackgroundJob"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BackgroundJob"]
+
+[vars]
+# Secrets must be configured in Cloudflare, not committed.
+# JOB_SECRET, APP_PASSCODE, ALLOWED_API_HOSTS
