@@ -1,10 +1,17 @@
 /* Xưởng Truyện AI V14 — Cloudflare Background API
- * Netlify has been removed from the runtime path.
- * create-job -> KV + Queue -> Cloudflare background Worker
+ * Cloudflare-only runtime: create-job -> KV + Queue -> background Worker
  * job-status -> KV
+ *
+ * Binding compatibility:
+ * - New names: STORY_JOBS / BACKGROUND_QUEUE
+ * - Existing Cloudflare deployment names: XUONG_JOBS / JOB_QUEUE
+ * The fallback keeps old deployments working while the bindings are unified.
  */
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const ALLOWED = new Set(["create-job", "job-status"]);
+
+function jobsStore(env){ return env.STORY_JOBS || env.XUONG_JOBS; }
+function jobQueue(env){ return env.BACKGROUND_QUEUE || env.JOB_QUEUE; }
 
 function cors(extra = {}) {
   return { "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Methods":"GET, POST, OPTIONS", "Access-Control-Allow-Headers":"Content-Type, Authorization, X-App-Passcode", "Cache-Control":"no-store", ...extra };
@@ -43,11 +50,14 @@ async function createJob(req, env){
   if(!storyState||!apiKey)return response({error:"Thiếu storyState hoặc API key"},400);
   if(JSON.stringify(storyState).length>8_000_000)return response({error:"Story state quá lớn."},413);
   const ep=validEndpoint(body.apiEndpoint||DEFAULT_ENDPOINT,env); if(!ep.ok)return response({error:ep.error},400);
+  const store=jobsStore(env), queue=jobQueue(env);
+  if(!store || typeof store.put!=="function") return response({error:"Cloudflare KV chưa được bind. Cần STORY_JOBS hoặc XUONG_JOBS."},503);
+  if(!queue || typeof queue.send!=="function") return response({error:"Cloudflare Queue chưa được bind. Cần BACKGROUND_QUEUE hoặc JOB_QUEUE."},503);
   const jobId="job_"+Date.now().toString(36)+"_"+b64u(crypto.getRandomValues(new Uint8Array(6)));
   const accessToken=randomToken(), workerToken=randomToken();
   const job={schemaVersion:13,jobId,storyId:storyState.storyId||null,baseChapterCount:Array.isArray(storyState.chapters)?storyState.chapters.length:0,status:"pending",createdAt:Date.now(),updatedAt:Date.now(),apiEndpoint:ep.url,model:body.model||"deepseek/deepseek-v3.2",modelNsfw:body.modelNsfw||"aion-labs/aion-2.0",forceNsfw:!!body.forceNsfw,hintStyle:String(body.hintStyle||"normal").slice(0,20),hintFormat:String(body.hintFormat||"detail").slice(0,20),apiKeyEncrypted:await encryptApiKey(apiKey,env.JOB_SECRET||""),apiKey:null,accessTokenHash:await shaHex(accessToken),workerTokenHash:await shaHex(workerToken),storyState,resultChapter:null,error:null,progress:"Đang chờ bắt đầu..."};
-  await env.STORY_JOBS.put(jobId,JSON.stringify(job));
-  await env.BACKGROUND_QUEUE.send({jobId,workerToken});
+  await store.put(jobId,JSON.stringify(job));
+  await queue.send({jobId,workerToken});
   return response({success:true,jobId,accessToken,warnings:env.JOB_SECRET?[]:["JOB_SECRET chưa cấu hình — API key sẽ không được mã hóa khi lưu job."],message:"Job đã được tạo. Có thể đóng/tắt iPhone; app sẽ tự kiểm tra và đồng bộ."});
 }
 
@@ -55,11 +65,13 @@ async function jobStatus(req, env){
   if(req.method!=="GET")return response({error:"Method not allowed"},405);
   const u=new URL(req.url), jobId=u.searchParams.get("jobId"), token=u.searchParams.get("token")||(req.headers.get("authorization")||"").replace(/^Bearer\s+/i,"");
   if(!jobId)return response({error:"Missing jobId"},400);
-  const job=await env.STORY_JOBS.get(jobId,{type:"json"});
+  const store=jobsStore(env);
+  if(!store || typeof store.get!=="function") return response({error:"Cloudflare KV chưa được bind. Cần STORY_JOBS hoặc XUONG_JOBS."},503);
+  const job=await store.get(jobId,{type:"json"});
   if(!job)return response({error:"Job not found"},404);
   if(job.accessTokenHash && job.accessTokenHash!==(await shaHex(token)))return response({error:"Token không hợp lệ"},403);
   if(u.searchParams.get("ack")==="1"){
-    if(job.status==="completed"||job.status==="failed"){await env.STORY_JOBS.delete(jobId);return response({deleted:true,jobId});}
+    if(job.status==="completed"||job.status==="failed"){await store.delete(jobId);return response({deleted:true,jobId});}
     return response({error:"Job chưa kết thúc, không thể xoá."},409);
   }
   const safe={schemaVersion:job.schemaVersion||13,jobId:job.jobId,storyId:job.storyId||null,baseChapterCount:job.baseChapterCount||0,status:job.status,progress:job.progress,createdAt:job.createdAt,updatedAt:job.updatedAt,completedAt:job.completedAt||null,error:job.error||null,resultChapter:job.resultChapter||null,qualityGateFailed:!!job.qualityGateFailed,newChapterCount:job.storyState?.chapters?.length||0};
