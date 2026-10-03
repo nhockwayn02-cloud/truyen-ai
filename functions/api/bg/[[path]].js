@@ -5,7 +5,7 @@
  * Worker decrypts with the same JOB_SECRET.
  */
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const ALLOWED = new Set(["create-job","job-status"]);
+const ALLOWED = new Set(["create-job","job-status","self-test"]);
 
 function cors(extra={}) {
   return {
@@ -62,6 +62,19 @@ function passcodeOk(req,body,env){
 }
 function response(obj,status=200){
   return Response.json(obj,{status,headers:cors({"Content-Type":"application/json"})});
+}
+async function selfTest(req,env){
+  if(req.method!=="GET")return response({error:"Method not allowed"},405);
+  if(!env.BG_SERVICE)return response({ok:false,error:"BG_SERVICE missing"},503);
+  const testKey="test-key-local-"+Date.now();
+  try{
+    const r=await env.BG_SERVICE.fetch(new Request("https://internal/encrypt",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({apiKey:testKey})}));
+    const data=await r.json().catch(()=>({}));
+    const ok=!!(r.ok&&data?.encrypted&&data?.value&&String(data.value).split(".").length===3);
+    return response({ok,status:r.status,encrypted:!!data?.encrypted,shape:ok?"iv.tag.data":"invalid"});
+  }catch(err){
+    return response({ok:false,error:err.message||String(err)},500);
+  }
 }
 async function createJob(req,env){
   if(req.method!=="POST")return response({error:"Method not allowed"},405);
@@ -125,6 +138,7 @@ export async function onRequest(context){
   const path=Array.isArray(parts)?parts.join("/"):String(parts||"");
   if(!ALLOWED.has(path))return response({error:"Cloudflare BG endpoint không được phép."},404);
   try{
+    if(path==="self-test")return await selfTest(req,context.env);
     return path==="create-job"?await createJob(req,context.env):await jobStatus(req,context.env);
   }catch(err){
     console.error("Cloudflare BG API",err);
