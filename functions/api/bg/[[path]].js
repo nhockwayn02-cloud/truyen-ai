@@ -1,7 +1,8 @@
-/* Xưởng Truyện AI V14 — Cloudflare Background API
- * Netlify has been removed from the runtime path.
- * create-job -> KV + Queue -> Cloudflare background Worker
+/* Xưởng Truyện AI V13.1 — Cloudflare Background API
+ * Netlify removed from runtime path.
+ * create-job -> Worker-owned encryption -> KV + Queue
  * job-status -> KV
+ * Pages no longer encrypts API keys with its own JOB_SECRET.
  */
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const ALLOWED = new Set(["create-job", "job-status"]);
@@ -12,14 +13,11 @@ function cors(extra = {}) {
 function b64u(bytes) { let s=""; const a=new Uint8Array(bytes); for(let i=0;i<a.length;i+=0x8000)s+=String.fromCharCode(...a.subarray(i,i+0x8000)); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,""); }
 function randomToken(){ return b64u(crypto.getRandomValues(new Uint8Array(32))); }
 async function shaHex(v){ const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(v||""))); return [...new Uint8Array(d)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
-async function encryptApiKey(apiKey, secret){
-  if(!secret) return {encrypted:false,value:apiKey};
-  const keyHash=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(secret)));
-  const key=await crypto.subtle.importKey("raw",keyHash,{name:"AES-GCM"},false,["encrypt"]);
-  const iv=crypto.getRandomValues(new Uint8Array(12));
-  const all=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(apiKey)));
-  const tag=all.slice(-16), data=all.slice(0,-16);
-  return {encrypted:true,value:`${b64u(iv)}.${b64u(tag)}.${b64u(data)}`};
+async function encryptApiKey(apiKey, service){
+  const r = await service.fetch(new Request("https://internal/encrypt", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({apiKey}) }));
+  const data = await r.json().catch(()=>({}));
+  if(!r.ok || !data?.encrypted || !data?.value) throw new Error(data?.error || "Background Worker không mã hóa được API key.");
+  return data;
 }
 function validEndpoint(raw, env){
   let u; try{u=new URL(String(raw||DEFAULT_ENDPOINT));}catch(_){return {ok:false,error:"Endpoint API không hợp lệ."};}
@@ -43,12 +41,14 @@ async function createJob(req, env){
   if(!storyState||!apiKey)return response({error:"Thiếu storyState hoặc API key"},400);
   if(JSON.stringify(storyState).length>8_000_000)return response({error:"Story state quá lớn."},413);
   const ep=validEndpoint(body.apiEndpoint||DEFAULT_ENDPOINT,env); if(!ep.ok)return response({error:ep.error},400);
+  if(!env.BG_SERVICE)return response({error:"Cloudflare BG_SERVICE chưa được cấu hình."},503);
   const jobId="job_"+Date.now().toString(36)+"_"+b64u(crypto.getRandomValues(new Uint8Array(6)));
   const accessToken=randomToken(), workerToken=randomToken();
-  const job={schemaVersion:13,jobId,storyId:storyState.storyId||null,baseChapterCount:Array.isArray(storyState.chapters)?storyState.chapters.length:0,status:"pending",createdAt:Date.now(),updatedAt:Date.now(),apiEndpoint:ep.url,model:body.model||"deepseek/deepseek-v3.2",modelNsfw:body.modelNsfw||"aion-labs/aion-2.0",forceNsfw:!!body.forceNsfw,hintStyle:String(body.hintStyle||"normal").slice(0,20),hintFormat:String(body.hintFormat||"detail").slice(0,20),apiKeyEncrypted:await encryptApiKey(apiKey,env.JOB_SECRET||""),apiKey:null,accessTokenHash:await shaHex(accessToken),workerTokenHash:await shaHex(workerToken),storyState,resultChapter:null,error:null,progress:"Đang chờ bắt đầu..."};
+  const apiKeyEncrypted=await encryptApiKey(apiKey,env.BG_SERVICE);
+  const job={schemaVersion:13,jobId,storyId:storyState.storyId||null,baseChapterCount:Array.isArray(storyState.chapters)?storyState.chapters.length:0,status:"pending",createdAt:Date.now(),updatedAt:Date.now(),apiEndpoint:ep.url,model:body.model||"deepseek/deepseek-v3.2",modelNsfw:body.modelNsfw||"aion-labs/aion-2.0",forceNsfw:!!body.forceNsfw,hintStyle:String(body.hintStyle||"normal").slice(0,20),hintFormat:String(body.hintFormat||"detail").slice(0,20),apiKeyEncrypted,apiKey:null,accessTokenHash:await shaHex(accessToken),workerTokenHash:await shaHex(workerToken),storyState,resultChapter:null,error:null,progress:"Đang chờ bắt đầu..."};
   await env.STORY_JOBS.put(jobId,JSON.stringify(job));
   await env.BACKGROUND_QUEUE.send({jobId,workerToken});
-  return response({success:true,jobId,accessToken,warnings:env.JOB_SECRET?[]:["JOB_SECRET chưa cấu hình — API key sẽ không được mã hóa khi lưu job."],message:"Job đã được tạo. Có thể đóng/tắt iPhone; app sẽ tự kiểm tra và đồng bộ."});
+  return response({success:true,jobId,accessToken,warnings:[],message:"Job đã được tạo. Có thể đóng/tắt iPhone; app sẽ tự kiểm tra và đồng bộ."});
 }
 
 async function jobStatus(req, env){
