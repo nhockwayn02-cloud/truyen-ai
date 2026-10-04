@@ -12,19 +12,20 @@
     const b=body&&typeof body==='object'?{...body}:body;
     if(!b||!Array.isArray(b.messages))return b;
     const m=mode==='secondary'?secondary:mode==='primary'||mode==='auto'?primary:'';
-    if(m) b.model=m;
-    b.xuongModelMode=mode;
-    b.xuongPrimaryModel=primary;
-    b.xuongSecondaryModel=secondary;
+    if(m)b.model=m;
+    b.xuongModelMode=mode;b.xuongPrimaryModel=primary;b.xuongSecondaryModel=secondary;
     return b;
   };
+  const applyJob=(body)=>{const b=body&&typeof body==='object'?{...body}:body;if(!b)return b;const m=mode==='secondary'?secondary:mode==='primary'||mode==='auto'?primary:(b.model||'');if(m)b.model=m;b.modelMode=mode;b.primaryModel=primary;b.secondaryModel=secondary;return b};
   const originalFetch=window.fetch.bind(window);
   window.fetch=async(input,init={})=>{
     const url=typeof input==='string'?input:(input&&input.url)||'';
-    if(!url.includes('/api/ai')||!init||String(init.method||'GET').toUpperCase()!=='POST')return originalFetch(input,init);
+    const method=String(init.method||'GET').toUpperCase();
+    const isAI=url.includes('/api/ai'),isJob=/(\/api\/bg\/create-job|\/api\/create-job)(?:\?|$)/.test(url);
+    if((!isAI&&!isJob)||method!=='POST')return originalFetch(input,init);
     let body=null;try{body=typeof init.body==='string'?JSON.parse(init.body):null}catch{}
     if(!body)return originalFetch(input,init);
-    const make=(b,forceMode=mode)=>{const old=mode;mode=forceMode;const out={...init,body:JSON.stringify(apply(b)),headers:{'Content-Type':'application/json',...(init.headers||{})}};mode=old;return out};
+    const make=(b,forceMode=mode)=>{const old=mode;mode=forceMode;const out={...init,body:JSON.stringify(isAI?apply(b):applyJob(b)),headers:{'Content-Type':'application/json',...(init.headers||{})}};mode=old;return out};
     const first=await originalFetch(input,make(body));
     if(mode!=='auto'||first.ok||!secondary)return first;
     if(first.status!==408&&first.status!==409&&first.status!==425&&first.status!==429&&first.status<500)return first;
